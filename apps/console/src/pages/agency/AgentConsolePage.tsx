@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Ban, Check, CircleCheck, Coffee, Info, MessageSquare, MicOff, Play, RefreshCw, TriangleAlert, WifiOff, X } from 'lucide-react';
+import { Ban, Check, Coffee, Info, MicOff, Play, RefreshCw, TriangleAlert, WifiOff, X } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useOptionalTheme } from '../../contexts/ThemeContext';
@@ -23,7 +23,9 @@ import { useDeviceChecks } from './station/useDeviceChecks';
 import { useMyDay } from './station/useMyDay';
 import { ScriptOpeningCard, ScriptStepsCard } from '../../components/agency/station/StationScript';
 import { fillScriptLine, scriptFillFor, scriptOrNone } from '../../utils/agency/stationScript';
-import { FloorAssistAnnouncer, useFloorAssistAnnouncer } from '../../components/agency/SupervisorMessages';
+import { FloorAssistAnnouncer, useFloorAssistAnnouncer, useSupervisorMessageShown } from '../../components/agency/SupervisorMessages';
+import { SupervisorBanner } from '../../components/agency/station/SupervisorBanner';
+import type { HelpWhere } from '../../utils/agency/helpTelemetry';
 import { FLOOR_ASSIST_FLAG } from '../../utils/agency/floorAssistFlag';
 import { StationSoftphone } from '../../components/softphone/StationSoftphone';
 import { InboundCallView } from '../../components/agency/inbound/InboundCallView';
@@ -37,7 +39,7 @@ import { CustomerWaitingPill } from '../../components/agency/inbound/CustomerWai
 import { CueSettingsFields } from '../../components/agency/CueSettings';
 import { StationListenFirstNotice, StationListenNotice } from '../../components/agency/StationListenNotice';
 import { MyContactsPanel, myContactsLockReason } from '../../components/agency/MyContactsPanel';
-import { MoreMenu, NeedHelpButton, StationBanner, StationFrame, TimedBanner } from '../../components/agency/station/StationFrame';
+import { MoreMenu, NeedHelpButton, SideNeedHelpButton, StationBanner, StationFrame, TimedBanner } from '../../components/agency/station/StationFrame';
 import { KeptCountdown, RetryCountdown, SinceClock, TimeLeftRing } from '../../components/agency/station/StationClocks';
 import { CustomerCardView, LastCallsCard, NoteCard } from '../../components/agency/station/StationCustomer';
 import { WhatHappened } from '../../components/agency/station/WhatHappened';
@@ -72,19 +74,17 @@ import { hasWrapup, wrapupView } from '../../utils/agencyWrapup';
 import { findDisposition } from '../../utils/agencyDispositionForm';
 import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
-import { messageSender } from '../../utils/agency/stationHelp';
+import { helpRaisable } from '../../utils/agency/stationHelp';
 import { brand } from '../../brand';
 import {
   STATION_BLOCK_COPY,
   STATION_COPY,
   breakRefusedLine,
-  helpAnsweredLine,
-  helpRefusedLine,
   micProblemLine,
   missedReleaseLine,
   releaseBanner,
 } from '../../utils/agency/stationCopy';
-import { clockTime, runningClock } from '../../utils/agency/stationFormat';
+import { runningClock } from '../../utils/agency/stationFormat';
 import { customerCard, lastCallRows } from '../../utils/agency/stationCustomer';
 import { MAIN_ACTION_KEY, stationView, type MoreItem, type StationView } from '../../utils/agency/stationView';
 
@@ -132,6 +132,7 @@ export default function AgentConsolePage() {
     tenantId: tenantId ?? undefined,
     accountId: accountId ?? undefined,
     station,
+    clock: cons.clock,
   });
   /*
     What supervisors say, out loud (LF25): held here, above every screen, and rendered once after
@@ -407,6 +408,16 @@ function StationScreen({
     (an inbound call, the soft phone) and their phases included.
   */
   const speechScreen = `${screen}:${inbound.phase ?? ''}:${softphone.active ? softphone.sp.phase : ''}`;
+
+  // ── Where Need help is pressed, and whether on a call: an inbound call and the soft phone have
+  //    their own screens (below), else the campaign's (LF39's telemetry). Messages are counted with it.
+  const spPhaseNow = softphone.sp.phase;
+  const helpWhere: HelpWhere = inbound.call
+    ? { surface: 'inbound', onCall: inbound.phase !== 'offered' }
+    : softphone.active && !finishOpen
+      ? { surface: 'softphone', onCall: spPhaseNow === 'on_call' || spPhaseNow === 'outcome' }
+      : { surface: 'station', onCall: helpRaisable(agentState) || outcomeOwed };
+  useSupervisorMessageShown(station.supervisorMessages, helpWhere.onCall);
   const { stop: stopReading } = readAloud;
   useEffect(() => {
     stopReading();
@@ -711,50 +722,8 @@ function StationScreen({
     return null;
   })();
 
-  /*
-    The supervisor line (spec 02b): a supervisor's message, one at a time with the rest counted, OK
-    showing the next; else what became of a help request (answered, lapsed) or why it was refused.
-  */
-  const message = station.supervisorMessages[0] ?? null;
-  const helpNotice = station.helpNotice;
-  const helpRefusal = help.refusalKind ? helpRefusedLine(help.refusalKind) : null;
-  const sentAt = message ? Date.parse(message.sent_at) : NaN;
-  const supervisorBanner = message ? (
-    <StationBanner
-      message
-      icon={<MessageSquare size={22} />}
-      testId="supervisor-message"
-      action={
-        <button type="button" className={stationStyles.btn} onClick={() => station.dismissSupervisorMessage(message.id)} data-testid="supervisor-message-ok">
-          {STATION_COPY.messageOk}
-        </button>
-      }
-    >
-      <small>
-        <strong>{messageSender(message.from_name)}</strong> {STATION_COPY.supervisorSuffix}
-        {Number.isNaN(sentAt) ? null : <> · <time dateTime={message.sent_at}>{clockTime(sentAt)}</time></>}
-      </small>
-      <p data-testid="supervisor-message-text">{message.text}</p>
-      {station.supervisorMessages.length > 1 ? (
-        <small data-testid="supervisor-messages-more">{STATION_COPY.moreMessages(station.supervisorMessages.length - 1)}</small>
-      ) : null}
-    </StationBanner>
-  ) : helpRefusal ? (
-    <StationBanner tone="problem" icon={<Info size={22} />} role="status" testId="need-help-refusal">
-      {helpRefusal}
-    </StationBanner>
-  ) : helpNotice ? (
-    <StationBanner
-      tone={helpNotice.kind === 'answered' ? 'ready' : 'quiet'}
-      icon={helpNotice.kind === 'answered' ? <CircleCheck size={22} /> : <Info size={22} />}
-      testId="need-help-status"
-      action={help.dismissible ? (
-        <button type="button" className={stationStyles.btn} onClick={help.dismiss} data-testid="need-help-dismiss">{STATION_COPY.messageOk}</button>
-      ) : undefined}
-    >
-      {helpNotice.kind === 'expired' ? STATION_COPY.helpExpired : helpAnsweredLine(helpNotice.by_name, helpNotice.how)}
-    </StationBanner>
-  ) : null;
+  // The supervisor line (spec 02b): a message, else what became of a help request, or its refusal.
+  const supervisorBanner = <SupervisorBanner station={station} help={help} />;
 
   // ── The band's right side ───────────────────────────────────────────────────
   let bandSide: ReactNode = null;
@@ -1210,7 +1179,7 @@ function StationScreen({
     <>
       {/* LS2: the standing "a supervisor may listen" line, behind its info button (only while the flag is on). */}
       <StationListenNotice />
-      {shownView.needHelp ? <NeedHelpButton help={help} raisedAt={station.help?.raised_at ?? null} nowMs={clock.now} /> : null}
+      {shownView.needHelp ? <NeedHelpButton help={help} raisedAt={station.help?.raised_at ?? null} nowMs={clock.now} where={helpWhere} /> : null}
     </>
   );
   const menu = (
@@ -1223,12 +1192,10 @@ function StationScreen({
   );
 
   // ── An inbound call and the soft phone: their own bodies in the station's frame (ruling 2) ──
-  const sideNeedHelp = (onCall: boolean) => (
+  const sideNeedHelp = (
     <>
       <StationListenNotice />
-      {help.offered && connection === 'open' && (help.open || help.everywhere || onCall)
-        ? <NeedHelpButton help={help} raisedAt={station.help?.raised_at ?? null} nowMs={clock.now} />
-        : null}
+      <SideNeedHelpButton help={help} connected={connection === 'open'} where={helpWhere} raisedAt={station.help?.raised_at ?? null} nowMs={clock.now} />
     </>
   );
   const sideMenu = (items: MoreItem[]): ReactNode => (
@@ -1280,7 +1247,7 @@ function StationScreen({
         clock={clock}
         frame={{
           ...sideFrameProps,
-          needHelp: sideNeedHelp(inbound.phase !== 'offered'),
+          needHelp: sideNeedHelp,
           banners: <>{inbound.notice ? <StationBanner tone="quiet" icon={<Info size={22} />} testId="inbound-notice">{inbound.notice}</StationBanner> : null}{sideBanners}</>,
         }}
         connectFlash={cons.connectFlashAttemptId === call.id}
@@ -1289,7 +1256,6 @@ function StationScreen({
       />
     );
   } else if (softphone.active && !finishOpen) {
-    const spPhase = softphone.sp.phase;
     sideFrame = (
       <StationSoftphone
         softphone={softphone}
@@ -1297,7 +1263,7 @@ function StationScreen({
         clock={clock}
         frame={{
           ...sideFrameProps,
-          needHelp: sideNeedHelp(spPhase === 'on_call' || spPhase === 'outcome'),
+          needHelp: sideNeedHelp,
           banners: <>{cons.softphoneRejection ? <StationBanner tone="problem" icon={<TriangleAlert size={22} />} role="status" testId="switch-to-softphone-refused">{cons.softphoneRejection}</StationBanner> : null}{sideBanners}</>,
         }}
         shortcutsEnabled={!soundOpen}

@@ -46,6 +46,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ isEnabled: (flag: string) => mocks.flags.has(flag) }),
 }));
 
+import * as posthog from '../../analytics/posthog';
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
 import { stubStationMicrophone } from '../helpers/stationDevices';
 import { ApiError } from '../../api/client';
@@ -500,6 +501,72 @@ describe('what the polite region says (LF25)', () => {
     expect(status()).toBe('Help is here. Priya N is listening to this call.');
     expect(said()).toEqual(['Help requested. Your supervisors can see it.', 'Help is here. Priya N is listening to this call.']);
   });
+});
+
+describe('telemetry (LF39)', () => {
+  let capture: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    capture = vi.spyOn(posthog, 'captureEvent').mockImplementation(() => {});
+  });
+  afterEach(() => capture.mockRestore());
+  const events = (): [string, unknown][] =>
+    capture.mock.calls
+      .filter((call: unknown[]) => /^agency_(help_|supervisor_message_)/.test(String(call[0])))
+      .map((call: unknown[]) => [String(call[0]), call[1]]);
+
+  it('a raise on the campaign’s screen is `station`, on a call or not', async () => {
+    await onCall();
+    await pressHelp();
+    await pressHelp();
+    await frame({ event: 'help_cleared', raised_at: R1, reason: 'cancelled' });
+    await frame({ event: 'agent_state', state: 'available', since: '2026-11-19T10:05:00.000Z' });
+    mocks.raiseHelp.mockResolvedValueOnce({ session_id: 'sess-1', help: { raised_at: '2026-11-19T10:20:00.000Z', call_id: null } });
+    await pressHelp();
+    expect(events()).toEqual([
+      ['agency_help_raised', { surface: 'station', on_call: true }],
+      ['agency_help_cancelled', { wait_bucket: expect.any(String) }],
+      ['agency_help_raised', { surface: 'station', on_call: false }],
+    ]);
+  });
+
+  it('a raise on an inbound call is `inbound`', async () => {
+    mocks.getInboundCall.mockReturnValue(new Promise(() => {}));
+    await mounted();
+    await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T10:03:00.000Z' });
+    await frame({ event: 'inbound_call', call: inboundCall({ state: 'connected', connects_at: null, bridged_at: '2026-11-19T10:03:01.500Z' }) });
+    expect(screen.getByTestId('station-inbound')).toBeTruthy();
+    await pressHelp();
+    expect(events()).toEqual([['agency_help_raised', { surface: 'inbound', on_call: true }]]);
+  });
+
+  it('a cancel landing between the answer and its clear is the answer, once', async () => {
+    await onCall();
+    await pressHelp();
+    await frame({ event: 'help_answered', raised_at: R1, by_name: 'Priya N', how: 'listen' });
+    await pressHelp();
+    await frame({ event: 'help_cleared', raised_at: R1, reason: 'answered' });
+    expect(events().map(([name]) => name)).toEqual(['agency_help_raised', 'agency_help_answered']);
+  });
+
+  it('a message is counted once per id as it arrives, with whether the agent was on a call', async () => {
+    await mounted();
+    await frame(message('m-1', 'Ready when you are'));
+    await onCallAgain();
+    await frame(message('m-2', 'Offer the plan'));
+    await frame(message('m-1', 'Ready when you are'));
+    fireEvent.click(screen.getByTestId('supervisor-message-ok'));
+    expect(events()).toEqual([
+      ['agency_supervisor_message_shown', { on_call: false }],
+      ['agency_supervisor_message_shown', { on_call: true }],
+    ]);
+  });
+
+  async function onCallAgain() {
+    await frame({ event: 'reserved', attempt: ATTEMPT });
+    await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T09:59:00.000Z' });
+    await frame({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-19T09:59:04.000Z' });
+    await frame({ event: 'agent_state', state: 'on_call', since: '2026-11-19T09:59:04.000Z' });
+  }
 });
 
 describe('supervisor messages on a phone', () => {

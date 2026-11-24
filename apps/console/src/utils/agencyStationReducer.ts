@@ -148,6 +148,14 @@ export interface StationState {
    */
   helpEndedAt: string | null;
   /**
+   * The last `help_cleared` this station heard about the request on screen, or with nothing on
+   * screen (a new object for each, duplicates included), and whether that request was on screen
+   * when it landed; one about another request than the one on screen is ignored like the rest. Nothing on screen reads it; it is
+   * for Need help's telemetry (LF39), which needs a `cancelled` clear the screen does not show
+   * (the cancel's own answer may have cleared the request first).
+   */
+  helpCleared: { frame: AgencyStationHelpClearedFrame; onScreen: boolean } | null;
+  /**
    * Supervisors' messages to this agent (`supervisor_message`, LF5), oldest first, each id once,
    * until the agent dismisses it. Kept through a reconnect: a message is not state the server
    * restates, and one the agent has not read yet is still unread. At most
@@ -201,6 +209,7 @@ export const INITIAL_STATION_STATE: StationState = {
   help: null,
   helpNotice: null,
   helpEndedAt: null,
+  helpCleared: null,
   supervisorMessages: [],
 };
 
@@ -503,6 +512,7 @@ export function stationReducer(state: StationState, action: StationAction): Stat
 
     case 'help_cleared': {
       const { frame } = action;
+      const helpCleared = { frame, onScreen: state.help !== null };
       // An answer that arrived first stays, and an answer told only by the clear is still an answer.
       const answered: StationHelpNotice | null = frame.reason === 'answered'
         ? answeredNoticeFor(state.helpNotice, frame.raised_at)
@@ -513,15 +523,15 @@ export function stationReducer(state: StationState, action: StationAction): Stat
         // (it would then stay open forever: no frame about it is coming). A lapse, a cancel or a
         // session end says nothing about a request the station is not showing.
         const helpNotice = answered ?? state.helpNotice;
-        if (state.helpEndedAt === frame.raised_at && helpNotice === state.helpNotice) return state;
-        return { ...state, helpNotice, helpEndedAt: frame.raised_at };
+        return { ...state, helpNotice, helpEndedAt: frame.raised_at, helpCleared };
       }
+      // About another request than the one on screen: changes nothing, telemetry included.
       if (state.help.raised_at !== frame.raised_at) return state;
       // `cancelled` (the agent's own, from another window or the answer racing this frame) and
       // `session_ended` clear without a word.
       const helpNotice: StationHelpNotice | null = answered
         ?? (frame.reason === 'expired' ? { kind: 'expired', raised_at: frame.raised_at } : null);
-      return { ...state, help: null, helpNotice, helpEndedAt: frame.raised_at };
+      return { ...state, help: null, helpNotice, helpEndedAt: frame.raised_at, helpCleared };
     }
 
     case 'help_notice_dismissed':

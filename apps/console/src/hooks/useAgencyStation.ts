@@ -218,6 +218,7 @@ export function useAgencyStation(
     dialActivity,
     help,
     helpNotice,
+    helpCleared,
     supervisorMessages,
   } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
@@ -1761,6 +1762,7 @@ export function useAgencyStation(
     dialActivity,
     help,
     helpNotice,
+    helpCleared,
     supervisorMessages,
     setHelp,
     dismissHelpNotice,

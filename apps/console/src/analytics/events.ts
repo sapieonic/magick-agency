@@ -27,6 +27,7 @@ import type {
 } from '@magick-agency/contracts/api/agency/assignment';
 import type { ReportCadence, ReportFormat, ReportKind } from '@magick-agency/contracts/api/agency/reports';
 import type { ReportWindowPreset } from '../utils/reports/reportWindow';
+import type { AgencyFloorStateBucket } from '../utils/agencyAgentFloor';
 
 /**
  * Typed product-event catalog.
@@ -731,6 +732,72 @@ export function trackAgencySoftphoneDncMarked(props: EventCatalog['agency_softph
 
 export function trackAgencySoftphoneSwitch(props: EventCatalog['agency_softphone_switch']): void {
   track('agency_softphone_switch', props);
+}
+
+// --- Need help and supervisors' messages (floor assist, LF39) ---------------
+//
+// The mobile app sends the same names with the same properties (LF39 is their contract): change
+// them on both sides. The agent's events say where and how long, never who: no message text, no
+// sender's or answerer's name (`from_name`, `by_name`), no session, call or message id, and no
+// code a person typed. A supervisor's send names the kind of message, never the agent it went to.
+//
+// Each Need help event fires at most once per request (its `raised_at`) on a page, through
+// reconnects, duplicate frames, a raise's answer landing after the frames that ended it and a
+// cancel that lost the race to an answer (`utils/agency/helpTelemetry`, LF24's races). Raised is
+// the raise's answer, never a `ready.help`; cancelled is the server's `help_cleared { cancelled }`,
+// never the cancel's reply. A `session_ended` clear, or a frame about an earlier request, sends
+// nothing.
+
+/** Where the agent pressed Need help: the campaign's own screen, an inbound call, or a soft phone screen. */
+export type AgencyHelpSurface = 'station' | 'inbound' | 'softphone';
+
+/** A request's age when it ended, raised to ended on the server-aligned clock: `agency_floor_intervention`'s buckets. */
+export type AgencyHelpWaitBucket = AgencyFloorStateBucket;
+
+/** A refused or failed raise or cancel: the server's code when it is one of these, else what kind of failure. */
+export type AgencyHelpRefusedCode =
+  | 'floor_assist_disabled'
+  | 'help_not_on_call'
+  | 'session_ended'
+  /** A 404: the session is not the agent's, or not there. */
+  | 'not_found'
+  /** No answer from the server at all. */
+  | 'network'
+  | 'other';
+
+/** The first raise answer naming a request this page has not reported (on screen or not by then). */
+export function trackAgencyHelpRaised(props: EventCatalog['agency_help_raised']): void {
+  track('agency_help_raised', props);
+}
+
+/** The agent's cancel ended the request: `help_cleared { cancelled }` (one that lost the race to an answer is `agency_help_answered`). */
+export function trackAgencyHelpCancelled(props: EventCatalog['agency_help_cancelled']): void {
+  track('agency_help_cancelled', props);
+}
+
+/** The request ended answered: a supervisor listened in or sent a message. */
+export function trackAgencyHelpAnswered(props: EventCatalog['agency_help_answered']): void {
+  track('agency_help_answered', props);
+}
+
+/** The request lapsed unanswered (`AGENCY_HELP_EXPIRY_MS`). */
+export function trackAgencyHelpExpired(): void {
+  track('agency_help_expired', {});
+}
+
+/** A raise or a cancel was refused, or failed. */
+export function trackAgencyHelpRefused(props: EventCatalog['agency_help_refused']): void {
+  track('agency_help_refused', props);
+}
+
+/** A supervisor's message was first queued for the agent (once per message). */
+export function trackAgencySupervisorMessageShown(props: EventCatalog['agency_supervisor_message_shown']): void {
+  track('agency_supervisor_message_shown', props);
+}
+
+/** A supervisor's message went through (the send route answered 201), by where it was sent from. */
+export function trackAgencySupervisorMessageSent(props: EventCatalog['agency_supervisor_message_sent']): void {
+  track('agency_supervisor_message_sent', props);
 }
 
 // --- Agency invites (the `/agency/join/:token` landing page) ----------------
@@ -1664,6 +1731,37 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     outcome: 'accepted' | 'refused';
     /** A soft-phone refusal code when refused. */
     code: string | null;
+  };
+  /** {@link trackAgencyHelpRaised} */
+  agency_help_raised: {
+    surface: AgencyHelpSurface;
+    /** On a call or in wrap-up (owing an outcome) when the agent pressed. */
+    on_call: boolean;
+  };
+  /** {@link trackAgencyHelpCancelled} */
+  agency_help_cancelled: { wait_bucket: AgencyHelpWaitBucket };
+  /** {@link trackAgencyHelpAnswered} */
+  agency_help_answered: {
+    /** `unknown`: the request was cleared `answered` with no `help_answered` seen. */
+    how: 'listen' | 'message' | 'unknown';
+    wait_bucket: AgencyHelpWaitBucket;
+  };
+  /** {@link trackAgencyHelpExpired} */
+  agency_help_expired: Record<string, never>;
+  /** {@link trackAgencyHelpRefused} */
+  agency_help_refused: {
+    action: 'raise' | 'cancel';
+    code: AgencyHelpRefusedCode;
+  };
+  /** {@link trackAgencySupervisorMessageShown} */
+  agency_supervisor_message_shown: {
+    /** On a call or in wrap-up (owing an outcome) when the message arrived. */
+    on_call: boolean;
+  };
+  /** {@link trackAgencySupervisorMessageSent} */
+  agency_supervisor_message_sent: {
+    /** Talk (`talk`), Send reminder (`reminder`) or I'm coming (`coming_to_desk`). */
+    kind: 'talk' | 'reminder' | 'coming_to_desk';
   };
   /** {@link trackAgencyInviteViewed} */
   agency_invite_viewed: InviteViewedProps;

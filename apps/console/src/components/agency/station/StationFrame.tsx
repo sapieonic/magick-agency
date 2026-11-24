@@ -15,6 +15,7 @@ import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { useRepaintTick } from '../../../hooks/useRepaintTick';
 import { useRenderAt } from '../../../hooks/useRenderAt';
 import type { StationHelp } from '../../../pages/agency/station/useStationHelp';
+import type { HelpWhere } from '../../../utils/agency/helpTelemetry';
 import { STATION_COPY, helpAskedLabel } from '../../../utils/agency/stationCopy';
 import type { MoreItem, StationView } from '../../../utils/agency/stationView';
 import { BAND_ICONS } from './stationIcons';
@@ -197,7 +198,18 @@ export function StationBanner({
  * is open the same button cancels it, reading "Help asked · 0:42". What it says once a supervisor
  * answers, or the request lapses, is a banner (the page's).
  */
-export function NeedHelpButton({ help, raisedAt, nowMs }: { help: StationHelp; raisedAt: string | null; nowMs: () => number }) {
+export function NeedHelpButton({
+  help,
+  raisedAt,
+  nowMs,
+  where,
+}: {
+  help: StationHelp;
+  raisedAt: string | null;
+  nowMs: () => number;
+  /** Where this button is, for Need help's telemetry (LF39); absent, the campaign's own screen. */
+  where?: HelpWhere;
+}) {
   useRepaintTick(help.open);
   const raised = raisedAt ? Date.parse(raisedAt) : NaN;
   const label = help.busy
@@ -214,13 +226,36 @@ export function NeedHelpButton({ help, raisedAt, nowMs }: { help: StationHelp; r
       data-open={help.open ? 'true' : undefined}
       aria-disabled={help.busy || undefined}
       title={help.open ? STATION_COPY.helpCancelHint : STATION_COPY.helpRaiseHint}
-      onClick={help.press}
+      onClick={() => help.press(where)}
       data-testid="need-help-button"
     >
       <CircleHelp size={20} aria-hidden="true" />
       {label}
     </button>
   );
+}
+
+/**
+ * Need help in the top bar of a screen with no campaign view model: an inbound call, the soft phone
+ * on the station and the soft phone page (AS5). Shown while floor assist is on and the socket is
+ * open, when a request is open (cancelling is always offered), when raising is offered in every
+ * state (BE-9), or on a call (`where.onCall`) once an older server narrowed it back to calls.
+ */
+export function SideNeedHelpButton({
+  help,
+  connected,
+  where,
+  raisedAt,
+  nowMs,
+}: {
+  help: StationHelp;
+  connected: boolean;
+  where: HelpWhere;
+  raisedAt: string | null;
+  nowMs: () => number;
+}) {
+  if (!help.offered || !connected || !(help.open || help.everywhere || where.onCall)) return null;
+  return <NeedHelpButton help={help} raisedAt={raisedAt} nowMs={nowMs} where={where} />;
 }
 
 const MENU_ICONS: Record<MoreItem, ReactNode> = {

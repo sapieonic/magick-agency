@@ -440,6 +440,30 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   Every line it says is the station's own words keyed on a code (AS15): refusals, the dial pad's
   reasons, Save's blocks, announcements and the override dialog; a code the console has no words
   for gets "That did not go through. Try again in a moment.", never the server's sentence.
+- **Need help and supervisors' messages on `/dialer/phone` (LF39).** The page's socket is a station
+  socket like the station's (`/proxy/agency/station`, `client=web`, which has `floor_assist`
+  without declaring it), so it hears `ready.help`, `help_answered`, `help_cleared` and
+  `supervisor_message`, and runs them through the station's reducer. The top bar has the station's
+  **Need help** after the agent nav and the listening notice (`SideNeedHelpButton`, the station's
+  soft phone and inbound views use the same): shown while `agency_floor_assist_enabled` is on and
+  the socket is open, raising in any state of the call (the server takes a raise on a soft-phone
+  session in any state, AS5) and cancelling with the same button; its states, words, refusals and
+  announcements are the station's (`useStationHelp`, LF24). The supervisor line under the band is
+  the station's too (`SupervisorBanner`): a message, one at a time with the rest counted and OK
+  showing the next, else what became of the request or why the press was refused; each message
+  and each change of the request is said once in the page's polite region (`FloorAssistAnnouncer`).
+  Messages show whatever the console's flag map says, as on the station (the server sends them
+  only while the account's flag is on).
+- **Telemetry for Need help and messages (LF39).** `agency_help_raised` (`surface: 'softphone'`
+  on this page and the station's soft phone view, `inbound` on an inbound call, `station` on the
+  campaign's screens; `on_call` on a call or owing its outcome), `agency_help_cancelled`,
+  `agency_help_answered`, `agency_help_expired` and `agency_help_refused`, each at most once per
+  request (`utils/agency/helpTelemetry.ts`, so LF24's races count once): raised on the first raise
+  answer naming a request not yet reported (never a `ready.help`), cancelled only on the server's
+  `help_cleared { cancelled }` on either side of the cancel's reply (the reply is `help: null`
+  whether the cancel won or lost), a cancel that lost to an answer sent as answered;
+  `agency_supervisor_message_shown` once per message id. The app sends the same names by the same
+  rules (`analytics/events.ts`).
 - **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0` (also a
   bracketed `(0)` after a country code, `+44 (0)20…`), spaces and `tel:`; typing drops a leading
   trunk `0` (the field reads after the country-code chip) and turns `00` into `+`; Enter calls.

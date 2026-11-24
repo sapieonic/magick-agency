@@ -14,7 +14,7 @@ import type {
   AgencyStationMediaFormat,
   AgencyStationSupervisorMessageFrame,
 } from '@magick-agency/contracts/agency';
-import type { StationHelpNotice } from '../../utils/agencyStationReducer';
+import type { StationHelpNotice, StationState } from '../../utils/agencyStationReducer';
 import type { AgencyManualCall } from '../../types/softphone';
 import type { AgencyInboundCall, AgencyStationCustomerWaitingFrame } from '../../types/inbound';
 import type { AgencyUplinkFrame } from '../../utils/agencyMedia';
@@ -267,6 +267,8 @@ export interface UseAgencyStationResult {
    */
   help: AgencySessionHelp | null;
   helpNotice: StationHelpNotice | null;
+  /** The last `help_cleared` heard, and whether it named the request on screen (telemetry, LF39). */
+  helpCleared: StationState['helpCleared'];
   supervisorMessages: readonly AgencyStationSupervisorMessageFrame[];
   /** The raise's answer (the open request) or the cancel's (`null`): the raise sends no frame. */
   setHelp: (help: AgencySessionHelp | null) => void;
