@@ -96,10 +96,14 @@ void main() {
     });
 
     testWidgets('a push while its end is off screen opens nothing', (tester) async {
-      final many = [for (var i = 0; i < 40; i++) more('Column $i', 'v$i')];
-      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: chosen(many), priorAttempts: const [])), size: const Size(390, 500));
-      await tester.drag(find.byType(SingleChildScrollView).first, const Offset(0, -10));
+      await pumpStation(tester, station(phase: AgentPhase.reserved, call: call(facts: chosen(rows), priorAttempts: const [])), size: const Size(390, 520));
+      final view = find.byType(SingleChildScrollView).first;
+      final position = tester.state<ScrollableState>(find.descendant(of: view, matching: find.byType(Scrollable)).first).position;
+      await tester.drag(view, const Offset(0, -60));
       await tester.pump();
+      // The page really moved down, and More details' end is still below the visible part.
+      expect(position.pixels, greaterThan(0));
+      expect(tester.getRect(find.byKey(const Key('more-details-card'))).bottom, greaterThan(tester.getRect(view).bottom));
       expect(labelsShown(tester), isEmpty);
     });
 
