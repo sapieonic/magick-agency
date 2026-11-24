@@ -83,11 +83,11 @@ export function useStationHelp({
   sessionId: string | null;
   tenantId?: string;
   accountId?: string;
-  station: Pick<UseAgencyStationResult, 'agentState' | 'help' | 'helpNotice' | 'helpCleared' | 'setHelp' | 'dismissHelpNotice'>;
+  station: Pick<UseAgencyStationResult, 'agentState' | 'help' | 'helpNotice' | 'helpFrame' | 'setHelp' | 'noteHelpRaise' | 'dismissHelpNotice'>;
   /** The page's server-aligned clock, for how long a request was open (telemetry). */
   clock?: Pick<ServerClock, 'since'>;
 }): StationHelp {
-  const { agentState, help, helpNotice, helpCleared, setHelp, dismissHelpNotice } = station;
+  const { agentState, help, helpNotice, helpFrame, setHelp, noteHelpRaise, dismissHelpNotice } = station;
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [refusalKind, setRefusalKind] = useState<StationHelp['refusalKind']>(null);
@@ -110,8 +110,7 @@ export function useStationHelp({
     });
   }
   const telemetry = telemetryRef.current;
-  useEffect(() => telemetry.noticeSeen(helpNotice), [telemetry, helpNotice]);
-  useEffect(() => telemetry.clearSeen(helpCleared), [telemetry, helpCleared]);
+  useEffect(() => telemetry.frameSeen(helpFrame), [telemetry, helpFrame]);
 
   // An older server's `help_not_on_call` narrows this session back to calls (BE-9).
   const [narrowedFor, setNarrowedFor] = useState<string | null>(null);
@@ -135,6 +134,8 @@ export function useStationHelp({
     busyRef.current = true;
     setBusy(true);
     if (cancelling && raisedAt !== null) telemetry.cancelSent(raisedAt);
+    // A raise in flight puts the frames that land meanwhile in scope (LF39).
+    if (!cancelling) noteHelpRaise('started');
     setRefusal(null);
     setRefusalKind(null);
     const request = cancelling ? cancelHelp(sessionId, tenantId, accountId) : raiseHelp(sessionId, tenantId, accountId);
@@ -154,6 +155,7 @@ export function useStationHelp({
         // The station's own words, keyed on the code (AS15): what the banner shows is what is said.
         const kind = { action: cancelling ? 'cancel' : 'raise', code: errorCode(err), status: errorStatus(err) } as const;
         telemetry.refused(kind.action, kind.code, kind.status);
+        if (!cancelling) noteHelpRaise('failed');
         const text = helpRefusedLine(kind);
         setRefusal(text);
         setRefusalKind(kind);
@@ -163,7 +165,7 @@ export function useStationHelp({
         busyRef.current = false;
         setBusy(false);
       });
-  }, [offered, sessionId, tenantId, accountId, raisable, agentState, helpRef, noticeRef, setHelp, say, telemetry]);
+  }, [offered, sessionId, tenantId, accountId, raisable, agentState, helpRef, noticeRef, setHelp, noteHelpRaise, say, telemetry]);
 
   /*
     What the station says. While a request is open: that it is waiting, until a supervisor answers

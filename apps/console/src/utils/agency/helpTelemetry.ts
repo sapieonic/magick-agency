@@ -10,31 +10,29 @@ import {
   type AgencyHelpWaitBucket,
 } from '../../analytics/events';
 import { secondsInStateBucket } from '../agencyAgentFloor';
-import type { StationHelpNotice } from '../agencyStationReducer';
 
 /**
- * Need help's telemetry (LF39): `agency_help_raised`, `_cancelled`, `_answered`, `_expired` and
- * `_refused`, each at most once per request (`raised_at`) on a page. The mobile app sends the same
- * names and properties, by the same rules.
+ * Need help's telemetry (LF39 and its amendment 2): `agency_help_raised`, `_cancelled`,
+ * `_answered`, `_expired` and `_refused`, each at most once per request (`raised_at`) on a page.
+ * The mobile app sends the same names and properties, by the same rules.
  *
  *  - **raised**: the first raise answer (`POST /help`'s reply with a request) naming a `raised_at`
- *    this page has not reported, whether or not it is still on screen when it lands (a slow reply
- *    after the frames ended it, or after a `ready.help` put it on screen, still counts). A
- *    `ready.help` or a frame never sends it ({@link HelpTelemetry.raiseAnswered}).
- *  - **cancelled**: only on `help_cleared { cancelled }` for the request, the server's proof the
- *    cancel won, on whichever side of the cancel's reply it lands ({@link HelpTelemetry.clearSeen}):
- *    "for the request" is the one on screen when the clear landed, or one the agent sent a cancel
- *    for (the reply, `help: null` whether the cancel won or lost, may have cleared it first). The
- *    reply itself sends nothing: it cannot tell a won cancel from one that lost to a supervisor.
- *  - **answered** / **expired**: the notice the screen shows once the request ended
- *    ({@link HelpTelemetry.noticeSeen}): `help_answered`, or a `help_cleared` `answered` alone
- *    (`how: 'unknown'`), kept by the station's reducer on either side of a cancel's reply, so a
- *    cancel that lost the race is that answer; `expired` for the request on screen, or for one the
- *    agent had sent a cancel for (a cancel that lost to the lapse).
- *  - A `session_ended` clear, and any frame about an earlier request (LF15), sends nothing.
- *
- * One of cancelled, answered and expired per request, whichever came first; duplicate frames and
- * reconnects send nothing again.
+ *    this page has not reported, whether or not it is on screen when it lands. A `ready.help` or a
+ *    frame never sends it ({@link HelpTelemetry.raiseAnswered}).
+ *  - **The end events** come from the frames alone ({@link HelpTelemetry.frameSeen}), and only for a
+ *    request in scope when the frame landed: the one on screen; with nothing on screen, any request
+ *    while a raise is in flight (pressed, its reply not back: the frame may be about it), but not
+ *    the request the station last saw end; or one the agent pressed Cancel for (noted at the press,
+ *    {@link HelpTelemetry.cancelSent}). The reducer decides the first two as the frame lands
+ *    (`StationState.helpFrame`). A raise whose reply failed is no longer in flight, so an answer
+ *    for it afterwards sends nothing, though the screen still shows it (LF24).
+ *    - **answered**: `help_answered` (`how` from the frame), or `help_cleared { answered }` when no
+ *      `help_answered` was sent for it (`how: 'unknown'`). A cancel that lost the race to an answer
+ *      is that answer, on either side of the cancel's reply.
+ *    - **expired**: `help_cleared { expired }`. **cancelled**: `help_cleared { cancelled }`, the
+ *      server's proof the cancel won, never the cancel's reply (`help: null` whether it won or lost).
+ *    - One of answered, expired and cancelled per request, the first in scope. A `session_ended`
+ *      clear and anything out of scope send nothing.
  */
 
 /** Where the agent pressed Need help, and whether they were on a call or owed an outcome then. */
@@ -62,7 +60,7 @@ export class HelpTelemetry {
   private readonly raised = new Set<string>();
   /** Requests whose end (cancelled, answered or expired) was sent. */
   private readonly ended = new Set<string>();
-  /** Requests the agent sent a cancel for. */
+  /** Requests the agent pressed Cancel for. */
   private readonly cancelling = new Set<string>();
 
   /** @param elapsed ms from a server instant to now, on the server-aligned clock (`ServerClock.since`). */
@@ -75,29 +73,37 @@ export class HelpTelemetry {
     trackAgencyHelpRaised({ surface: where.surface, on_call: where.onCall });
   }
 
-  /** The agent pressed cancel on `raisedAt` (before its answer). */
+  /** The agent pressed Cancel on `raisedAt`: its frames are in scope from now on. */
   cancelSent(raisedAt: string): void {
     this.cancelling.add(raisedAt);
   }
 
-  /** A `help_cleared` the station heard (the station's `helpCleared`), each time one lands. */
-  clearSeen(cleared: { frame: { raised_at: string; reason: string }; onScreen: boolean } | null): void {
-    if (cleared === null) return;
-    const { frame, onScreen } = cleared;
-    if (!onScreen && !this.cancelling.has(frame.raised_at)) return;
-    if (frame.reason === 'cancelled') this.end(frame.raised_at, () => trackAgencyHelpCancelled({ wait_bucket: this.waitBucket(frame.raised_at) }));
-    else if (frame.reason === 'expired') this.end(frame.raised_at, () => trackAgencyHelpExpired());
-  }
-
-  /** What the screen says about a request that ended (the station's `helpNotice`), each time it changes. */
-  noticeSeen(notice: StationHelpNotice | null): void {
-    if (notice === null) return;
-    if (notice.kind === 'expired') {
-      this.end(notice.raised_at, () => trackAgencyHelpExpired());
+  /** A Need help frame the station heard (`StationState.helpFrame`), each time one lands. */
+  frameSeen(
+    heard: { frame: { event: 'help_answered'; raised_at: string; how: 'listen' | 'message' } | { event: 'help_cleared'; raised_at: string; reason: string }; inScope: boolean } | null,
+  ): void {
+    if (heard === null) return;
+    const { frame } = heard;
+    const raisedAt = frame.raised_at;
+    if (!heard.inScope && !this.cancelling.has(raisedAt)) return;
+    if (frame.event === 'help_answered') {
+      this.end(raisedAt, () => trackAgencyHelpAnswered({ how: frame.how, wait_bucket: this.waitBucket(raisedAt) }));
       return;
     }
-    const how = notice.how ?? 'unknown';
-    this.end(notice.raised_at, () => trackAgencyHelpAnswered({ how, wait_bucket: this.waitBucket(notice.raised_at) }));
+    switch (frame.reason) {
+      case 'answered':
+        this.end(raisedAt, () => trackAgencyHelpAnswered({ how: 'unknown', wait_bucket: this.waitBucket(raisedAt) }));
+        return;
+      case 'expired':
+        this.end(raisedAt, () => trackAgencyHelpExpired());
+        return;
+      case 'cancelled':
+        this.end(raisedAt, () => trackAgencyHelpCancelled({ wait_bucket: this.waitBucket(raisedAt) }));
+        return;
+      default:
+        // `session_ended`: nothing.
+        return;
+    }
   }
 
   /** A raise or a cancel was refused, or failed. */

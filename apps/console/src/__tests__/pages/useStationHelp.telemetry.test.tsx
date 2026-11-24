@@ -47,13 +47,14 @@ function useHarness() {
   const [state, dispatch] = useReducer(stationReducer, INITIAL_STATION_STATE);
   const setHelp = useCallback((help: typeof state.help) => dispatch({ type: 'help_set', help }), []);
   const dismissHelpNotice = useCallback(() => dispatch({ type: 'help_notice_dismissed' }), []);
+  const noteHelpRaise = useCallback((phase: 'started' | 'failed') => dispatch({ type: phase === 'started' ? 'help_raise_started' : 'help_raise_failed' }), []);
   const help = useStationHelp({
     offered: true,
     everywhere: true,
     sessionId: 'sess-1',
     tenantId: 't-1',
     accountId: 'a-1',
-    station: { agentState: state.agentState, help: state.help, helpNotice: state.helpNotice, helpCleared: state.helpCleared, setHelp, dismissHelpNotice },
+    station: { agentState: state.agentState, help: state.help, helpNotice: state.helpNotice, helpFrame: state.helpFrame, setHelp, noteHelpRaise, dismissHelpNotice },
     clock,
   });
   return { help, state, dispatch };
@@ -352,6 +353,73 @@ describe('agency_help_cancelled', () => {
     await t.cleared(R0, 'cancelled');
     expect(names()).toEqual(['agency_help_raised']);
     expect(t.hook.result.current.help.open).toBe(true);
+  });
+});
+
+describe('which request a frame counts for (amendment 2)', () => {
+  /** Press Need help with its reply held; the returned function lands the reply. */
+  async function raiseHeld(t: ReturnType<typeof mount>, raisedAt: string) {
+    let resolve!: (v: unknown) => void;
+    mocks.raiseHelp.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    await t.press(ON_CALL);
+    return async () => {
+      await act(async () => {
+        resolve({ session_id: 'sess-1', help: { raised_at: raisedAt, call_id: null } });
+      });
+    };
+  }
+
+  it('a lapse landing before a slow raise’s reply counts for the request it names: expired, then raised', async () => {
+    const t = mount();
+    const reply = await raiseHeld(t, R1);
+    await t.cleared(R1, 'expired');
+    await reply();
+    expect(t.hook.result.current.help.open).toBe(false);
+    expect(names()).toEqual(['agency_help_expired', 'agency_help_raised']);
+  });
+
+  it('a cancel (from another window) landing before a slow raise’s reply: cancelled, then raised', async () => {
+    const t = mount();
+    const reply = await raiseHeld(t, R1);
+    await t.cleared(R1, 'cancelled');
+    await reply();
+    expect(names()).toEqual(['agency_help_cancelled', 'agency_help_raised']);
+  });
+
+  it.each([
+    ['no answer at all', new TypeError('Failed to fetch'), 'network'],
+    ['a 5xx', new ApiError(503, { message: 'down' }), 'other'],
+  ] as const)('a raise whose reply failed (%s) is out of scope: a later answer sends nothing, and still shows', async (_what, error, code) => {
+    const t = mount();
+    mocks.raiseHelp.mockRejectedValueOnce(error);
+    await t.press(ON_CALL);
+    await t.answered(R1, 'listen');
+    await t.cleared(R1, 'answered');
+    await t.cleared(R1, 'expired');
+    await t.cleared(R1, 'cancelled');
+    expect(helpEvents()).toEqual([['agency_help_refused', { action: 'raise', code }]]);
+    // The screen is LF24's, unchanged: the answer is shown.
+    expect(t.hook.result.current.state.helpNotice).toEqual({ kind: 'answered', raised_at: R1, by_name: 'Priya N', how: 'listen' });
+  });
+
+  it('nothing on screen and no raise in flight: frames send nothing', async () => {
+    const t = mount();
+    await t.answered(R1, 'message');
+    await t.cleared(R1, 'answered');
+    await t.cleared(R2, 'expired');
+    expect(names()).toEqual([]);
+  });
+
+  it('a ready that left out request A, a new raise B, then A’s late lapse before B’s reply: raised(B) only', async () => {
+    const t = mount();
+    await t.press(ON_CALL);
+    await t.ready();
+    expect(t.hook.result.current.help.open).toBe(false);
+    const reply = await raiseHeld(t, R2);
+    await t.cleared(R1, 'expired');
+    await reply();
+    expect(t.hook.result.current.state.help?.raised_at).toBe(R2);
+    expect(names()).toEqual(['agency_help_raised', 'agency_help_raised']);
   });
 });
 

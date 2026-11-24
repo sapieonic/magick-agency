@@ -218,7 +218,7 @@ export function useAgencyStation(
     dialActivity,
     help,
     helpNotice,
-    helpCleared,
+    helpFrame,
     supervisorMessages,
   } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
@@ -1680,6 +1680,10 @@ export function useAgencyStation(
   // Floor assist's own writes into the station state (the raise and cancel answers, the agent's
   // dismissals). `dispatch` is stable, so these are too.
   const setHelp = useCallback((next: AgencySessionHelp | null) => dispatch({ type: 'help_set', help: next }), []);
+  const noteHelpRaise = useCallback(
+    (phase: 'started' | 'failed') => dispatch({ type: phase === 'started' ? 'help_raise_started' : 'help_raise_failed' }),
+    [],
+  );
   const dismissHelpNotice = useCallback(() => dispatch({ type: 'help_notice_dismissed' }), []);
   const dismissSupervisorMessage = useCallback(
     (id: string) => dispatch({ type: 'supervisor_message_dismissed', id }),
@@ -1762,9 +1766,10 @@ export function useAgencyStation(
     dialActivity,
     help,
     helpNotice,
-    helpCleared,
+    helpFrame,
     supervisorMessages,
     setHelp,
+    noteHelpRaise,
     dismissHelpNotice,
     dismissSupervisorMessage,
     reconnect,

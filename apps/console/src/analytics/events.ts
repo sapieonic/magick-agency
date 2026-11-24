@@ -744,9 +744,10 @@ export function trackAgencySoftphoneSwitch(props: EventCatalog['agency_softphone
 // Each Need help event fires at most once per request (its `raised_at`) on a page, through
 // reconnects, duplicate frames, a raise's answer landing after the frames that ended it and a
 // cancel that lost the race to an answer (`utils/agency/helpTelemetry`, LF24's races). Raised is
-// the raise's answer, never a `ready.help`; cancelled is the server's `help_cleared { cancelled }`,
-// never the cancel's reply. A `session_ended` clear, or a frame about an earlier request, sends
-// nothing.
+// the raise's answer, never a `ready.help`; the end events are the frames about a request in scope
+// (on screen, a raise in flight, or one the agent pressed Cancel for), cancelled the server's
+// `help_cleared { cancelled }` and never the cancel's reply. A `session_ended` clear, or a frame
+// out of scope, sends nothing.
 
 /** Where the agent pressed Need help: the campaign's own screen, an inbound call, or a soft phone screen. */
 export type AgencyHelpSurface = 'station' | 'inbound' | 'softphone';

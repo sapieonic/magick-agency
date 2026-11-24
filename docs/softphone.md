@@ -441,8 +441,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   reasons, Save's blocks, announcements and the override dialog; a code the console has no words
   for gets "That did not go through. Try again in a moment.", never the server's sentence.
 - **Need help and supervisors' messages on `/dialer/phone` (LF39).** The page's socket is a station
-  socket like the station's (`/proxy/agency/station`, `client=web`, which has `floor_assist`
-  without declaring it), so it hears `ready.help`, `help_answered`, `help_cleared` and
+  socket like the station's (`/proxy/agency/station`). The console sends no `client` parameter, so
+  the server takes it as `web` (`DEFAULT_STATION_UPGRADE` in `apps/server/src/agency/
+  station-upgrade.ts`), and a `web` station has `floor_assist` without declaring it; so it hears `ready.help`, `help_answered`, `help_cleared` and
   `supervisor_message`, and runs them through the station's reducer. The top bar has the station's
   **Need help** after the agent nav and the listening notice (`SideNeedHelpButton`, the station's
   soft phone and inbound views use the same): shown while `agency_floor_assist_enabled` is on and
@@ -454,16 +455,28 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   and each change of the request is said once in the page's polite region (`FloorAssistAnnouncer`).
   Messages show whatever the console's flag map says, as on the station (the server sends them
   only while the account's flag is on).
-- **Telemetry for Need help and messages (LF39).** `agency_help_raised` (`surface: 'softphone'`
-  on this page and the station's soft phone view, `inbound` on an inbound call, `station` on the
-  campaign's screens; `on_call` on a call or owing its outcome), `agency_help_cancelled`,
-  `agency_help_answered`, `agency_help_expired` and `agency_help_refused`, each at most once per
-  request (`utils/agency/helpTelemetry.ts`, so LF24's races count once): raised on the first raise
-  answer naming a request not yet reported (never a `ready.help`), cancelled only on the server's
-  `help_cleared { cancelled }` on either side of the cancel's reply (the reply is `help: null`
-  whether the cancel won or lost), a cancel that lost to an answer sent as answered;
-  `agency_supervisor_message_shown` once per message id. The app sends the same names by the same
-  rules (`analytics/events.ts`).
+- **Telemetry for Need help and messages (LF39, amendment 2).** In `analytics/events.ts`, sent by
+  `utils/agency/helpTelemetry.ts`, each Need help event at most once per request (`raised_at`):
+  - `agency_help_raised` (`surface`: `softphone` on this page and the station's soft phone view,
+    `inbound` on an inbound call, `station` on the campaign's screens; `on_call` on a campaign or
+    inbound call or its wrap-up, or on the soft phone while its call is connected or owes its
+    outcome, never while dialling or ringing): the first raise answer naming a `raised_at` not yet
+    reported, on screen or not when it lands. A `ready.help` or a frame never sends it.
+  - The end events come from the frames, only for a request in scope when the frame landed: the one
+    on screen; with nothing on screen, any request while a raise is in flight (pressed, its reply
+    not back), except the one the station last saw end (`helpEndedAt`); or one the agent pressed
+    Cancel for (from the press). The reducer decides the first two as the frame lands
+    (`helpRaising`, `helpFrame`). A raise whose reply failed (no answer, 5xx) is no longer in
+    flight, so a later answer for it sends nothing, though the screen still shows it (LF24).
+    `agency_help_answered` on `help_answered` (`how` from the frame), or on `help_cleared
+    { answered }` with `how: 'unknown'` when no `help_answered` was sent; `agency_help_expired` on
+    `help_cleared { expired }`; `agency_help_cancelled` on `help_cleared { cancelled }`, never on
+    the cancel's reply (`help: null` whether it won or lost). One end event per request; a cancel
+    that lost the race to an answer sends answered. `session_ended` sends nothing.
+  - `agency_help_refused` for a refused or failed raise or cancel; `agency_supervisor_message_shown`
+    once per message id, with `on_call` as above.
+
+  The app sends the same names by the same rules.
 - **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0` (also a
   bracketed `(0)` after a country code, `+44 (0)20…`), spaces and `tel:`; typing drops a leading
   trunk `0` (the field reads after the country-code chip) and turns `00` into `+`; Enter calls.

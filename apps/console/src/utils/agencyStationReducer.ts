@@ -148,13 +148,19 @@ export interface StationState {
    */
   helpEndedAt: string | null;
   /**
-   * The last `help_cleared` this station heard about the request on screen, or with nothing on
-   * screen (a new object for each, duplicates included), and whether that request was on screen
-   * when it landed; one about another request than the one on screen is ignored like the rest. Nothing on screen reads it; it is
-   * for Need help's telemetry (LF39), which needs a `cancelled` clear the screen does not show
-   * (the cancel's own answer may have cleared the request first).
+   * A raise of this agent's is in flight: pressed, its answer not back (`help_raise_started`, ended
+   * by its answer, `help_set`, or its failure, `help_raise_failed`). Nothing on screen reads it.
    */
-  helpCleared: { frame: AgencyStationHelpClearedFrame; onScreen: boolean } | null;
+  helpRaising: boolean;
+  /**
+   * The last `help_answered` or `help_cleared` this station heard that the screen did not ignore
+   * (a new object for each, duplicates included), and whether it was in scope when it landed: about
+   * the request on screen, or, with nothing on screen, a raise in flight and not about the request
+   * this station last saw end (`helpEndedAt`). Nothing on screen reads it: it is Need help's
+   * telemetry (LF39, its amendment 2), which also counts a frame about a request the agent pressed
+   * Cancel for.
+   */
+  helpFrame: { frame: AgencyStationHelpAnsweredFrame | AgencyStationHelpClearedFrame; inScope: boolean } | null;
   /**
    * Supervisors' messages to this agent (`supervisor_message`, LF5), oldest first, each id once,
    * until the agent dismisses it. Kept through a reconnect: a message is not state the server
@@ -209,7 +215,8 @@ export const INITIAL_STATION_STATE: StationState = {
   help: null,
   helpNotice: null,
   helpEndedAt: null,
-  helpCleared: null,
+  helpRaising: false,
+  helpFrame: null,
   supervisorMessages: [],
 };
 
@@ -248,6 +255,9 @@ export type StationAction =
    * itself sends no frame (LF15), so its answer is what shows it.
    */
   | { type: 'help_set'; help: AgencySessionHelp | null }
+  /** The agent pressed Need help (a raise is in flight), or that raise failed with no answer. */
+  | { type: 'help_raise_started' }
+  | { type: 'help_raise_failed' }
   | { type: 'help_answered'; frame: AgencyStationHelpAnsweredFrame }
   | { type: 'help_cleared'; frame: AgencyStationHelpClearedFrame }
   /** The agent dismissed what the station said about their last request. */
@@ -475,26 +485,34 @@ export function stationReducer(state: StationState, action: StationAction): Stat
       }
       return patch(state, { customerWaiting: action.frame });
 
+    case 'help_raise_started':
+      return state.helpRaising ? state : { ...state, helpRaising: true };
+
+    case 'help_raise_failed':
+      return state.helpRaising ? { ...state, helpRaising: false } : state;
+
     case 'help_set': {
       const { help } = action;
+      // Any answer ends a raise in flight (a cancel's too: none is in flight then).
+      const was = state.helpRaising ? { ...state, helpRaising: false } : state;
       if (help === null) {
         // The agent's cancel: the request ends here, and says nothing (they know). An answer that
         // reached it first (`help_answered`, its `help_cleared` still on the way) is kept: the
         // supervisor is listening in or wrote, whatever the cancel says.
-        if (state.help === null) return state;
-        const answered = answeredNoticeFor(state.helpNotice, state.help.raised_at);
-        return { ...state, help: null, helpNotice: answered, helpEndedAt: state.help.raised_at };
+        if (was.help === null) return was;
+        const answered = answeredNoticeFor(was.helpNotice, was.help.raised_at);
+        return { ...was, help: null, helpNotice: answered, helpEndedAt: was.help.raised_at };
       }
       // A frame already ended this very request (it was answered or lapsed while the raise was in
       // flight): the late answer must not open it again.
-      if (help.raised_at === state.helpEndedAt) return state;
+      if (help.raised_at === was.helpEndedAt) return was;
       // A raise while one is open answers the open one unchanged (LF13): nothing moves.
-      if (state.help?.raised_at === help.raised_at && state.help.call_id === help.call_id) return state;
+      if (was.help?.raised_at === help.raised_at && was.help.call_id === help.call_id) return was;
       // An answer that arrived before the raise's own answer is about this request: kept.
       return {
-        ...state,
+        ...was,
         help: { raised_at: help.raised_at, call_id: help.call_id },
-        helpNotice: answeredNoticeFor(state.helpNotice, help.raised_at),
+        helpNotice: answeredNoticeFor(was.helpNotice, help.raised_at),
       };
     }
 
@@ -507,12 +525,13 @@ export function stationReducer(state: StationState, action: StationAction): Stat
       return {
         ...state,
         helpNotice: { kind: 'answered', raised_at: frame.raised_at, by_name: frame.by_name, how: frame.how },
+        helpFrame: { frame, inScope: helpFrameInScope(state, frame.raised_at) },
       };
     }
 
     case 'help_cleared': {
       const { frame } = action;
-      const helpCleared = { frame, onScreen: state.help !== null };
+      const helpFrame = { frame, inScope: helpFrameInScope(state, frame.raised_at) };
       // An answer that arrived first stays, and an answer told only by the clear is still an answer.
       const answered: StationHelpNotice | null = frame.reason === 'answered'
         ? answeredNoticeFor(state.helpNotice, frame.raised_at)
@@ -523,15 +542,15 @@ export function stationReducer(state: StationState, action: StationAction): Stat
         // (it would then stay open forever: no frame about it is coming). A lapse, a cancel or a
         // session end says nothing about a request the station is not showing.
         const helpNotice = answered ?? state.helpNotice;
-        return { ...state, helpNotice, helpEndedAt: frame.raised_at, helpCleared };
+        return { ...state, helpNotice, helpEndedAt: frame.raised_at, helpFrame };
       }
-      // About another request than the one on screen: changes nothing, telemetry included.
+      // About another request than the one on screen: changes nothing.
       if (state.help.raised_at !== frame.raised_at) return state;
       // `cancelled` (the agent's own, from another window or the answer racing this frame) and
       // `session_ended` clear without a word.
       const helpNotice: StationHelpNotice | null = answered
         ?? (frame.reason === 'expired' ? { kind: 'expired', raised_at: frame.raised_at } : null);
-      return { ...state, help: null, helpNotice, helpEndedAt: frame.raised_at, helpCleared };
+      return { ...state, help: null, helpNotice, helpEndedAt: frame.raised_at, helpFrame };
     }
 
     case 'help_notice_dismissed':
@@ -560,6 +579,16 @@ export function stationReducer(state: StationState, action: StationAction): Stat
       return { ...state, dialActivity: next };
     }
   }
+}
+
+/**
+ * Whether a frame about `raisedAt`, landing on `state`, is in Need help telemetry's scope (LF39):
+ * the request on screen; or, with nothing on screen, a raise in flight (the frame may be about it)
+ * unless it names the request this station last saw end (a `ready` that left it out, its clear late).
+ */
+function helpFrameInScope(state: StationState, raisedAt: string): boolean {
+  if (state.help !== null) return state.help.raised_at === raisedAt;
+  return state.helpRaising && raisedAt !== state.helpEndedAt;
 }
 
 /** The notice when it says that request `raisedAt` was answered, else null. */

@@ -267,11 +267,13 @@ export interface UseAgencyStationResult {
    */
   help: AgencySessionHelp | null;
   helpNotice: StationHelpNotice | null;
-  /** The last `help_cleared` heard, and whether it named the request on screen (telemetry, LF39). */
-  helpCleared: StationState['helpCleared'];
+  /** The last Need help frame heard, and whether it was in scope (telemetry, LF39). See `StationState`. */
+  helpFrame: StationState['helpFrame'];
   supervisorMessages: readonly AgencyStationSupervisorMessageFrame[];
   /** The raise's answer (the open request) or the cancel's (`null`): the raise sends no frame. */
   setHelp: (help: AgencySessionHelp | null) => void;
+  /** A raise was sent (`started`), or it failed with no answer (`failed`): the frames' scope (LF39). */
+  noteHelpRaise: (phase: 'started' | 'failed') => void;
   dismissHelpNotice: () => void;
   dismissSupervisorMessage: (id: string) => void;
   /** Force a reconnect (the "Reconnect" button on a dropped station). */
