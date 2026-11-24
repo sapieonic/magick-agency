@@ -170,8 +170,10 @@ export interface AgencyContextDisplay {
    * matched ignoring case. More details lists every other column of the row (minus `hidden`, the
    * name, the line under it and the chosen facts), so ABSENT or `[]` shows them all. Unlike
    * `hidden` it reaches the agent's More details only: supervisors still see these columns on the
-   * contact page and in customer history, and a column here may still be a fact, the name or the
-   * line under it. Column names as in the roster's header, 1 to 200 characters each.
+   * contact page, and a column here may still be a fact, the name or the line under it. Column
+   * names as in the roster's header, 1 to 200 characters each, at most 500 of them (the
+   * campaign-config write refuses more). Not yet read by the side views (an inbound caller, a
+   * soft-phone call), whose clients list the row themselves.
    */
   more_hidden?: string[];
 }

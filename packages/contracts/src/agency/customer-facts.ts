@@ -191,18 +191,21 @@ export interface AgencyCustomerFacts {
    */
   tiles: AgencyFactTile[];
   /**
-   * AS20, "More details": the row's other columns, which the agent opens under the card. Built by
-   * the domain's one rule (`moreDetailTiles`, `packages/domain/src/more-details.ts`): every column
-   * of the row with a value, minus `hidden`, minus `more_hidden`, minus the columns sent as `name`
-   * and `place`, minus the chosen facts' columns (`facts`; on the BE-6 path a client also leaves
-   * out the columns it drew as tiles); in `context_display.order`, then the row's own order; at
-   * most {@link AGENCY_MORE_DETAILS_MAX}. Each tile has `column`, `type`, `raw` and `value` only
-   * (no `label`, `key`, `highlight` or `role`): a client names it by its column. Its type is
-   * `types[column]`; a column `types` does not name whose value reads as a phone number (an Indian
-   * mobile, or `+` and 8 or more digits) is sent as `phone`, so a campaign that hides numbers
-   * (`phone_display: masked`) masks it too. Always sent by a server that builds it, `[]` when there
-   * is nothing more; absent from an older server, when a client keeps its own reading of `context`
-   * for any list of the customer's columns (the app's Details).
+   * AS20, "More details": the row's other columns, which the agent opens under the card. Built by the
+   * domain's one rule (`moreDetailTiles`, `packages/domain/src/more-details.ts`): every column of the
+   * row with a value, minus `hidden`, minus `more_hidden`, minus the columns sent as `name` and
+   * `place`, minus the chosen facts' columns (`facts`; on the BE-6 path a client also leaves out the
+   * columns it drew as tiles); at most {@link AGENCY_MORE_DETAILS_MAX}. Each tile has `column`,
+   * `type`, `raw` and `value` only (no `label`, `key`, `highlight` or `role`): a client names it by
+   * its column. Its type is `types[column]` (on a card without `facts`, the `amount_due` / `due_date`
+   * role columns are `money` / `date`, as on the card); a column `types` does not name whose value
+   * holds a phone number (read loosely: an Indian mobile or landline, or `+` / `00` and 8 or more
+   * digits, in a value that is not a long text; the domain's `looksLikePhoneNumber`) is sent as
+   * `phone`, read per value, so a campaign that hides numbers (`phone_display: masked`) masks it too;
+   * its `value` may then be null (`9876543210.0`), and a client masks `raw` on its digits. Order:
+   * `order`, then the campaign's imports' column order, then the row's own. Always sent by a server
+   * that builds it, `[]` when there is nothing more; absent from an older server, when a client keeps
+   * its own reading of `context` for any list of the customer's columns (the app's Details).
    */
   more?: AgencyFactTile[];
 }

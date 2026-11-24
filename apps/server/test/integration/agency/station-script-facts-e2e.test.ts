@@ -211,14 +211,15 @@ describe('the script on the join and the facts on the call — real app, real ru
         { column: 'Limit', type: 'money', raw: 'about 2 lakh', value: null },
       ],
       // AS20: More details, every other column (not the name, the place or a hidden one; a legacy
-      // card's client leaves out the tiles it drew). With no `order`, in the row's own key order as
-      // the database gives it back (jsonb: shorter keys first), which is why Settings and New
-      // campaign write the upload's order.
+      // card's client leaves out the tiles it drew), the role columns read as the card reads them.
+      // With no `order` and no import (this roster is written directly), in the row's own key order
+      // as the database gives it back (jsonb: shorter keys first); a real campaign's imports give
+      // the file's order (`AgencyDialer.columnOrderOf`).
       more: [
         { column: 'Limit', type: 'money', raw: 'about 2 lakh', value: null },
         { column: 'Loan No', type: 'text', raw: 'LN-0042', value: null },
-        { column: 'Due Date', type: 'text', raw: '25/11/2026', value: null },
-        { column: 'Amount Due', type: 'text', raw: '₹1,25,000', value: null },
+        { column: 'Due Date', type: 'date', raw: '25/11/2026', value: '2026-11-25' },
+        { column: 'Amount Due', type: 'money', raw: '₹1,25,000', value: '125000' },
       ],
     });
     expect(JSON.stringify(reserved.facts)).not.toContain('1234 5678 9012');

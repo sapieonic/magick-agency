@@ -2898,6 +2898,78 @@
     {
       "raw": "",
       "phone": false
+    },
+    {
+      "raw": "9876543210.0",
+      "phone": true
+    },
+    {
+      "raw": "9876543210 / 9123456789",
+      "phone": true
+    },
+    {
+      "raw": "+91 98765 43210, +91 91234 56789",
+      "phone": true
+    },
+    {
+      "raw": "Mob: 9876543210",
+      "phone": true
+    },
+    {
+      "raw": "98765 43210 (home)",
+      "phone": true
+    },
+    {
+      "raw": "+91-98765-43210.",
+      "phone": true
+    },
+    {
+      "raw": "00919876543210",
+      "phone": true
+    },
+    {
+      "raw": "0919876543210",
+      "phone": true
+    },
+    {
+      "raw": "022 2345 6789",
+      "phone": true
+    },
+    {
+      "raw": "02223456789",
+      "phone": true
+    },
+    {
+      "raw": "98765​43210",
+      "phone": true
+    },
+    {
+      "raw": "９８７６５４３２１０",
+      "phone": true
+    },
+    {
+      "raw": "Paid on 12 Nov, said to call his brother on 9876543210 after six",
+      "phone": false
+    },
+    {
+      "raw": "20/11/2026",
+      "phone": false
+    },
+    {
+      "raw": "2026-11-20",
+      "phone": false
+    },
+    {
+      "raw": "12500.50",
+      "phone": false
+    },
+    {
+      "raw": "1,25,000",
+      "phone": false
+    },
+    {
+      "raw": "00 12",
+      "phone": false
     }
   ]
 }

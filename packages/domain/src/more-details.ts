@@ -22,33 +22,85 @@
  * trimmed; `type` the column's declared type (`types`, exact else ignoring case, one of the six),
  * else text; `value` the domain's parse.
  *
- * A column `types` does not name whose value {@link looksLikePhoneNumber} is typed `phone`, so a
- * campaign that hides numbers (`phone_display: masked`) masks it as it masks the customer's own:
- * an "Alternate mobile" uploaded as plain text cannot show in full by mistake. A supervisor who
- * means it as something else gives it a type in Settings (Number, say).
+ * A column `types` does not name (with one of the six types) whose value holds a phone number
+ * ({@link looksLikePhoneNumber}) is typed `phone`, so a campaign that hides numbers
+ * (`phone_display: masked`) masks it as it masks the customer's own: an "Alternate mobile" uploaded
+ * as plain text cannot show in full by mistake. It is read per value, as the server sees one row at
+ * a time: Settings reads every sample row and says so. A supervisor who means it as something else
+ * gives it a type in Settings (Text or Number, say). On a card that has not chosen its facts, the
+ * `amount_due` and `due_date` role columns are money and a date, as on the card.
  */
-import { AGENCY_MORE_DETAILS_MAX, type AgencyContextFieldType, type AgencyFactTile } from '@magick-agency/contracts/agency';
+import {
+  AGENCY_CONTEXT_FIELD_TYPES,
+  AGENCY_MORE_DETAILS_MAX,
+  type AgencyContextFieldType,
+  type AgencyFactTile,
+} from '@magick-agency/contracts/agency';
 import { asRecord, contextValueText, declaredColumnType, fold, hiddenSet, isBlankContextValue, rowKey } from './context-columns';
-import { parseContextFact, parsePhoneFact } from './context-facts';
+import { parseContextFact } from './context-facts';
 import { customerNameColumn, customerPlaceColumn, factColumnsOf } from './customer-name';
 import { indianMobileDigits } from './fact-phone';
-import { factTypeOf } from './fact-tiles';
 
-/** The fewest digits a number written with `+` has before it reads as a phone number. */
-export const MORE_PHONE_MIN_INTERNATIONAL_DIGITS = 8;
+/** The fewest digits a number written with `+` (or `00`) has before it reads as a phone number. */
+const MORE_PHONE_MIN_INTERNATIONAL_DIGITS = 8;
+
+/** The most digits a phone number has (E.164). */
+const MORE_PHONE_MAX_DIGITS = 15;
 
 /**
- * True when a text value reads as a phone number: the domain's phone parse accepts it and it is an
- * Indian mobile (ten digits starting 6 to 9, with an optional `91` or `0` before them), or it is
- * written with a leading `+` and has at least {@link MORE_PHONE_MIN_INTERNATIONAL_DIGITS} digits.
- * A bare number that is not a mobile (`1234 5678 9012`, `24`) is not.
+ * The most letters a value holding a phone number may have besides it (`Mob:`, `(home)`, `or`):
+ * a longer text is a remark, read as text, since masking it would leave the agent only digits.
+ */
+const MORE_PHONE_MAX_LETTERS = 12;
+
+/** The most digit groups of one run that are tried together: far above a written phone number's. */
+const MORE_PHONE_MAX_GROUPS = 12;
+
+/**
+ * True when a text value holds a phone number, read loosely, since a roster's cells are written
+ * every which way (`9876543210.0` from a spreadsheet, `Mob: 98765 43210`, two numbers in one cell,
+ * `022 2345 6789`): the value is read as Unicode's compatibility form (full-width digits) without
+ * zero-width characters, and a `.0` after digits dropped; each run of digits joined by spaces,
+ * dashes, dots and brackets is split into its digit groups, and the value holds a phone number when
+ * some consecutive groups together are
+ *  - an Indian mobile (ten digits starting 6 to 9, with an optional `91`, `0` or `091` before them),
+ *  - an Indian landline with its STD code (`0` and ten digits), or
+ *  - written with a leading `+` or `00`, with {@link MORE_PHONE_MIN_INTERNATIONAL_DIGITS} to 15
+ *    digits after it.
+ * A number that is none of these (`1234 5678 9012`, `24`, `LN-0042`, `20/11/2026`) is not, and
+ * neither is a value with more than {@link MORE_PHONE_MAX_LETTERS} letters (a remark that mentions
+ * a number stays readable). Otherwise, when in doubt it reads as a phone: a client masks a value it
+ * cannot parse on its digits, so a wrong guess hides digits, never shows them.
  */
 export function looksLikePhoneNumber(raw: string): boolean {
-  const parsed = parsePhoneFact(raw);
-  if (parsed === null) return false;
-  const digits = parsed.replace(/\D/g, '');
+  const text = String(raw)
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/(\d)\.0+(?!\d)/g, '$1');
+  if ((text.match(/\p{L}/gu) ?? []).length > MORE_PHONE_MAX_LETTERS) return false;
+  for (const run of text.match(/\+?\d[\d\s().-]*\d/g) ?? []) {
+    const groups = run.split(/[\s().-]+/).filter((g) => g !== '').slice(0, MORE_PHONE_MAX_GROUPS);
+    for (let i = 0; i < groups.length; i++) {
+      for (let j = i + 1; j <= groups.length; j++) {
+        if (isPhoneDigits(groups.slice(i, j).join(''))) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** One candidate of {@link looksLikePhoneNumber}: digits, with a `+` first when written. */
+function isPhoneDigits(candidate: string): boolean {
+  const plus = candidate.startsWith('+');
+  const digits = candidate.replace(/\D/g, '');
+  if (digits.length > MORE_PHONE_MAX_DIGITS + 2) return false;
+  const international = plus ? digits : digits.startsWith('00') ? digits.slice(2) : null;
+  if (international !== null && international.length >= MORE_PHONE_MIN_INTERNATIONAL_DIGITS && international.length <= MORE_PHONE_MAX_DIGITS) {
+    return true;
+  }
   if (indianMobileDigits(digits) !== null) return true;
-  return parsed.startsWith('+') && digits.length >= MORE_PHONE_MIN_INTERNATIONAL_DIGITS;
+  if (digits.length === 13 && digits.startsWith('091') && indianMobileDigits(digits.slice(1)) !== null) return true;
+  return digits.length === 11 && digits.startsWith('0') && digits[1] !== '0';
 }
 
 /** The display configuration {@link moreDetailTiles} reads (`AgencyContextDisplay`, possibly hand-edited JSON). */
@@ -61,10 +113,13 @@ export interface MoreDetailsDisplay {
   facts?: unknown;
 }
 
-/** The type a More details tile is read as: the declared one, else phone when it reads as one, else text. */
+/**
+ * The type a More details tile is read as: the declared one (one of the six; anything else stored
+ * is not a declaration), else phone when the value holds a phone number, else text.
+ */
 export function moreDetailTypeOf(column: string, raw: string, types: unknown): AgencyContextFieldType {
-  const type = factTypeOf(column, types);
-  if (type !== 'text' || declaredColumnType(column, types) !== undefined) return type;
+  const declared = declaredColumnType(column, types);
+  if ((AGENCY_CONTEXT_FIELD_TYPES as readonly unknown[]).includes(declared)) return declared as AgencyContextFieldType;
   return looksLikePhoneNumber(raw) ? 'phone' : 'text';
 }
 
@@ -92,6 +147,14 @@ export function moreDetailTiles(
   if (nameKey !== undefined) skip.add(fold(nameKey));
   if (placeKey !== undefined) skip.add(fold(placeKey));
   if (Array.isArray(shown.facts)) for (const column of factColumnsOf(shown)) skip.add(fold(column));
+  // On a card that has not chosen its facts (BE-6), the amount-due and due-date role columns are
+  // read as money and a date whatever `types` says, as the card's own tiles read them.
+  const roles = Array.isArray(shown.facts) ? null : asRecord(shown.roles);
+  const roleType = (column: string): AgencyContextFieldType | undefined => {
+    if (typeof roles?.['amount_due'] === 'string' && fold(roles['amount_due']) === fold(column)) return 'money';
+    if (typeof roles?.['due_date'] === 'string' && fold(roles['due_date']) === fold(column)) return 'date';
+    return undefined;
+  };
 
   const ordered: string[] = [];
   const take = (name: unknown): void => {
@@ -107,7 +170,7 @@ export function moreDetailTiles(
     if (tiles.length >= AGENCY_MORE_DETAILS_MAX) break;
     if (skip.has(fold(column)) || isBlankContextValue(row[column])) continue;
     const raw = (contextValueText(row[column]) ?? '').trim();
-    const type = moreDetailTypeOf(column, raw, shown.types);
+    const type = roleType(column) ?? moreDetailTypeOf(column, raw, shown.types);
     tiles.push({ column, type, raw, value: parseContextFact(raw, type, now) });
   }
   return tiles;
