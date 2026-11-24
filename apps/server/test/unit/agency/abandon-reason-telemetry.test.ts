@@ -96,7 +96,9 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyInsightsPacingRepository: repos.insightsPacing,
 }));
 
-import { AgencyDialer, DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS, PRE_CARRIER_FAILURE_REDIAL_DELAY_MS } from '../../../src/agency/agency-dialer.js';
+import {
+  AgencyDialer, DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS, PRE_CARRIER_FAILURE_REDIAL_DELAY_MS, providerLabel,
+} from '../../../src/agency/agency-dialer.js';
 import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 import { CarrierRequestTimeoutError } from '../../../src/telephony/carrier-errors.js';
 import { OUR_FAULT_REDIAL_BOUND } from '../../../src/agency/retry-policy.js';
@@ -242,7 +244,7 @@ function makeCmd(): DialCommand {
   };
 }
 
-async function dialedWorld() {
+async function dialedWorld(cmd: DialCommand = makeCmd()) {
   const bridge = fakeBridge();
   const stations = new StationRegistry(null, '', 'r1');
   const agents = new AgentStateMachine(null, '');
@@ -256,7 +258,7 @@ async function dialedWorld() {
     sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
     agentUserId: 'user-1', ws: ws as any,
   });
-  await dialer.executeDial(makeCmd());
+  await dialer.executeDial(cmd);
   return { bridge, stations, dialer, ws };
 }
 
@@ -1502,5 +1504,147 @@ describe('the exported series carry exactly these values and labels', () => {
       status: 'canceled', outcome: 'agent_hangup', answered: false,
     });
     expect(await moved(before, RETIREMENT)).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// `agency_answer_to_bridge_seconds`: the carrier's answer → the bridge.
+//
+// The interval the abandonment predicate compares with the grace (AG1). On 23 Nov the audio
+// of ~8% of answered calls connected 1.06-1.25 s or ~5 s after the answer, and nothing
+// measured it: the bind latency (our share of it) was under 25 ms throughout. These pin that
+// it is observed once per bridged call, from the same two instants the predicate reads, with
+// the bounded `provider` label and no `campaign_id`, and that a call that never bridged
+// observes nothing (it has no value; the abandonment causes count it).
+// ===========================================================================
+const ANSWER_TO_BRIDGE = 'agency_answer_to_bridge_seconds';
+
+type HistogramValue = { count: number; sum: number; buckets: { boundaries: number[]; counts: number[] } };
+
+/** The one histogram point of `name` for exactly `labels`: count, sum and its buckets. */
+async function histogramPoint(name: string, labels: Record<string, string>): Promise<HistogramValue> {
+  const want = JSON.stringify(Object.entries(labels).sort());
+  const { resourceMetrics } = await reader.collect();
+  const metric = resourceMetrics.scopeMetrics.flatMap((s) => s.metrics).find((m) => m.descriptor.name === name);
+  const point = metric?.dataPoints.find((p) => JSON.stringify(Object.entries(p.attributes).sort()) === want);
+  return (point?.value as HistogramValue | undefined) ?? { count: 0, sum: 0, buckets: { boundaries: [], counts: [] } };
+}
+
+/** Observations at or under `le` seconds (the cumulative bucket Prometheus calls `le`); 0 before any. */
+function atOrUnder(point: HistogramValue, le: number): number {
+  if (point.count === 0) return 0;
+  const i = point.buckets.boundaries.indexOf(le);
+  if (i < 0) throw new Error(`${le} is not a bucket boundary`);
+  return point.buckets.counts.slice(0, i + 1).reduce((a, b) => a + b, 0);
+}
+
+const GRACE_S = ABANDONMENT_BRIDGE_GRACE_MS / 1000;
+
+describe('agency_answer_to_bridge_seconds', () => {
+  const VOICELINK = { tenant_id: 't1', provider: 'voicelink' };
+
+  it('observes a bridged call once, as bridged_at − answered_at, under the call\'s carrier', async () => {
+    const before = await histogramPoint(ANSWER_TO_BRIDGE, VOICELINK);
+    const series = await snapshotSeries(ANSWER_TO_BRIDGE);
+    const world = await dialedWorld();
+    // The ~5 s cluster of 23 Nov: answered 5 s before the bridge.
+    const answeredAt = new Date(Date.now() - 5_000);
+    await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true, answeredAt });
+    await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true, answeredAt });
+
+    // Exactly one series moved, by one, with exactly these labels: no `campaign_id`.
+    expect(seriesDelta(series, await snapshotSeries(ANSWER_TO_BRIDGE))).toEqual([{ attrs: VOICELINK, by: 1 }]);
+    const after = await histogramPoint(ANSWER_TO_BRIDGE, VOICELINK);
+    // The bridge instant is the dialer's own clock, a few ms after `answeredAt + 5 s`.
+    expect(after.sum - before.sum).toBeGreaterThanOrEqual(4.999);
+    expect(after.sum - before.sum).toBeLessThan(5.5);
+    // Over the grace: not in the `le` bucket the dashboard's share reads.
+    expect(atOrUnder(after, GRACE_S) - atOrUnder(before, GRACE_S)).toBe(0);
+  });
+
+  it('a bridge inside the grace lands at or under it, and the call is not abandoned', async () => {
+    const before = await histogramPoint(ANSWER_TO_BRIDGE, VOICELINK);
+    const world = await dialedWorld();
+    // The ~1.1 s cluster: no longer abandoned under AG1.
+    const answeredAt = new Date(Date.now() - 1_100);
+    await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true, answeredAt });
+    await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true, answeredAt });
+    await world.bridge.emit({
+      callId: 'call-1', correlationId: 'att-1', phase: 'ended',
+      status: 'completed', outcome: 'remote_hangup', answered: true, talkTimeSeconds: 40,
+    });
+
+    const after = await histogramPoint(ANSWER_TO_BRIDGE, VOICELINK);
+    expect(after.count - before.count).toBe(1);
+    expect(after.sum - before.sum).toBeGreaterThanOrEqual(1.099); // float sums: 1.1 can read 1.0999…
+    expect(atOrUnder(after, GRACE_S) - atOrUnder(before, GRACE_S)).toBe(1);
+    expect(persistedOutcome()).toBe('connected');
+  });
+
+  it('measures from the back-filled answer when the `answered` phase never arrived', async () => {
+    // `onBridged` back-fills `live.answeredAt` from the bridge's anchor; the observation
+    // must read it after the back-fill, or a missed `answered` costs the reading.
+    const before = await histogramPoint(ANSWER_TO_BRIDGE, VOICELINK);
+    const world = await dialedWorld();
+    const answeredAt = new Date(Date.now() - 2_000);
+    await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true, answeredAt });
+
+    const after = await histogramPoint(ANSWER_TO_BRIDGE, VOICELINK);
+    expect(after.count - before.count).toBe(1);
+    expect(after.sum - before.sum).toBeGreaterThanOrEqual(1.999);
+    expect(after.sum - before.sum).toBeLessThan(2.5);
+  });
+
+  it('observes nothing for a call answered and never bridged (the abandonment causes count it)', async () => {
+    const series = await snapshotSeries(ANSWER_TO_BRIDGE);
+    const world = await dialedWorld();
+    await world.bridge.emit({
+      callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true, answeredAt: new Date(),
+    });
+    await world.bridge.emit({
+      callId: 'call-1', correlationId: 'att-1', phase: 'ended',
+      status: 'completed', outcome: 'remote_hangup', answered: true, talkTimeSeconds: 5,
+    });
+
+    expect(persistedOutcome()).toBe('abandoned');
+    expect(seriesDelta(series, await snapshotSeries(ANSWER_TO_BRIDGE))).toEqual([]);
+  });
+
+  it('observes nothing for a bridge with no answer anchor at all (the predicate reads it as never answered)', async () => {
+    const series = await snapshotSeries(ANSWER_TO_BRIDGE);
+    const world = await dialedWorld();
+    await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: false });
+    expect(seriesDelta(series, await snapshotSeries(ANSWER_TO_BRIDGE))).toEqual([]);
+  });
+
+  it('folds a provider the code does not declare to `other`', async () => {
+    // `telephony_provider` is free text in the table: a label value must come from code.
+    const series = await snapshotSeries(ANSWER_TO_BRIDGE);
+    const world = await dialedWorld({ ...makeCmd(), campaign: { ...CAMPAIGN, telephony_provider: 'acme-telecom' } });
+    const answeredAt = new Date();
+    await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'answered', answered: true, answeredAt });
+    await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true, answeredAt });
+
+    expect(seriesDelta(series, await snapshotSeries(ANSWER_TO_BRIDGE)))
+      .toEqual([{ attrs: { tenant_id: 't1', provider: 'other' }, by: 1 }]);
+  });
+
+  it('labels a provider by the declared carriers only', () => {
+    expect(providerLabel('voicelink')).toBe('voicelink');
+    expect(providerLabel('plivo')).toBe('plivo');
+    expect(providerLabel('VoiceLink')).toBe('other');
+    expect(providerLabel(null)).toBe('other');
+    expect(providerLabel(undefined)).toBe('other');
+    expect(providerLabel('')).toBe('other');
+  });
+
+  it('has the grace as a bucket boundary, so the dashboard\'s share over it is exact', async () => {
+    // The panel reads `le="3"`. A grace moved off every boundary would leave its threshold
+    // interpolated between two buckets: move the buckets with the grace (AG1).
+    const world = await dialedWorld();
+    const answeredAt = new Date();
+    await world.bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'bridged', answered: true, answeredAt });
+    const point = await histogramPoint(ANSWER_TO_BRIDGE, VOICELINK);
+    expect(point.buckets.boundaries).toContain(GRACE_S);
   });
 });

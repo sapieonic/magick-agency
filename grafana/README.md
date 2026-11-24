@@ -165,7 +165,10 @@ count − 1, since `count_over_time` is exact.
 and `service_name=~"$service_name"`. The rows:
 - **Agency dialer**: live attempts by state, 24h abandonment, throughput,
   pre-dial gate outcomes, settled attempts by outcome, where seat time goes,
-  hold time, answer latency, late bind, abandonment causes, wrap-up,
+  hold time, answer latency, late bind, answer to audio connected
+  (`agency_answer_to_bridge_seconds` p50 / p90 / p99 by carrier against the 3 s
+  grace, and the share of bridged calls past it; no rule yet), abandonment
+  causes, wrap-up,
   our-fault retirements, campaign-completion emails; the insights rollup
   (backlog and oldest dirty mark, batch duration, batches, buckets and
   failures) and pacing-history write failures and drops; the pacing share

@@ -569,12 +569,13 @@ export const agencyPacingHistoryDroppedTotal = counter(meter, 'agency_pacing_his
 // attempt.** These series exist so the next pacing decision reads a dashboard
 // instead of re-deriving a model.
 //
-// The four questions they answer, and nothing else:
+// The five questions they answer, and nothing else:
 //
 //  1. Where does seat time actually go?          `agency_attempt_hold_seconds`
 //  2. How long does a dial take to answer?       `agency_answer_latency_seconds`
 //  3. Is the late bind inside its 3s budget?     `agency_bind_latency_seconds`
-//  4. When we abandon, why?                      `agency_abandoned_reason_total`
+//  4. Does the audio connect inside the grace?   `agency_answer_to_bridge_seconds`
+//  5. When we abandon, why?                      `agency_abandoned_reason_total`
 //
 // **All of these are per-replica COUNTERS and HISTOGRAMS, not SQL-derived gauges.**
 // So they aggregate with `sum(rate(...))` / `histogram_quantile(...)` over the
@@ -584,7 +585,7 @@ export const agencyPacingHistoryDroppedTotal = counter(meter, 'agency_pacing_his
 // because these two families now sit next to each other on the same dashboard and
 // the wrong aggregator on either is silent.
 //
-// **The four HISTOGRAMS here carry `tenant_id` but NOT `campaign_id`** (removed
+// **The HISTOGRAMS here carry `tenant_id` but NOT `campaign_id`** (removed
 // 2026-09-29). Each histogram costs `buckets + 3` series per label set — 18 for
 // the hold series — and campaigns are created continuously, so `campaign_id`
 // minted a fresh block of never-expiring series (cumulative OTLP temporality) per
@@ -712,6 +713,40 @@ export const agencyBindLatencySeconds = histogram<'tenant_id'>(meter, 'agency_bi
   description: 'Seconds from the carrier answer to the agent station socket attaching (budget: 3s)',
   unit: 's',
   buckets: [0.01, 0.025, 0.05, 0.1, 0.15, 0.25, 0.5, 0.75, 1, 2],
+});
+
+/**
+ * Carrier answer → the bridge (audio connected both ways): `bridged_at − answered_at`,
+ * the interval the abandonment predicate compares with `ABANDONMENT_BRIDGE_GRACE_MS`
+ * (3000 ms, AG1). Observed where the dialer records `bridged_at` (`onBridged`), from the
+ * same two instants the settle site's `isAbandonedAttempt` reads, so an observation above
+ * 3 s is a call the compliance rate counts as abandoned (`bridge_late`).
+ *
+ * **Why it exists beside {@link agencyBindLatencySeconds}.** The bind (answer → the
+ * agent's socket attached) is our own share of this interval and was under 25 ms on every
+ * call of 23 Nov; the carrier's media stream connecting is the rest, and on VoiceLink it
+ * came 1.06–1.25 s or ~5 s after the answer on ~8% of answered calls, which took the
+ * abandonment rate to ~10%. Nothing measured it: it was rebuilt from log timestamps.
+ *
+ * **Only calls that bridged are observed**: one that never bridged has no value. Those are
+ * the abandonments with any reason but `bridge_late` on `agency_abandoned_reason_total`,
+ * so "the share of bridges over 3 s" here is a share of bridged calls, not of answered ones.
+ *
+ * Labels: `tenant_id`, not `campaign_id` (the series-cost rule at the head of this block),
+ * and `provider`, because the lag is the carrier's. `provider` is the campaign's
+ * `telephony_provider` the dial was placed on, folded by the dialer to the carriers the
+ * code declares (`carrierRingingDeclarations()`) or `other`: the column is free text, and
+ * label values are bounded by source code, never by data.
+ *
+ * Buckets crowd the 3 s grace and split the two clusters seen on 23 Nov (~1.1 s, ~5 s);
+ * 3 is a boundary on purpose, so `le="3"` reads the share over the grace exactly. The
+ * server's unit test pins that the grace is a boundary, so a grace change cannot leave the
+ * panel's threshold between two buckets.
+ */
+export const agencyAnswerToBridgeSeconds = histogram<'tenant_id' | 'provider'>(meter, 'agency_answer_to_bridge_seconds', {
+  description: 'Seconds from the carrier answer to the bridge (audio connected both ways), for attempts that bridged (grace: 3s)',
+  unit: 's',
+  buckets: [0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 10],
 });
 
 /**

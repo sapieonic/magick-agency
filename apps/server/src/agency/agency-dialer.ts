@@ -33,7 +33,7 @@ import {
   DEVICE_AWAY_BREAK_REASON,
   SOFTPHONE_BREAK_REASON,
 } from '@magick-agency/contracts/agency';
-import { carrierCancelsRinging } from '../telephony/carrier-ringing.js';
+import { carrierCancelsRinging, carrierRingingDeclarations } from '../telephony/carrier-ringing.js';
 import type {
   AgencyActiveAttempt,
   AgencyAgentState,
@@ -63,6 +63,7 @@ import {
   agencyAbandonedTotal,
   agencyAttemptHoldSeconds,
   agencyAnswerLatencySeconds,
+  agencyAnswerToBridgeSeconds,
   agencyBindLatencySeconds,
   agencyBindTotal,
   agencyAbandonedReasonTotal,
@@ -183,6 +184,18 @@ const DIAL_ACTIVITY_MAX_ENTRIES = 10_000;
  * caller: Redis is the authority on agent state, so a mirror that could not be
  * written is a stale dashboard column, logged and never a reason to stop.
  */
+/** The carriers the code declares: the `provider` label's whole vocabulary, with `other`. */
+const PROVIDER_LABELS: ReadonlySet<string> = new Set(carrierRingingDeclarations());
+
+/**
+ * A campaign's `telephony_provider` as a metric label: the carrier name when the code
+ * declares that carrier, else `other`. The column is free text (a CHECK on its shape, not
+ * its values), and a label's values are bounded by source code, never by data.
+ */
+export function providerLabel(provider: string | null | undefined): string {
+  return provider && PROVIDER_LABELS.has(provider) ? provider : 'other';
+}
+
 /** A number's digits, as the busy probe compares them (`CONTACT_PHONE_DIGITS_SQL`). */
 function phoneDigits(phone: string | null | undefined): string {
   return (phone ?? '').replace(/[^0-9]/g, '');
@@ -1368,6 +1381,17 @@ export class AgencyDialer {
     // `answeredAt: null`, read "never answered", and skip a call the table counts.
     // `??=` so a real `answered` phase's value is never displaced.
     live.answeredAt ??= ev.answeredAt ?? null;
+    // Answer → bridge: the interval the abandonment predicate compares with the 3 s grace,
+    // from the same two instants the settle site's `isAbandonedAttempt` reads (after the
+    // back-fill above). Synchronous and before any await, so a teardown racing the writes
+    // below cannot cost the reading. No answer anchor at all: the predicate reads "never
+    // answered", so there is no interval to observe.
+    if (live.answeredAt !== null) {
+      agencyAnswerToBridgeSeconds.observe(
+        { tenant_id: cmd.tenantId, provider: providerLabel(cmd.campaign.telephony_provider) },
+        elapsedSeconds(live.answeredAt, bridgedAt),
+      );
+    }
     // ── This write must not RESURRECT a settled attempt ─────────────────────
     //
     // It carries `only_from` just as the `answered` write above it does, on the
