@@ -109,8 +109,9 @@ describe('the rolling window', () => {
   });
 
   it('uses the grace threshold, expressed in the SQL and not as a TTL', () => {
-    expect(ABANDONMENT_BRIDGE_GRACE_MS).toBe(1000);
-    expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain("interval '1000 milliseconds'");
+    // AG1 (Manas, 2026-11-24): 3 s, was 1 s.
+    expect(ABANDONMENT_BRIDGE_GRACE_MS).toBe(3000);
+    expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain("interval '3000 milliseconds'");
   });
 });
 
@@ -162,6 +163,13 @@ describe('isAbandonedAttempt mirrors the ratified SQL definition', () => {
       name: 'bridged beyond the grace window ⇒ abandoned',
       facts: { answeredAt: t0, bridgedAt: at(ABANDONMENT_BRIDGE_GRACE_MS + 1), outcome: 'connected' },
       want: true,
+    },
+    {
+      // AG1: the 1.06–1.25 s audio-stream lag seen on VoiceLink on 23 Nov. A call
+      // that reached an agent this late was abandoned under the old 1 s grace.
+      name: 'bridged 1.25 s after the answer ⇒ NOT abandoned (inside the 3 s grace)',
+      facts: { answeredAt: t0, bridgedAt: at(1250), outcome: 'connected' },
+      want: false,
     },
     {
       name: 'ON the grace boundary ⇒ NOT abandoned (the SQL is `>`, not `>=`)',

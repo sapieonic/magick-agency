@@ -81,7 +81,7 @@ export interface LiveAttempt {
    * The agent's panel, built at dial time and sent at dial (early binding) or at
    * the carrier answer (late binding).
    *
-   * Held here rather than rebuilt at the answer because the bind has a 1000ms
+   * Held here rather than rebuilt at the answer because the bind has a 3000ms
    * budget (`ABANDONMENT_BRIDGE_GRACE_MS`) measured from the answer, and the
    * priors read behind this panel is two joins over a contact lineage. Building
    * it at dial time is what makes late binding affordable at all.

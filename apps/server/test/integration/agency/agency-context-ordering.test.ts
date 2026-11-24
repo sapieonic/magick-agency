@@ -41,6 +41,7 @@ const { AgentStateMachine, AGENT_LEASE_MS } = await import('../../../src/agency/
 const { AgencyDialer } = await import('../../../src/agency/agency-dialer.js');
 const { WrapupManager } = await import('../../../src/agency/wrapup-manager.js');
 const { BreakRegistry } = await import('@magick-agency/domain/break-manager');
+const { ABANDONMENT_BRIDGE_GRACE_MS } = await import('@magick-agency/domain/abandonment-predicate');
 const { agencyAttemptRepository } = await import('../../../src/db/repositories/agency.repository.js');
 
 /**
@@ -382,8 +383,10 @@ describe('agency context-panel ordering (integration)', () => {
   });
 
   it('T-P2d: a bridged attempt is never counted as abandoned by the predicate', async () => {
-    // The compliance-facing check, asserted against the exact query the
-    // abandonment metric and auto-pause guardrail use. It PASSES today, and it
+    // The compliance-facing check, asserted against the arms of the query the
+    // abandonment metric and auto-pause guardrail use (with their grace, not a
+    // copy of its value), without the terminal-state filter: the attempt is still
+    // live here, and that filter alone would make the count 0. It PASSES today, and it
     // is here to bound T-P2c's blast radius: the state clobber does not reach
     // this number, because `setState` COALESCEs the timestamps. If a future
     // "fix" for T-P2c starts nulling timestamps, this is what catches it.
@@ -396,7 +399,7 @@ describe('agency context-panel ordering (integration)', () => {
         WHERE campaign_id = $1
           AND answered_at IS NOT NULL
           AND (outcome = 'abandoned' OR bridged_at IS NULL
-               OR bridged_at - answered_at > interval '1 second')`,
+               OR bridged_at - answered_at > interval '${ABANDONMENT_BRIDGE_GRACE_MS} milliseconds')`,
       [cmd.campaignId],
     );
     expect(

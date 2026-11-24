@@ -2026,6 +2026,17 @@ under the name. `SET LOCAL lock_timeout = '10s'`. **Down** drops the index. **Te
 `test/integration/db/inbound-from-index-migration.test.ts` (the definition, a number's keyset page of
 missed calls planned on it with no sort, the invalid-index refusal, down then up).
 
+### 0074 — `migrations/0074_abandonment_grace_rollup_rebuild.sql`
+
+No schema change (AG1). `ABANDONMENT_BRIDGE_GRACE_MS` went from 1000 ms to 3000 ms, so
+`ABANDONED_ATTEMPT_PREDICATE_SQL` no longer counts a call bridged up to 3 s after the carrier's
+answer. Every read of the predicate changes with the deploy; the Insights rollup's stored
+`abandoned` does not, so the Up marks every bucket in `agency_insights_rollup_buckets` in
+`agency_insights_rollup_dirty` and the job recomputes it (0014's backfill). `abandon_reason` on
+attempts settled before the deploy keeps `bridge_late` for a 1–3 s bridge: diagnosis only, read by
+nothing. **Down** is a no-op. **Tests**: `test/integration/db/abandonment-grace-rollup-migration.test.ts`
+(every held bucket marked, no rollup row changed, down then up) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

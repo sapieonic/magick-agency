@@ -382,7 +382,7 @@ export class AgencyDialer {
    *    provokes, and still precedes any audio the agent can hear.
    *
    * What the move costs, stated because it is the reason the panel is not simply
-   * built at the answer: the bind runs inside the 1000ms
+   * built at the answer: the bind runs inside the 3000ms
    * `ABANDONMENT_BRIDGE_GRACE_MS` budget, so nothing that can be done here may be
    * deferred to there. The priors read below is two joins over a contact lineage
    * and would spend that budget outright.
@@ -1093,7 +1093,7 @@ export class AgencyDialer {
      * The whole of the change, and its ORDERING is the change. Everything here
      * is synchronous — no `await`, nothing read from Redis or the DB, the panel
      * already built at dial time — because the abandonment predicate measures
-     * from the instant above and gives the entire path a 1000ms budget
+     * from the instant above and gives the entire path a 3000ms budget
      * (`ABANDONMENT_BRIDGE_GRACE_MS`). A connected call that spends more than
      * that between the answer and the bind is recorded as a call that reached
      * nobody, against a 3% regulatory ceiling.

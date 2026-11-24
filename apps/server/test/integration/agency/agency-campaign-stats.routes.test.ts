@@ -207,7 +207,7 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
     await insertAgencyAttempt(campaign.id, inFlight.id, {
       attempt_number: 1,
       state: 'ended', outcome: 'connected', answered_at: answeredLateBridge,
-      bridged_at: new Date(answeredLateBridge.getTime() + 2_000), ended_at: new Date(),
+      bridged_at: new Date(answeredLateBridge.getTime() + 4_000), ended_at: new Date(),
     });
     await insertAgencyAttempt(campaign.id, completed.id, {
       attempt_number: 1,

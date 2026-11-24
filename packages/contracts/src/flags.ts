@@ -116,7 +116,7 @@ export const AGENCY_FLAGS = Object.freeze({
   //     adapter capability, never a branch on a provider name. A per-provider
   //     branch here is how the next carrier gets the wrong behaviour by default.
   //
-  // ⚠️ The bind runs INSIDE the 1s `ABANDONMENT_BRIDGE_GRACE_MS` budget
+  // ⚠️ The bind runs INSIDE the 3s `ABANDONMENT_BRIDGE_GRACE_MS` budget
   // (`src/agency/abandonment-predicate.ts`): everything after the answer and
   // before the socket is attached is time the compliance predicate counts as a
   // call that reached nobody. That is why the bind path is synchronous and why the

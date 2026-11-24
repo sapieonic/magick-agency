@@ -573,7 +573,7 @@ export const agencyPacingHistoryDroppedTotal = counter(meter, 'agency_pacing_his
 //
 //  1. Where does seat time actually go?          `agency_attempt_hold_seconds`
 //  2. How long does a dial take to answer?       `agency_answer_latency_seconds`
-//  3. Is the late bind inside its 1s budget?     `agency_bind_latency_seconds`
+//  3. Is the late bind inside its 3s budget?     `agency_bind_latency_seconds`
 //  4. When we abandon, why?                      `agency_abandoned_reason_total`
 //
 // **All of these are per-replica COUNTERS and HISTOGRAMS, not SQL-derived gauges.**
@@ -698,7 +698,7 @@ export const agencyAnswerLatencySeconds = histogram<'tenant_id'>(meter, 'agency_
 /**
  * Carrier answer → the agent's station socket attached, under late binding.
  *
- * ⚠️ **The whole budget is `ABANDONMENT_BRIDGE_GRACE_MS` = 1000ms.** Everything
+ * ⚠️ **The whole budget is `ABANDONMENT_BRIDGE_GRACE_MS` = 3000ms.** Everything
  * this measures is time the compliance predicate counts as abandonment, so the
  * buckets are deliberately sub-second and crowd the region that matters: p99 above
  * 150ms is the documented abort criterion for the late-binding rollout, and until
@@ -709,7 +709,7 @@ export const agencyAnswerLatencySeconds = histogram<'tenant_id'>(meter, 'agency_
  * attempted".
  */
 export const agencyBindLatencySeconds = histogram<'tenant_id'>(meter, 'agency_bind_latency_seconds', {
-  description: 'Seconds from the carrier answer to the agent station socket attaching (budget: 1s)',
+  description: 'Seconds from the carrier answer to the agent station socket attaching (budget: 3s)',
   unit: 's',
   buckets: [0.01, 0.025, 0.05, 0.1, 0.15, 0.25, 0.5, 0.75, 1, 2],
 });

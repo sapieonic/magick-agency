@@ -119,7 +119,7 @@ describe('the audit predicate and the product predicate agree, on data where the
    */
   it("the product predicate filters on terminal state, and takes no bound parameter", () => {
     expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toMatch(/state\s*=\s*'ended'/);
-    expect(ABANDONMENT_BRIDGE_GRACE_MS).toBe(1000);
+    expect(ABANDONMENT_BRIDGE_GRACE_MS).toBe(3000);
     expect(ABANDONED_ATTEMPT_PREDICATE_SQL).toContain(`${ABANDONMENT_BRIDGE_GRACE_MS} milliseconds`);
 
     // No `$n` placeholder — the independence guarantee, mechanically. The predicate

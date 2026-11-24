@@ -12,11 +12,18 @@
  * How long after the carrier answers a bridge may still
  * arrive before the call counts as abandoned.
  *
- * 1000ms, the interval the SQL below is written with. It
- * is a **business threshold**, so it lives here as a named constant and is
- * interpolated into the predicate — never expressed as a key TTL.
+ * 3000ms, the interval the SQL below is written with (AG1, Manas, 2026-11-24;
+ * it was 1000ms). The carrier's own media setup lands inside it: on VoiceLink
+ * the audio stream can connect a second or more after the answer event, and at
+ * 1000ms those calls, which reached an agent and were talked through, were
+ * counted against the ceiling and auto-paused campaigns. It is a **business
+ * threshold**, so it lives here as a named constant and is interpolated into
+ * the predicate — never expressed as a key TTL. Changing it changes every
+ * abandonment figure read from now on, history included, because the predicate
+ * is evaluated at read time; the Insights rollup stores the count per bucket and
+ * is rebuilt by a migration that marks its buckets dirty (0074).
  */
-export const ABANDONMENT_BRIDGE_GRACE_MS = 1000;
+export const ABANDONMENT_BRIDGE_GRACE_MS = 3000;
 
 /** The regulatory window. Ofcom and the design's default ceiling both use 24h. */
 export const ABANDONMENT_WINDOW_HOURS = 24;

@@ -117,7 +117,7 @@
   {
     "name": "agency_bind_latency_seconds",
     "kind": "Histogram",
-    "description": "Seconds from the carrier answer to the agent station socket attaching (budget: 1s)",
+    "description": "Seconds from the carrier answer to the agent station socket attaching (budget: 3s)",
     "unit": "s",
     "advice": {
       "explicitBucketBoundaries": [

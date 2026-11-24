@@ -410,6 +410,15 @@ same scale, against the measured rate. AC1–AC3 answer the ask's "To decide".
 | AC2 | Raising it above 3% | Allowed, with an amber note that 3% is the limit most dropped-call rules set. No extra role: every campaign write already needs `agency.campaigns.write` (account admin and above), so a role gate above 3% would leave only tenant admins able to raise it | **default, pending Manas** |
 | AC3 | Recording the change | No new write: a PATCH that changes it already writes `agency_campaign.config_changed` with `abandonment_ceiling_pct: { from, to }` and the signed-in actor (IN8), shown on the campaign's Activity page | **default, pending Manas** |
 
+Abandonment grace, 2026-11-24. On 23 Nov two Staging campaigns were auto-paused 87 times over
+their ceilings, and 9 of their 11 abandoned calls had reached an agent and been talked through:
+VoiceLink's audio stream connected 1.06–1.25 s or about 5 s after its answer event, past the 1 s
+grace the predicate allowed.
+
+| # | Topic | Ruling | Status |
+|---|---|---|---|
+| AG1 | When a bridged call counts as abandoned | A call bridged more than **3 s** after the carrier's answer is abandoned (`ABANDONMENT_BRIDGE_GRACE_MS` = 3000, was 1000), one value for every campaign. The predicate is read at query time, so every figure changes with the deploy, history included; 0074 rebuilds the Insights rollup. The ceiling (AC1–AC3) is unchanged | **decided — changed** (Manas, 2026-11-24) |
+
 Several running campaigns per account, 2026-11-05 (ClickUp "Allow multiple running campaigns per
 account within the account's concurrency limit"). An account could run one campaign at a time
 (`uq_agency_campaign_running`, Start answered 409 `another_campaign_running`). Dropping the index

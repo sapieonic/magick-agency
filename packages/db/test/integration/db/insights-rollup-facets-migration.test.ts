@@ -23,9 +23,11 @@ afterAll(closeTestPool);
 const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({ databaseUrl: TEST_DB_URL, dir: MIGRATIONS_DIR, direction, migrationsTable: 'pgmigrations', count, log: () => {}, noLock: true });
 
+// Distinct buckets, not mark rows: the re-run applies every later migration too, and 0074 marks
+// every rolled-up bucket again (the job collapses a bucket's marks into one recompute).
 async function marks(): Promise<string[]> {
   const { rows } = await pool().query<{ campaign_id: string; bucket_start: Date }>(
-    'SELECT campaign_id, bucket_start FROM agency_insights_rollup_dirty ORDER BY id');
+    'SELECT DISTINCT campaign_id, bucket_start FROM agency_insights_rollup_dirty');
   return rows.map((r) => `${r.campaign_id}|${r.bucket_start.toISOString()}`).sort();
 }
 const clearMarks = () => pool().query('DELETE FROM agency_insights_rollup_dirty');
