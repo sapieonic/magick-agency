@@ -801,8 +801,8 @@ export function AgencyCampaignSettingsPage() {
   );
   /*
     The card's findings are said on their rows whether or not they hold Save (a fact whose column a
-    newer upload dropped is shown even while only the target changes); only those of a card that is
-    sent hold it (`stationLive`).
+    newer upload dropped is shown even while only the target or More details changes); only those
+    of a card that is sent hold it (`stationLive`).
   */
   const factsShown = useMemo(
     () => (canEdit && station ? factsErrors(station.facts, factsContext) : {}),
@@ -817,9 +817,11 @@ export function AgencyCampaignSettingsPage() {
     [factsShown, stationLive],
   );
   const stationErrorsView = useConfigFieldErrors(stationFieldErrors, stationQuiet);
+  // With the card's columns, as the save reads them: a type change to a More details column alone
+  // does not send the card (AS20), so the script is still read as on the old model (R5).
   const plan = useMemo(
-    () => (station && saved?.station ? stationPlan(saved.station, station, campaign?.context_display) : null),
-    [station, saved, campaign?.context_display],
+    () => (station && saved?.station ? stationPlan(saved.station, station, campaign?.context_display, selectColumns) : null),
+    [station, saved, campaign?.context_display, selectColumns],
   );
   const removedInUse = useMemo(
     () => (station && saved?.station ? removedFactsInUse(saved.station.facts, station.facts, station.script) : []),

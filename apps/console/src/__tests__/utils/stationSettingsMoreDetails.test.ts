@@ -1,14 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import type { AgencyCampaign } from '../../types/agency-campaign';
+import type { AgencyContextDisplay } from '@magick-agency/contracts/agency';
 import {
+  COLUMNS_LOADING_MESSAGE,
+  FACT_COLUMN_MISSING_MESSAGE,
   contextDisplayPayload,
   factsChanged,
   factsFormOf,
+  isLegacyDisplay,
   moreDetailsDisplayPayload,
   moreShown,
   moreTypeOf,
+  stationErrors,
   stationPayload,
+  stationPlan,
   stationSettingsOf,
+  withColumnType,
   withMoreAll,
   withMoreShown,
   withMoreType,
@@ -70,8 +77,8 @@ describe('More details in the Settings form (AS20)', () => {
     expect(stationPayload(saved, now, campaign.context_display, ['Name', 'Branch'], ['Name', 'Branch'])).toEqual({
       context_display: { facts: [], order: ['Name', 'Branch'], more_hidden: ['Branch'] },
     });
-    // With a change to the card as well, the card is written.
-    const both = { ...now, facts: { ...now.facts, types: { Branch: 'number' as const } } };
+    // With a change to the card as well (the name chosen), the whole card is written, types and all.
+    const both = { ...now, facts: { ...now.facts, name: 'Name', types: { Branch: 'number' as const } } };
     expect(stationPayload(saved, both, campaign.context_display, ['Name', 'Branch'], ['Name', 'Branch']).context_display).toEqual({
       order: ['Name', 'Branch'], roles: { name: 'Name' }, types: { Branch: 'number' }, facts: [], more_hidden: ['Branch'],
     });
@@ -100,5 +107,95 @@ describe('More details in the Settings form (AS20)', () => {
     // Text is pinned whatever the first sample looks like: other customers' values may read as phones.
     expect(withMoreType(form, 'Ref No', 'text').types).toEqual({ Tenure: 'number', 'Ref No': 'text' });
     expect(withMoreType(text, 'ALT MOBILE', 'phone').types).toEqual({ Tenure: 'number', 'Alt mobile': 'phone' });
+  });
+
+  describe('a save of More details alone judges only what it sends', () => {
+    // An old-model card: the form's card makes {amount_due} only, while the stored model allows every
+    // legacy key, so a script using {due_date} is fine until the card itself is written.
+    const columns = ['Name', 'Loan No', 'Due', 'Branch', 'Alt mobile', 'Tenure'];
+    const stored: AgencyContextDisplay = { hero: ['Loan No'], roles: { amount_due: 'Due' }, types: { TENURE: 'number', 'Loan No': 'text' } };
+    const legacy = { id: 'c-1', name: 'C', status: 'draft', context_display: stored } as AgencyCampaign;
+    const loaded = () => {
+      const form = stationSettingsOf(legacy, columns);
+      return { ...form, script: { opening: 'Pay by {due_date}', steps: [] } };
+    };
+    const context = (over = {}) => ({ hidden: [], uploaded: columns, columns, ...over });
+
+    it('is not held by a card finding when only ticks change', () => {
+      const saved = loaded();
+      const ticked = { ...saved, facts: withMoreShown(saved.facts, 'Branch', false) };
+      expect(stationPlan(saved, ticked, stored, columns)).toMatchObject({ displaySent: true, cardSent: false });
+      expect(stationErrors(saved, ticked, stored, context())).toEqual({});
+      // Nor by the wait for the columns an old card is opened from: the card is not sent.
+      expect(stationErrors(saved, ticked, stored, context({ cardWaiting: COLUMNS_LOADING_MESSAGE }))).toEqual({});
+    });
+
+    it('still holds a change to the card on what the card would lose, and on the wait for the columns', () => {
+      const saved = loaded();
+      const relabelled = { ...saved, facts: { ...saved.facts, list: saved.facts.list.map((f) => ({ ...f, label: `${f.label}!` })) } };
+      expect(stationErrors(saved, relabelled, stored, context())).toEqual({
+        'context_display.facts': 'The script uses {due_date}. Take it out of the script first, or keep the fact.',
+      });
+      expect(stationErrors(saved, relabelled, stored, context({ cardWaiting: COLUMNS_LOADING_MESSAGE }))).toEqual({
+        'context_display.facts': COLUMNS_LOADING_MESSAGE,
+      });
+    });
+
+    it('is not held by a fact whose column the latest upload dropped; a change to the card is', () => {
+      const display = { facts: [{ column: 'Old col', label: 'Old', key: 'old' }] };
+      const campaign = { id: 'c-1', name: 'C', status: 'draft', context_display: display } as AgencyCampaign;
+      const saved = stationSettingsOf(campaign, ['Name', 'Branch', 'Old col']);
+      const ctx = { hidden: [], uploaded: ['Name', 'Branch'], columns: ['Name', 'Branch', 'Old col'] };
+      const ticked = { ...saved, facts: withMoreShown(saved.facts, 'Branch', false) };
+      expect(stationErrors(saved, ticked, display, ctx)).toEqual({});
+      const renamed = { ...ticked, facts: { ...ticked.facts, list: [{ ...ticked.facts.list[0]!, label: 'Older' }] } };
+      expect(stationErrors(saved, renamed, display, ctx)).toEqual({ 'context_display.facts.0.column': FACT_COLUMN_MISSING_MESSAGE });
+    });
+
+    it('merges a More details column\'s type into the stored types, keeping the campaign on the old card', () => {
+      const saved = loaded();
+      let facts = withMoreType(saved.facts, 'alt mobile', 'text');
+      facts = withMoreType(facts, 'tenure', 'phone');
+      const now = { ...saved, facts };
+      expect(stationPlan(saved, now, stored, columns)).toMatchObject({ displaySent: true, cardSent: false });
+      expect(stationErrors(saved, now, stored, context())).toEqual({});
+      const sent = stationPayload(saved, now, stored, columns, columns).context_display;
+      // Each in the roster's spelling, the stored `TENURE` replaced; every other stored key as stored.
+      expect(sent).toEqual({
+        hero: ['Loan No'],
+        roles: { amount_due: 'Due' },
+        types: { 'Loan No': 'text', 'Alt mobile': 'text', Tenure: 'phone' },
+        order: columns,
+      });
+      expect(isLegacyDisplay(sent)).toBe(true);
+    });
+
+    it('takes a More details column\'s type off the stored types when the form takes it off', () => {
+      const saved = loaded();
+      const now = { ...saved, facts: withColumnType(saved.facts, 'Tenure', 'text') };
+      expect(stationPlan(saved, now, stored, columns).cardSent).toBe(false);
+      expect(stationPayload(saved, now, stored, columns, columns).context_display).toEqual({
+        hero: ['Loan No'], roles: { amount_due: 'Due' }, types: { 'Loan No': 'text' }, order: columns,
+      });
+    });
+
+    it('sends the card for a type change to a fact\'s column, the guessed name\'s, or any while the columns are unknown', () => {
+      const saved = loaded();
+      const fact = { ...saved, facts: withColumnType(saved.facts, 'Loan No', 'number') };
+      expect(stationPlan(saved, fact, stored, columns).cardSent).toBe(true);
+      expect(stationPayload(saved, fact, stored, columns, columns).context_display).toHaveProperty('facts');
+      // The name is guessed from `Name`: reading it as a phone changes the card (and the guess).
+      const name = { ...saved, facts: withMoreType(saved.facts, 'Name', 'phone') };
+      expect(stationPlan(saved, name, stored, columns).cardSent).toBe(true);
+      // A column that becomes the guess once it is no longer read as a phone changes the card too.
+      const phoneName: AgencyContextDisplay = { ...stored, types: { ...stored.types, Name: 'phone' } };
+      const before = stationSettingsOf({ ...legacy, context_display: phoneName }, columns);
+      const after = { ...before, facts: withMoreType(before.facts, 'Name', 'text') };
+      expect(stationPlan(before, after, phoneName, columns).cardSent).toBe(true);
+      // Without the columns, the guesses are not known: any type change sends the card.
+      const more = { ...saved, facts: withMoreType(saved.facts, 'Branch', 'number') };
+      expect(stationPlan(saved, more, stored, columns).cardSent).toBe(false);
+      expect(stationPlan(saved, more, stored).cardSent).toBe(true);
+    });
   });
 });
