@@ -107,9 +107,12 @@ void main() {
     test('Details adds nothing for the place when the server read none', () {
       const others = [ContactField(key: 'City', label: 'City', value: 'N/A'), ContactField(key: 'Loan No', label: 'Loan No', value: 'LN-4471')];
       final noPlace = FactsView(name: 'Sunita Patil', tiles: [amount], chosen: true, more: [rows[0]]);
-      expect([for (final f in detailsOtherFields(call(facts: noPlace, others: others, placeColumn: 'City'))) f.label], ['Loan No']);
+      const heroes = [ContactField(key: 'Card', label: 'Card', value: 'Platinum')];
+      expect([for (final f in detailsOtherFields(call(facts: noPlace, heroes: heroes, others: others, placeColumn: 'City'))) f.label], ['Loan No']);
+      // A place but no column (an older build's view): nothing is guessed from the values.
+      const pune = [ContactField(key: 'City', label: 'City', value: 'Pune'), ContactField(key: 'Loan No', label: 'Loan No', value: 'LN-4471')];
       final noColumn = FactsView(name: 'Sunita Patil', place: 'Pune', tiles: [amount], chosen: true, more: [rows[0]]);
-      expect([for (final f in detailsOtherFields(call(facts: noColumn, others: others))) f.label], ['Loan No']);
+      expect([for (final f in detailsOtherFields(call(facts: noColumn, heroes: heroes, others: pune))) f.label], ['Loan No']);
     });
 
     test('a row waits 60 ms a slot after the first new one, over one step\'s slots (0 to 180 ms), as the console', () {
