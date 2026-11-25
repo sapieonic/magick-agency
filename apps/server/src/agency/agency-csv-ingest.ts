@@ -211,13 +211,14 @@ function isCallerError(err: unknown): boolean {
 /**
  * The words of the whole-file limits, shared by the ingest, the column analysis and the
  * upload's Excel conversion (IM8), which refuses a workbook over them before storing it.
- * "The file", never "the CSV": an Excel upload reaches these too.
+ * "The file", never "the CSV": an Excel upload reaches these too. Numbers are grouped the
+ * Indian way (`10,00,000`), as the console shows the same limits.
  */
 export const AGENCY_LIMIT_MESSAGES = {
   tooManyRows: (maxRows: number): string =>
-    `The file has more than ${maxRows.toLocaleString()} rows. Split it into smaller campaigns.`,
+    `The file has more than ${maxRows.toLocaleString('en-IN')} rows. Split it into smaller campaigns.`,
   tooManyColumns: (columns: number, maxColumns: number): string =>
-    `The file has ${columns} columns. The maximum is ${maxColumns}.`,
+    `The file has ${columns.toLocaleString('en-IN')} columns. The maximum is ${maxColumns.toLocaleString('en-IN')}.`,
 };
 
 export class AgencyIngestError extends Error {

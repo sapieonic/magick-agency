@@ -6,8 +6,8 @@
  * A LEAF: no imports, no I/O. Each code is classified and compiled once per `numFmtId`
  * (`readStyles` memoises; {@link formatsCompiled} counts compilations for its test), in one
  * linear pass with no backtracking pattern; a code longer than {@link MAX_FORMAT_CODE_CHARS}
- * is not compiled at all. A compiled section carries its slots and flags, so rendering a
- * cell does no parsing.
+ * (Excel's own limit, 255) is not compiled at all. A compiled section carries its slots and
+ * flags, so rendering a cell does no parsing.
  *
  * ── What is kept as before (the ruling's exceptions) ───────────────────────
  *  - General, and a scientific format: a whole number in full digits (never `9.19877E+11`),
@@ -52,15 +52,18 @@
  *  - Not rendered (the value rule instead): fractions (`# ?/?`), scientific formats, a
  *    thousands comma together with literals inside the digits, more than 32 forced integer
  *    digits, 30 decimals, 64 placeholders, 10 `%` signs or 10 scaling commas in a section,
- *    an unclosed bracket or quote, a condition that does not parse, a text-only format, and
- *    a number the format's scaling takes past what a double holds. So a cell costs at most a
+ *    more than one `General` in a section, an unclosed bracket or quote, a condition that does
+ *    not parse, and a number the format's scaling takes past what a double holds. A format
+ *    with no numeric section (`@`, `"Ref "@`) writes a number as General. A code is at most
+ *    Excel's own 255 characters (longer: General), so a section has at most 255 literal
+ *    characters, 64 placeholders and one General (309 digits at most): a cell costs at most a
  *    few hundred steps, whatever its format.
  */
 
-/** A number format longer than this (Excel's own limit is 255) is read as a plain number. */
-export const MAX_FORMAT_CODE_CHARS = 1_024;
+/** A number format longer than Excel's own limit is read as a plain number. */
+const MAX_FORMAT_CODE_CHARS = 255;
 /** The widest all-zeros format kept as padding; wider ones are plain numbers. */
-export const MAX_PAD_WIDTH = 32;
+const MAX_PAD_WIDTH = 32;
 /** Forced integer digits and decimals a rendered format may ask for (Excel allows 30 decimals). */
 const MAX_FORCED_INTEGER_DIGITS = 32;
 const MAX_DECIMALS = 30;
@@ -85,7 +88,7 @@ type Token =
   | { t: 'point' }
   | { t: 'general' };
 
-export interface FormatSection {
+interface FormatSection {
   condition: { op: Comparison; value: number } | null;
   tokens: Token[];
   /** A thousands comma between integer placeholders. */
@@ -128,9 +131,20 @@ export function formatsCompiled(): number {
 
 // ─── The value rule ─────────────────────────────────────────────────────────
 
-/** A whole number's digits in full (`BigInt` of an integral double is exact). */
+/**
+ * A whole number's digits: in full below 2^53 (`BigInt` of such a double is exact); past it, at
+ * the 15 significant digits Excel holds, then zeros (9.87654321098765E+19 is
+ * `98765432109876500000`, not the double's own `98765432109876494336`).
+ */
 function integerDigits(x: number): string {
-  return BigInt(x).toString();
+  const abs = Math.abs(x);
+  if (abs < 2 ** 53) return BigInt(x).toString();
+  const [mantissa, exponent = '0'] = abs.toPrecision(15).split('e');
+  const [lead = '', rest = ''] = mantissa!.split('.');
+  const digits = lead + rest;
+  const point = lead.length + Number(exponent);
+  const whole = point >= digits.length ? digits + '0'.repeat(point - digits.length) : digits.slice(0, point);
+  return x < 0 ? `-${whole}` : whole;
 }
 
 /** `1.5e-7` as `0.00000015`: the only exponent a 15-digit, non-integral number can carry is negative. */
@@ -145,7 +159,7 @@ function expandExponent(text: string): string {
   return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
-/** A number as plain decimal digits: whole numbers in full, others at Excel's 15 significant digits. */
+/** A number as plain decimal digits: whole numbers in full (past 2^53 as Excel holds them), others at 15 significant digits. */
 export function plainNumber(x: number): string {
   if (x === 0) return '0';
   if (Number.isInteger(x)) return integerDigits(x);
@@ -379,6 +393,8 @@ function compileSection(text: string): FormatSection {
       case 'G':
       case 'g':
         if (text.slice(i, i + 7).toLowerCase() === 'general') {
+          // One General a section: each writes up to 309 digits, so more is only work.
+          if (section.hasGeneral) return fallback();
           tokens.push({ t: 'general' });
           section.hasGeneral = true;
           lastWasDigit = false;
@@ -417,8 +433,10 @@ export function compileFormat(code: string): NumberStyle {
   if (code.length > MAX_FORMAT_CODE_CHARS) return PLAIN;
   compilations += 1;
   const sections = splitSections(code).slice(0, MAX_SECTIONS).map(compileSection);
-  // A format whose only section is General is General.
+  // A format whose only section is General is General; so is one with no numeric section
+  // (`@`, `"Ref "@`, `[Red]@`), which Excel shows a number under as General.
   if (sections.length === 1 && sections[0]!.tokens.length === 1 && sections[0]!.hasGeneral) return PLAIN;
+  if (sections.slice(0, 3).every((section) => section.text)) return PLAIN;
   return { kind: 'format', sections };
 }
 
@@ -623,7 +641,8 @@ export function renderFormattedNumber(x: number, style: Extract<NumberStyle, { k
 
   // Zero is zero: a negative (or tiny) value whose shown digits are all zero is written as 0,
   // in the zero section if there is one, else the positive one; never `-0` or `(0)`.
-  if (x !== 0 && !section.hasGeneral && !/[1-9]/.test(rounded.int + rounded.frac)) {
+  // A section that shows no digits (`"Cr";"Dr"`) is never switched: it names the sign itself.
+  if (x !== 0 && section.hasDigits && !section.hasGeneral && !/[1-9]/.test(rounded.int + rounded.frac)) {
     picked = pickSection(0, style.sections);
     if (!picked || picked.section.fallback) return null;
     section = picked.section;

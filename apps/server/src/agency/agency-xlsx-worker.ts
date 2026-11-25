@@ -14,10 +14,11 @@
  * the server (no logger, no config, no secrets in its environment): only the converter.
  */
 import { once } from 'node:events';
-import { openXlsxWorkbook, XlsxLimitError, XlsxRefusal, type XlsxLimits } from './agency-xlsx.js';
+import { openXlsxWorkbook, type XlsxLimits } from './agency-xlsx.js';
+import { XlsxLimitError, XlsxRefusal } from './agency-xlsx-refusals.js';
 
 export type XlsxWorkerMessage =
-  | { t: 'opened'; sheet: { name: string; other_sheet_names: string[] }; rows: number; columns: number }
+  | { t: 'opened'; sheet: { name: string; other_sheet_names: string[]; other_sheet_count: number }; rows: number; columns: number }
   | { t: 'end' }
   | { t: 'error'; error: { name: string; kind?: string; columns?: number; message: string } };
 

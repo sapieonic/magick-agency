@@ -42,13 +42,13 @@ export const UPLOAD: AgencyUploadResponse = {
 };
 
 /** An Excel upload: the server read its first sheet and stored it as CSV (IM8). */
-export function xlsxUpload(otherSheetNames: string[] = []): AgencyUploadResponse {
+export function xlsxUpload(otherSheetNames: string[] = [], otherSheetCount = otherSheetNames.length): AgencyUploadResponse {
   return {
     s3_key: 'agency-ingest/upload-2.csv',
     file_name: 'Customers May.xlsx',
     file_size_bytes: 64 * 1024,
     format: 'xlsx',
-    sheet: { name: 'Customers', other_sheet_names: otherSheetNames },
+    sheet: { name: 'Customers', other_sheet_names: otherSheetNames, other_sheet_count: otherSheetCount },
   };
 }
 
@@ -105,6 +105,7 @@ export function fakeIngest(over: Partial<CustomersIngest> = {}): CustomersIngest
     retryable: false,
     checkJob: null,
     importing: false,
+    uploadingWorkbook: false,
     upload: null,
     analysis: null,
     mapping: null,

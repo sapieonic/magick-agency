@@ -3,14 +3,8 @@ import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
-import {
-  XlsxLimitError,
-  XlsxRefusal,
-  type XlsxLimitKind,
-  type XlsxLimits,
-  type XlsxRefusalKind,
-  type XlsxSheetChoice,
-} from './agency-xlsx.js';
+import type { XlsxLimits, XlsxSheetChoice } from './agency-xlsx.js';
+import { XlsxLimitError, XlsxRefusal, type XlsxLimitKind, type XlsxRefusalKind } from './agency-xlsx-refusals.js';
 import type { XlsxWorkerMessage } from './agency-xlsx-worker.js';
 
 /**
@@ -18,7 +12,7 @@ import type { XlsxWorkerMessage } from './agency-xlsx-worker.js';
  * (`agency-xlsx-worker.ts`), so a workbook built to be expensive costs a capped heap, a
  * capped time and one core, never the event loop that paces calls and serves the API:
  *
- *  - **Heap:** the child runs with `--max-old-space-size` = {@link XLSX_WORKER_HEAP_MB}; a
+ *  - **Heap:** the child runs with `--max-old-space-size` = {@link XLSX_CHILD_HEAP_MB}; a
  *    workbook that needs more ends the child ("heap out of memory", SIGABRT), refused
  *    `too_much_memory`. Its `oom_score_adj` is raised to 1000, so if the host runs out the
  *    kernel kills the child rather than the server; a SIGKILL this module did not send is read
@@ -27,14 +21,19 @@ import type { XlsxWorkerMessage } from './agency-xlsx-worker.js';
  *    `--max-old-space-size` (`docker/entrypoint.sh`), and V8 applies that process-wide flag
  *    to every isolate, a worker's included (measured: a worker capped at 32 MB grew past
  *    300 MB under `--max-old-space-size=4096`).
- *  - **Time:** {@link XLSX_WORKER_DEADLINE_MS} for the whole upload. Past it while the child
+ *  - **Time:** {@link XLSX_CHILD_DEADLINE_MS} for the whole upload. Past it while the child
  *    runs, the child is killed (`too_slow`); past it once the child has finished and only the
  *    upload of its CSV to S3 is left, {@link XlsxStorageTimeoutError}. The deadline aborts the
  *    conversion's `signal`, which the caller hands to the S3 upload.
  *  - **The client and shutdown:** the caller's `signal` (the request closed) and
- *    {@link abortXlsxConversions} (the server is closing) stop it the same way.
+ *    {@link abortXlsxConversions} (the server is closing) stop it the same way. Shutdown
+ *    reaches every conversion that is live, from the fork until the caller's `dispose()`
+ *    (the S3 upload of a CSV whose child has already exited included), and refuses any
+ *    conversion asked for after it (an upload whose body was still arriving when the server
+ *    began to close).
  *  - **One at a time:** a second Excel upload while one converts is refused at once
- *    ({@link XlsxBusyError}), so two hostile files cannot hold two cores and two heaps.
+ *    ({@link XlsxBusyError}), so two hostile files cannot hold two cores and two heaps. The
+ *    slot is the child's: it is free again when the child exits.
  *  - **The CSV** comes back on the child's stdout, a pipe: the child waits whenever the
  *    caller's reader (the S3 upload) has not taken what it wrote, so the CSV is never whole
  *    in memory and a slow upload slows the child rather than queueing chunks.
@@ -56,7 +55,7 @@ import type { XlsxWorkerMessage } from './agency-xlsx-worker.js';
  * hostile workbook far short of the host's memory. The workbook's own bytes are outside
  * the heap (a Buffer), at most the upload's 512 MiB.
  */
-export const XLSX_WORKER_HEAP_MB = 1024;
+const XLSX_CHILD_HEAP_MB = 1024;
 
 /**
  * How long a conversion may take, both passes and the upload of its CSV to S3 included.
@@ -65,7 +64,7 @@ export const XLSX_WORKER_HEAP_MB = 1024;
  * (512 MiB) about four minutes; five minutes covers that, and a hostile workbook holds
  * one core for no longer.
  */
-export const XLSX_WORKER_DEADLINE_MS = 5 * 60 * 1000;
+const XLSX_CHILD_DEADLINE_MS = 5 * 60 * 1000;
 
 /** The last bytes of the child's stderr kept, to tell a heap exhaustion from another crash. */
 const STDERR_TAIL_BYTES = 16 * 1024;
@@ -120,21 +119,42 @@ export interface XlsxConversionOptions {
   fork?: XlsxFork;
 }
 
-/** The running conversion's stop, or null: the one slot. */
+/** The running child's stop, or null: the one slot, free again when the child exits. */
 let current: ((err: Error) => void) | null = null;
 
-/** For tests: whether the slot is taken. */
+/**
+ * Every conversion that is live, by its stop: from the fork until the caller's `dispose()`
+ * (or its rejection), so shutdown reaches one whose child has exited while the S3 upload of
+ * its CSV is still under way. Separate from the slot, which the child's exit frees.
+ */
+const live = new Set<(err: Error) => void>();
+
+/** Set by {@link abortXlsxConversions}: the server is closing and starts no conversion. */
+let closing = false;
+
+/**
+ * Whether the slot is taken (a child is converting). The upload route refuses a second
+ * workbook on it before reading its body; tests wait on it.
+ */
 export function xlsxConversionRunning(): boolean {
   return current !== null;
 }
 
 /**
- * Stop the conversion that is running, if any, with {@link XlsxShutdownError}: the upload
- * route's `preClose` hook calls it, so the request answers at once and closing the server
- * does not wait out a conversion's deadline.
+ * The server is closing: stop every live conversion with {@link XlsxShutdownError} and
+ * refuse any asked for from now on. The upload route's `preClose` hook calls it, so each
+ * request answers at once and closing the server does not wait out a conversion's deadline,
+ * whether its child is converting, its CSV is still being stored, or its body was still
+ * arriving when the server began to close.
  */
 export function abortXlsxConversions(reason?: string): void {
-  current?.(new XlsxShutdownError(reason));
+  closing = true;
+  for (const stop of [...live]) stop(new XlsxShutdownError(reason));
+}
+
+/** For tests: start conversions again after {@link abortXlsxConversions} (one process closes several apps). */
+export function reopenXlsxConversionsForTests(): void {
+  closing = false;
 }
 
 /**
@@ -148,7 +168,7 @@ export function xlsxWorkerEntry(): { file: string; execArgv: string[] } {
   }
   const built = path.join(__dirname, 'xlsx-worker.js');
   if (!existsSync(built)) {
-    throw new Error(`The Excel conversion's worker is missing (${built}): the build did not include dist/xlsx-worker.js.`);
+    throw new Error(`The Excel conversion child's bundle is missing (${built}): the build did not include dist/xlsx-worker.js.`);
   }
   return { file: built, execArgv: [] };
 }
@@ -164,15 +184,17 @@ const asError = (err: unknown): Error => (err instanceof Error ? err : new Error
 /**
  * Convert a workbook in a child process. Resolves once the first pass is done (the sheet,
  * rows and columns known, nothing stored yet) with the CSV to stream; rejects with the
- * refusal or limit the first pass met, {@link XlsxBusyError} while another conversion runs,
- * or the deadline, the heap cap, shutdown or the signal. The slot is free again once the
- * child has exited; the caller calls `dispose()` when it has answered.
+ * refusal or limit the first pass met, {@link XlsxShutdownError} once the server is closing,
+ * {@link XlsxBusyError} while another conversion runs, or the deadline, the heap cap,
+ * shutdown or the signal. The slot is free again once the child has exited; the caller calls
+ * `dispose()` when it has answered.
  */
-export function convertXlsxInWorker(
+export function convertXlsxInChild(
   buf: Buffer,
   limits: XlsxLimits,
   options: XlsxConversionOptions = {},
 ): Promise<XlsxConversion> {
+  if (closing) return Promise.reject(new XlsxShutdownError());
   if (current !== null) return Promise.reject(new XlsxBusyError());
   if (options.signal?.aborted) return Promise.reject(asError(options.signal.reason));
 
@@ -183,7 +205,7 @@ export function convertXlsxInWorker(
     return Promise.reject(err);
   }
 
-  const heapMb = options.heapMb ?? XLSX_WORKER_HEAP_MB;
+  const heapMb = options.heapMb ?? XLSX_CHILD_HEAP_MB;
   const start = options.fork ?? (forkProcess as XlsxFork);
   let child: ChildProcess;
   try {
@@ -234,8 +256,11 @@ export function convertXlsxInWorker(
       cleanup();
       const err = asError(failure);
       if (!aborter.signal.aborted) aborter.abort(err);
-      if (!opened) reject(err);
-      else if (!csv.destroyed) csv.destroy(err);
+      if (!opened) {
+        // The caller never had it, so there is nothing to dispose of: no longer live.
+        live.delete(stop);
+        reject(err);
+      } else if (!csv.destroyed) csv.destroy(err);
       child.stdout?.destroy();
     };
     // A failure kills the child and, once the caller has the CSV, ends it and the child's
@@ -251,6 +276,7 @@ export function convertXlsxInWorker(
     const onAbort = () => fail(asError(options.signal?.reason ?? new Error('The upload was abandoned.')));
 
     current = stop;
+    live.add(stop);
 
     // Settling first: a fork that could not start (EMFILE) emits `error` and then `close`.
     child.on('error', (err) => {
@@ -289,7 +315,7 @@ export function convertXlsxInWorker(
     deadline = setTimeout(() => {
       // The child finished and only the S3 upload is left: that is storage being slow.
       fail(ended && exited ? new XlsxStorageTimeoutError() : new XlsxLimitError('too_slow'));
-    }, options.deadlineMs ?? XLSX_WORKER_DEADLINE_MS);
+    }, options.deadlineMs ?? XLSX_CHILD_DEADLINE_MS);
     deadline.unref();
     options.signal?.addEventListener('abort', onAbort, { once: true });
 
@@ -321,6 +347,7 @@ export function convertXlsxInWorker(
             signal: aborter.signal,
             failure: () => failure,
             dispose() {
+              live.delete(stop);
               cleanup();
               if (!exited) fail(new Error('The conversion was disposed of before it finished.'));
               if (!csv.destroyed && !csv.readableEnded) csv.destroy();

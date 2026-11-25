@@ -14,10 +14,13 @@ import {
   reviewingIngest,
   xlsxUpload,
 } from '../../utils/campaignSetup/customersFixtures';
+import { watchFileInputClears } from '../../helpers/fileInputClears';
+import { BUSY_REFUSALS, WORKBOOK_TOO_LARGE, WORKBOOK_UNSUPPORTED } from '../../helpers/uploadRefusals';
+import { ApiError } from '../../../api/client';
 
 const api = vi.hoisted(() => ({
   getIngestLimits: vi.fn(),
-  uploadRosterCsv: vi.fn(),
+  uploadCustomerFile: vi.fn(),
   analyzeRosterColumns: vi.fn(),
   startRosterIngest: vi.fn(),
   getIngestJob: vi.fn(),
@@ -95,10 +98,33 @@ describe('the drop zone', () => {
     });
   });
 
+  it('clears the picker after each pick, so the same file can be chosen again after a refusal', async () => {
+    const onPickFile = vi.fn(async () => {});
+    renderStep({ onPickFile });
+    const input = screen.getByLabelText('Excel or CSV file') as HTMLInputElement;
+    const clears = watchFileInputClears(input);
+    fireEvent.change(input, { target: { files: [csv()] } });
+    expect(onPickFile).toHaveBeenCalledTimes(1);
+    expect(clears()).toBe(1);
+    expect(input.value).toBe('');
+    await waitFor(() => {
+      fireEvent.change(input, { target: { files: [csv()] } });
+      expect(onPickFile).toHaveBeenCalledTimes(2);
+    });
+    expect(clears()).toBeGreaterThanOrEqual(2);
+  });
+
+  it('says an Excel file is being read as well as sent, which can take a while after the bytes are up', () => {
+    renderStep({ ingest: fakeIngest({ phase: 'uploading', uploadingWorkbook: true }) });
+    expect(screen.getByRole('status').textContent).toBe('Uploading and reading the file…');
+    expect(screen.queryByText('Uploading…')).toBeNull();
+  });
+
   it('takes no file once an upload is under way, and says what is happening', () => {
     const onPickFile = vi.fn();
     renderStep({ onPickFile, ingest: fakeIngest({ phase: 'uploading' }) });
     expect(screen.getByText('Uploading…')).toBeTruthy();
+    expect(screen.queryByText('Uploading and reading the file…')).toBeNull();
     expect((screen.getByRole('button', { name: 'Choose a file' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.drop(screen.getByTestId('contacts-dropzone'), { dataTransfer: { files: [csv()] } });
     expect(onPickFile).not.toHaveBeenCalled();
@@ -125,10 +151,26 @@ describe('an Excel upload’s sheets (CS7)', () => {
     expect(screen.queryByTestId('sheet-others')).toBeNull();
   });
 
+  it('announces the notice, as the step’s other notes are', () => {
+    renderStep({ ingest: reviewingIngest({ upload: xlsxUpload(['Paid']) }) });
+    const notice = within(screen.getByTestId('file-row')).getByTestId('sheet-notice');
+    expect(notice.getAttribute('role')).toBe('status');
+    expect(within(notice).getByTestId('sheet-read')).toBeTruthy();
+    expect(within(notice).getByTestId('sheet-others')).toBeTruthy();
+  });
+
+  it('counts every other sheet, and lists the first five', () => {
+    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'];
+    renderStep({ ingest: reviewingIngest({ upload: xlsxUpload(names, 300) }) });
+    expect(screen.getByTestId('sheet-others').textContent).toBe(
+      'This file has 300 other sheets (‘Jan’, ‘Feb’, ‘Mar’, ‘Apr’, ‘May’ and 295 more) that were not read. To import them, move those customers to the sheet ‘Customers’, or save each sheet as its own file.',
+    );
+  });
+
   it('names one other sheet that was not read, and how to import it', () => {
     renderStep({ ingest: reviewingIngest({ upload: xlsxUpload(['Paid']) }) });
     expect(within(screen.getByTestId('file-row')).getByTestId('sheet-others').textContent).toBe(
-      'This file has 1 other sheet (‘Paid’) that was not read. To import it, move those customers to the first sheet, or save that sheet as its own file.',
+      'This file has 1 other sheet (‘Paid’) that was not read. To import it, move those customers to the sheet ‘Customers’, or save that sheet as its own file.',
     );
   });
 
@@ -136,7 +178,7 @@ describe('an Excel upload’s sheets (CS7)', () => {
     renderStep({ ingest: reviewingIngest({ upload: xlsxUpload(['Paid', 'Archive']) }) });
     expect(screen.getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
     expect(screen.getByTestId('sheet-others').textContent).toBe(
-      'This file has 2 other sheets (‘Paid’, ‘Archive’) that were not read. To import them, move those customers to the first sheet, or save each sheet as its own file.',
+      'This file has 2 other sheets (‘Paid’, ‘Archive’) that were not read. To import them, move those customers to the sheet ‘Customers’, or save each sheet as its own file.',
     );
   });
 
@@ -339,6 +381,7 @@ describe('with the roster ingest itself', () => {
     return (
       <>
         <CustomersStep ingest={ingest} basicsReady blockReason={null} onPickFile={ingest.onPickFile} />
+        {ingest.error ? <p data-testid="harness-error">{ingest.error}</p> : null}
         {next ? (
           <button type="button" data-testid="footer-next" onClick={() => void (next.action === 'import' ? ingest.importChecked() : undefined)}>
             {next.label}
@@ -350,7 +393,7 @@ describe('with the roster ingest itself', () => {
 
   beforeEach(() => {
     api.getIngestLimits.mockResolvedValue({ max_rows: 1_000_000, max_columns: 50, max_cell_bytes: 4096, max_file_bytes: 512 * 1024 * 1024 });
-    api.uploadRosterCsv.mockResolvedValue(UPLOAD);
+    api.uploadCustomerFile.mockResolvedValue(UPLOAD);
     api.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
     api.getIngestJob.mockResolvedValue(ingestJob());
     api.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });
@@ -359,6 +402,53 @@ describe('with the roster ingest itself', () => {
   async function dropFile() {
     fireEvent.drop(screen.getByTestId('contacts-dropzone'), { dataTransfer: { files: [csv()] } });
   }
+
+  it('says an Excel file is being read as well as sent while it uploads, and a CSV only that it is sent', async () => {
+    api.uploadCustomerFile.mockImplementation(() => new Promise(() => {}));
+    render(<Harness />);
+    const workbook = new File(['PK'], 'Customers May.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    fireEvent.drop(screen.getByTestId('contacts-dropzone'), { dataTransfer: { files: [workbook] } });
+    expect((await screen.findByRole('status')).textContent).toBe('Uploading and reading the file…');
+    cleanup();
+    render(<Harness />);
+    await dropFile();
+    expect((await screen.findByRole('status')).textContent).toBe('Uploading…');
+  });
+
+  it('says a file over the size limit plainly, with the limit, when the 413 is not the server’s own (an HTML page from the proxy)', async () => {
+    api.uploadCustomerFile.mockRejectedValue(new ApiError(413, undefined));
+    render(<Harness />);
+    await waitFor(() => expect(api.getIngestLimits).toHaveBeenCalled());
+    await screen.findByTestId('ingest-limits');
+    await dropFile();
+    expect((await screen.findByTestId('harness-error')).textContent).toBe('This file is too large. A file can be up to 512 MB.');
+    expect(screen.getByTestId('contacts-dropzone')).toBeTruthy();
+  });
+
+  it('uses the server’s words for its own file_too_large', async () => {
+    api.uploadCustomerFile.mockRejectedValue(new ApiError(413, WORKBOOK_TOO_LARGE.body));
+    render(<Harness />);
+    await dropFile();
+    expect((await screen.findByTestId('harness-error')).textContent).toBe(WORKBOOK_TOO_LARGE.body.message);
+  });
+
+  it.each([[WORKBOOK_UNSUPPORTED.status, WORKBOOK_UNSUPPORTED], ...BUSY_REFUSALS])(
+    'shows a %i refusal in the server’s words, and the same file can be chosen again',
+    async (status, refusal) => {
+      api.uploadCustomerFile.mockRejectedValueOnce(new ApiError(status, refusal.body));
+      api.uploadCustomerFile.mockResolvedValueOnce(UPLOAD);
+      api.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
+      render(<Harness />);
+      const input = screen.getByLabelText('Excel or CSV file') as HTMLInputElement;
+      const clears = watchFileInputClears(input);
+      fireEvent.change(input, { target: { files: [csv()] } });
+      expect((await screen.findByTestId('harness-error')).textContent).toBe(refusal.body.message);
+      expect(clears()).toBe(1);
+      fireEvent.change(screen.getByLabelText('Excel or CSV file'), { target: { files: [csv()] } });
+      await waitFor(() => expect(api.uploadCustomerFile).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(screen.queryByTestId('harness-error')).toBeNull());
+    },
+  );
 
   it('checks a file whose phone column is sure as soon as it is read, and shows the chips', async () => {
     api.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
@@ -402,7 +492,7 @@ describe('with the roster ingest itself', () => {
   });
 
   it('reads an Excel file the same way, says which sheet was read, and names the downloads without .xlsx', async () => {
-    api.uploadRosterCsv.mockResolvedValue(xlsxUpload(['Paid', 'Archive']));
+    api.uploadCustomerFile.mockResolvedValue(xlsxUpload(['Paid', 'Archive']));
     api.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
     api.getIngestJob.mockResolvedValue(ingestJob({ file_name: 'Customers May.xlsx' }));
     api.downloadRejectedRows.mockResolvedValue(new Blob(['x']));
@@ -418,7 +508,7 @@ describe('with the roster ingest itself', () => {
       const workbook = new File(['PK'], 'Customers May.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       fireEvent.drop(screen.getByTestId('contacts-dropzone'), { dataTransfer: { files: [workbook] } });
       await waitFor(() => expect(screen.getByTestId('chip-ready').textContent).toBe('1,240 customers ready'));
-      expect(api.uploadRosterCsv.mock.calls[0]![0]).toBe(workbook);
+      expect(api.uploadCustomerFile.mock.calls[0]![0]).toBe(workbook);
       // The check reads the stored CSV, under the name the supervisor's file had.
       expect(api.startRosterIngest.mock.calls[0]![0]).toMatchObject({ file_name: 'Customers May.xlsx', dry_run: true });
       const row = screen.getByTestId('file-row');

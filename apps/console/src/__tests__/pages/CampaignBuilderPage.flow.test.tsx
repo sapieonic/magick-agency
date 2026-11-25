@@ -25,7 +25,7 @@ import {
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   getIngestLimits: vi.fn(),
-  uploadRosterCsv: vi.fn(),
+  uploadCustomerFile: vi.fn(),
   analyzeRosterColumns: vi.fn(),
   startRosterIngest: vi.fn(),
   getIngestJob: vi.fn(),
@@ -69,7 +69,7 @@ vi.mock('../../hooks/useCampaignStaffing', async (importOriginal) => ({
 }));
 vi.mock('../../api/agencyCampaigns', () => ({
   getIngestLimits: mocks.getIngestLimits,
-  uploadRosterCsv: mocks.uploadRosterCsv,
+  uploadCustomerFile: mocks.uploadCustomerFile,
   analyzeRosterColumns: mocks.analyzeRosterColumns,
   startRosterIngest: mocks.startRosterIngest,
   getIngestJob: mocks.getIngestJob,
@@ -159,7 +159,7 @@ describe('the guided setup path', () => {
   });
 
   it('clears drag feedback and accepts only one file while upload is busy', async () => {
-    mocks.uploadRosterCsv.mockImplementation(
+    mocks.uploadCustomerFile.mockImplementation(
       () => new Promise(() => {
         // Keep the first upload in flight. A second drop/change must be ignored
         // before the API promise has a chance to settle.
@@ -182,13 +182,13 @@ describe('the guided setup path', () => {
     await waitFor(() => {
       expect(screen.getByTestId('contacts-dropzone').getAttribute('data-drag-over')).toBeNull();
     });
-    expect(mocks.uploadRosterCsv).toHaveBeenCalledTimes(1);
+    expect(mocks.uploadCustomerFile).toHaveBeenCalledTimes(1);
 
     const busyDropzone = screen.getByTestId('contacts-dropzone');
     fireEvent.dragOver(busyDropzone);
     expect(busyDropzone.getAttribute('data-drag-over')).toBeNull();
     fireEvent.drop(busyDropzone, { dataTransfer: { files: [second] } });
-    expect(mocks.uploadRosterCsv).toHaveBeenCalledTimes(1);
+    expect(mocks.uploadCustomerFile).toHaveBeenCalledTimes(1);
   });
 
   it('moves focus to the new step’s heading after navigation, and reports the step by its id', async () => {

@@ -15,24 +15,32 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *    sheet: blank rows before the header and between rows, and a cell holding line breaks;
  *  - a CSV upload answers `format: 'csv'` and no sheet;
  *  - an `.xls` (or a workbook with a password), text named `.xlsx`, a zip that is not a
- *    workbook and a workbook with no visible sheet are refused 400 in plain words and
- *    nothing is stored; a sheet over the ingest's row limit is refused with the ingest's own
- *    code and words, before anything is stored.
+ *    workbook and a workbook with no visible sheet are refused 400 `{ error, code, message }`
+ *    in plain words and nothing is stored; a sheet over the ingest's row limit is refused with
+ *    the ingest's own code and words, before anything is stored; every other refusal carries
+ *    its `AgencyUploadRefusalCode` too, the 503s through the error mask in their own words.
  */
 
 const s3 = vi.hoisted(() => ({ files: new Map<string, { body: Buffer; contentType: string }>() }));
-const mocks = vi.hoisted(() => ({ verifyIdToken: vi.fn(), csvBytesLimit: null as number | null, deadlineMs: null as number | null, s3Missing: false }));
+const mocks = vi.hoisted(() => ({
+  verifyIdToken: vi.fn(),
+  csvBytesLimit: null as number | null,
+  deadlineMs: null as number | null,
+  s3Missing: false,
+  /** In place of the real conversion: what the runner answers (a rejection, or a conversion that fails later). */
+  conversion: null as (() => Promise<import('../../../src/agency/agency-xlsx-runner.js').XlsxConversion>) | null,
+}));
 vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyIdToken: mocks.verifyIdToken }));
 // The real conversion, in its worker; one case lowers the CSV byte limit, since a 512 MB CSV is not a fixture.
 vi.mock('../../../src/agency/agency-xlsx-runner.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../../src/agency/agency-xlsx-runner.js')>();
   return {
     ...real,
-    convertXlsxInWorker: (
+    convertXlsxInChild: (
       buf: Buffer,
       limits: import('../../../src/agency/agency-xlsx.js').XlsxLimits,
       options?: import('../../../src/agency/agency-xlsx-runner.js').XlsxConversionOptions,
-    ) => real.convertXlsxInWorker(
+    ) => mocks.conversion ? mocks.conversion() : real.convertXlsxInChild(
       buf,
       mocks.csvBytesLimit === null ? limits : { ...limits, maxCsvBytes: mocks.csvBytesLimit, maxSheetXmlBytes: limits.maxCsvBytes },
       mocks.deadlineMs === null ? options : { ...options, deadlineMs: mocks.deadlineMs },
@@ -79,7 +87,9 @@ import {
 import { compoundFile, exceljsWorkbook, handWorkbook, zipParts } from '../../helpers/xlsx-fixtures.js';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { AGENCY_MAX_ROWS } from '../../../src/agency/agency-csv-ingest.js';
-import { convertXlsxInWorker, xlsxConversionRunning } from '../../../src/agency/agency-xlsx-runner.js';
+import { convertXlsxInChild, xlsxConversionRunning, XlsxStorageTimeoutError, type XlsxConversion } from '../../../src/agency/agency-xlsx-runner.js';
+import { XlsxLimitError } from '../../../src/agency/agency-xlsx-refusals.js';
+import { PassThrough } from 'node:stream';
 
 /** A download's `_row` column, read as CSV (a cell may hold line breaks). */
 const rowColumn = (csv: string): string[] => (parseCsv(csv) as string[][]).slice(1).map((r) => r[0]!);
@@ -99,6 +109,7 @@ beforeEach(async () => {
   mocks.csvBytesLimit = null;
   mocks.deadlineMs = null;
   mocks.s3Missing = false;
+  mocks.conversion = null;
   floor = (await seedFloor({ tenants: 1, agentsPerTenant: 0, supervisorsPerTenant: 1, campaignsPerTenant: 1 }))[0]!;
 });
 
@@ -191,7 +202,7 @@ describe('an Excel customer list, upload to downloads (integration)', () => {
       file_name: 'Customers May.xlsx',
       file_size_bytes: workbook.length,
       format: 'xlsx',
-      sheet: { name: 'Customers May', other_sheet_names: ['Archive', 'Notes'] },
+      sheet: { name: 'Customers May', other_sheet_names: ['Archive', 'Notes'], other_sheet_count: 2 },
     });
     expect(body.s3_key).toMatch(new RegExp(`^agency-ingest/${floor.tenant}/[0-9a-f-]{36}/Customers_May\\.xlsx\\.csv$`));
     const stored = s3.files.get(body.s3_key)!;
@@ -288,22 +299,36 @@ describe('an Excel customer list, upload to downloads (integration)', () => {
       sheets: [{ name: 'S', xml: '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Mobile</t></is></c></row><row r="2"><c r="A2"><v>9876500001</v></c></row></sheetData>' }],
     }));
     expect(res.statusCode, res.body).toBe(201);
-    expect(res.json()).toMatchObject({ format: 'xlsx', sheet: { name: 'S', other_sheet_names: [] } });
+    expect(res.json()).toMatchObject({ format: 'xlsx', sheet: { name: 'S', other_sheet_names: [], other_sheet_count: 0 } });
     expect(s3.files.get(res.json().s3_key)!.body.toString('utf8')).toBe('Mobile\n9876500001\n');
+  });
+
+  it('names the downloads of a macro workbook (.xlsm) without its extension', async () => {
+    const res = await upload('Dues.xlsm', handWorkbook({
+      sheets: [{ name: 'S', xml: '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Mobile</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>not a phone</t></is></c></row><row r="3"><c r="A3"><v>9876500001</v></c></row></sheetData>' }],
+    }));
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json()).toMatchObject({ file_name: 'Dues.xlsm', format: 'xlsx' });
+    const { job } = await checkThenImport(res.json().s3_key, 'Dues.xlsm');
+    expect(job).toMatchObject({ accepted: 1, rejected: 1 });
+    const rejected = await download(job.job_id, 'rejected');
+    expect(rejected.statusCode, rejected.body).toBe(200);
+    expect(rejected.headers['content-disposition']).toContain('filename="Dues-rejected-rows.csv"');
   });
 });
 
 describe('refusals (integration)', () => {
   it.each([
-    ['an .xls', 'customers.xls', () => compoundFile(), 'This is an older Excel file (.xls) or a workbook with a password, which cannot be read. Open it in Excel and save it as an Excel Workbook (.xlsx) without a password, or as CSV, then upload it again.'],
-    ['a password-protected workbook', 'customers.xlsx', () => compoundFile(), 'This is an older Excel file (.xls) or a workbook with a password, which cannot be read. Open it in Excel and save it as an Excel Workbook (.xlsx) without a password, or as CSV, then upload it again.'],
-    ['text named .xlsx', 'customers.xlsx', () => Buffer.from('Mobile\n9876500001\n'), 'This file is named like an Excel workbook but is not one. Open it in Excel and save it as an Excel Workbook (.xlsx) or as CSV, then upload it again.'],
-    ['a zip that is not a workbook', 'customers.xlsx', () => zipParts([['word/document.xml', '<w/>']]), 'This Excel file could not be read. Open it in Excel and save it again as an Excel Workbook (.xlsx) or as CSV, then upload it again.'],
-    ['a workbook with no visible sheet', 'customers.xlsx', () => handWorkbook({ sheets: [{ name: 'A', state: 'hidden', xml: '<sheetData/>' }] }), 'This workbook has no sheet to read: every sheet is hidden or is a chart. Unhide the sheet with your customers, save the workbook and upload it again.'],
-  ])('%s: 400 in plain words, nothing stored', async (_label, name, content, message) => {
+    ['an .xls', 'customers.xls', () => compoundFile(), 'workbook_unsupported', 'This is an older Excel file (.xls) or a workbook with a password, which cannot be read. Open it in Excel and save it as an Excel Workbook (.xlsx) without a password, or as CSV, then upload it again.'],
+    ['a password-protected workbook', 'customers.xlsx', () => compoundFile(), 'workbook_unsupported', 'This is an older Excel file (.xls) or a workbook with a password, which cannot be read. Open it in Excel and save it as an Excel Workbook (.xlsx) without a password, or as CSV, then upload it again.'],
+    ['text named .xlsx', 'customers.xlsx', () => Buffer.from('Mobile\n9876500001\n'), 'not_a_workbook', 'This file is named like an Excel workbook but is not one. Open it in Excel and save it as an Excel Workbook (.xlsx) or as CSV, then upload it again.'],
+    ['a zip that is not a workbook', 'customers.xlsx', () => zipParts([['word/document.xml', '<w/>']]), 'workbook_unreadable', 'This Excel file could not be read. Open it in Excel and save it again as an Excel Workbook (.xlsx) or as CSV, then upload it again.'],
+    ['a workbook with no visible sheet', 'customers.xlsx', () => handWorkbook({ sheets: [{ name: 'A', state: 'hidden', xml: '<sheetData/>' }] }), 'workbook_no_sheet', 'This workbook has no sheet to read: every sheet is hidden or is a chart. Unhide the sheet with your customers, save the workbook and upload it again.'],
+    ['a cell longer than a spreadsheet cell can hold', 'customers.xlsx', () => handWorkbook({ sheets: [{ name: 'S', xml: `<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>${'x'.repeat(65_537)}</t></is></c></row></sheetData>` }] }), 'cell_too_long', 'A cell in this workbook holds more than 65,536 characters, more than a spreadsheet cell can. Shorten it, save the workbook and upload it again.'],
+  ])('%s: 400 with its code, in plain words, nothing stored', async (_label, name, content, code, message) => {
     const res = await upload(name, content());
     expect(res.statusCode, res.body).toBe(400);
-    expect(res.json()).toEqual({ error: 'Validation Error', message });
+    expect(res.json()).toEqual({ error: 'Validation Error', code, message });
     expect(s3.files.size).toBe(0);
   });
 
@@ -317,7 +342,7 @@ describe('refusals (integration)', () => {
     expect(res.json()).toEqual({
       error: 'Validation Error',
       code: 'too_many_rows',
-      message: 'The file has more than 1,000,000 rows. Split it into smaller campaigns.',
+      message: 'The file has more than 10,00,000 rows. Split it into smaller campaigns.',
     });
     expect(s3.files.size).toBe(0);
   }, 120_000);
@@ -330,19 +355,70 @@ describe('refusals (integration)', () => {
     expect(s3.files.size).toBe(0);
   });
 
-  it("a sheet whose CSV passes the size limit is refused with the upload's own 413, and nothing is stored", async () => {
+  it("a sheet whose CSV passes the size limit is refused 413 file_too_large in plain words, and nothing is stored", async () => {
     mocks.csvBytesLimit = 1_000;
     const rows = Array.from({ length: 200 }, (_, i) => `<row r="${i + 1}"><c r="A${i + 1}"><v>${9876500000 + i}</v></c></row>`);
     const res = await upload('big.xlsx', handWorkbook({ sheets: [{ name: 'S', xml: `<sheetData>${rows.join('')}</sheetData>` }] }));
     expect(res.statusCode, res.body).toBe(413);
-    // The body the multipart plugin's own limit answers a CSV over `CSV_MAX_BYTES` with.
-    expect(res.json()).toMatchObject({ statusCode: 413, message: 'request file too large' });
+    expect(res.json()).toEqual({
+      error: 'Payload Too Large',
+      code: 'file_too_large',
+      message: 'This workbook is too large to read: its sheet comes to more than 512 MB as CSV, and a file can be up to 512 MB. '
+        + 'Split the customers into smaller files and upload them again.',
+    });
+    expect(s3.files.size).toBe(0);
+  });
+
+  it('a workbook that needs more memory than the child is allowed is refused 422 workbook_too_complex, and nothing is stored', async () => {
+    mocks.conversion = () => Promise.reject(new XlsxLimitError('too_much_memory'));
+    const res = await upload('heavy.xlsx', handWorkbook({ sheets: [{ name: 'S', xml: '<sheetData/>' }] }));
+    expect(res.statusCode, res.body).toBe(422);
+    expect(res.json()).toEqual({
+      error: 'Validation Error',
+      code: 'workbook_too_complex',
+      message: 'This workbook needs more memory to read than the server allows. Save the sheet with your customers as a CSV file, or as a workbook with only that sheet, and upload it again.',
+    });
+    expect(s3.files.size).toBe(0);
+  });
+
+  it('S3 not storing the CSV by the deadline is a 503 upload_storage_slow whose words pass the error mask', async () => {
+    // As the runner ends a conversion whose child finished but whose CSV S3 had not taken by the
+    // deadline: its signal aborted, its CSV destroyed, `failure()` the storage timeout.
+    mocks.conversion = async () => {
+      const csv = new PassThrough();
+      const aborter = new AbortController();
+      let failure: unknown = null;
+      setTimeout(() => {
+        failure = new XlsxStorageTimeoutError();
+        aborter.abort(failure);
+        csv.destroy(failure as Error);
+      }, 20);
+      const conversion: XlsxConversion = {
+        sheet: { name: 'S', other_sheet_names: [], other_sheet_count: 0 },
+        rows: 1,
+        columns: 1,
+        csv,
+        signal: aborter.signal,
+        failure: () => failure,
+        dispose: () => csv.destroy(),
+      };
+      return conversion;
+    };
+    const res = await upload('customers.xlsx', handWorkbook({ sheets: [{ name: 'S', xml: '<sheetData/>' }] }));
+    expect(res.statusCode, res.body).toBe(503);
+    expect(res.headers['retry-after']).toBe('60');
+    expect(res.json()).toEqual({
+      error: 'Service Unavailable',
+      code: 'upload_storage_slow',
+      message: 'The file was read, but it could not be saved in time. Upload it again in a few minutes.',
+      retry_after_seconds: 60,
+    });
     expect(s3.files.size).toBe(0);
   });
 
   it('a second Excel upload while one converts is told to try again in a minute (429), and the first is not disturbed', async () => {
     const rows = Array.from({ length: 40_000 }, (_, i) => `<row r="${i + 1}"><c r="A${i + 1}"><v>${9_000_000_000 + i}</v></c><c r="B${i + 1}" t="inlineStr"><is><t>${'n'.repeat(40)}</t></is></c></row>`);
-    const held = await convertXlsxInWorker(handWorkbook({ sheets: [{ name: 'S', xml: `<sheetData>${rows.join('')}</sheetData>` }] }), { maxDataRows: 1_000_000, maxColumns: 100, maxCsvBytes: 512 * 1024 * 1024 });
+    const held = await convertXlsxInChild(handWorkbook({ sheets: [{ name: 'S', xml: `<sheetData>${rows.join('')}</sheetData>` }] }), { maxDataRows: 1_000_000, maxColumns: 100, maxCsvBytes: 512 * 1024 * 1024 });
     try {
       const res = await upload('second.xlsx', handWorkbook({ sheets: [{ name: 'S', xml: '<sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData>' }] }));
       expect(res.statusCode, res.body).toBe(429);
@@ -390,7 +466,7 @@ describe('refusals (integration)', () => {
 
   it('a second workbook while one converts is refused before its body is read', async () => {
     const rows = Array.from({ length: 40_000 }, (_, i) => `<row r="${i + 1}"><c r="A${i + 1}"><v>${9_000_000_000 + i}</v></c></row>`);
-    const held = await convertXlsxInWorker(handWorkbook({ sheets: [{ name: 'S', xml: `<sheetData>${rows.join('')}</sheetData>` }] }), { maxDataRows: 1_000_000, maxColumns: 100, maxCsvBytes: 512 * 1024 * 1024 });
+    const held = await convertXlsxInChild(handWorkbook({ sheets: [{ name: 'S', xml: `<sheetData>${rows.join('')}</sheetData>` }] }), { maxDataRows: 1_000_000, maxColumns: 100, maxCsvBytes: 512 * 1024 * 1024 });
     try {
       // A body cut off mid-file: had it been read, this would be the 400 for a malformed form.
       const boundary = '----xlsxEarly';

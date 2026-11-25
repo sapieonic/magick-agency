@@ -228,7 +228,9 @@ It should print the Elastic IP.
 **Cloudflare users: set the record to "DNS only" (grey cloud).** Proxying through Cloudflare adds
 a third proxy in front of the server, so `TRUST_PROXY_HOPS=2` would be wrong. It also puts
 Cloudflare's own WebSocket and upload limits in front of a 512 MiB roster upload and shift-long
-station sockets. If you want Cloudflare's proxy anyway, set `TRUST_PROXY_HOPS=3` and test uploads
+station sockets. An Excel upload is also converted before the server answers, which can take up
+to 5 minutes with no bytes sent back, longer than Cloudflare's proxy waits for an answer. If you
+want Cloudflare's proxy anyway, set `TRUST_PROXY_HOPS=3` and test uploads (Excel ones included)
 and long calls first.
 
 Optional: if your domain has `CAA` records, add one allowing `letsencrypt.org`, or Caddy cannot get

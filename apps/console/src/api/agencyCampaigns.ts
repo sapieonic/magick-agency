@@ -57,11 +57,14 @@ export async function getIngestLimits(
 }
 
 /**
- * Upload the raw CSV. Multipart, so it uses `fetch` directly with the shared
- * auth headers — `apiFetch` sets `Content-Type: application/json` on any body,
- * which would break the boundary.
+ * Upload a customer file, a CSV or an Excel workbook (CS7, IM8), as the supervisor chose it. The
+ * server reads a workbook's first visible sheet and stores it as CSV; the answer says which
+ * (`format`, `sheet`). A refusal throws `ApiError` with the server's `{ error, code, message }`
+ * (`AgencyUploadRefusalCode`). Multipart, so it uses `fetch` directly with the shared auth
+ * headers — `apiFetch` sets `Content-Type: application/json` on any body, which would break the
+ * boundary.
  */
-export async function uploadRosterCsv(
+export async function uploadCustomerFile(
   file: File,
   tenantId?: string,
   accountId?: string,

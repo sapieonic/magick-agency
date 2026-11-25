@@ -70,7 +70,7 @@ export function zipParts(
 }
 
 const NS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
-const NS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+/** The relationships namespace: the `r:` prefix in a part, and the root of every relationship type. */
 const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const PKG_REL = 'http://schemas.openxmlformats.org/package/2006/relationships';
 
@@ -120,7 +120,7 @@ export function excelParts(book: HandWorkbook): Parts {
   const sheetEls = book.sheets
     .map((s, i) => `<${p}sheet name="${xmlEscape(s.name)}" sheetId="${i + 1}"${s.state ? ` state="${s.state}"` : ''} r:id="rId${i + 1}"/>`)
     .join('');
-  parts.push(['xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8"?><${p}workbook ${xmlns} xmlns:r="${NS_REL}">${book.date1904 ? `<${p}workbookPr date1904="1"/>` : `<${p}workbookPr/>`}<${p}sheets>${sheetEls}</${p}sheets></${p}workbook>`]);
+  parts.push(['xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8"?><${p}workbook ${xmlns} xmlns:r="${REL}">${book.date1904 ? `<${p}workbookPr date1904="1"/>` : `<${p}workbookPr/>`}<${p}sheets>${sheetEls}</${p}sheets></${p}workbook>`]);
 
   const n = book.sheets.length;
   const rels = book.sheets.map((s, i) => s.chart
@@ -134,7 +134,7 @@ export function excelParts(book: HandWorkbook): Parts {
     if (s.chart) {
       parts.push([`xl/chartsheets/sheet${i + 1}.xml`, `<?xml version="1.0" encoding="UTF-8"?><chartsheet xmlns="${NS_MAIN}"/>`]);
     } else {
-      parts.push([`xl/worksheets/sheet${i + 1}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<${p}worksheet ${xmlns} xmlns:r="${NS_REL}">${s.xml ?? `<${p}sheetData/>`}</${p}worksheet>`]);
+      parts.push([`xl/worksheets/sheet${i + 1}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<${p}worksheet ${xmlns} xmlns:r="${REL}">${s.xml ?? `<${p}sheetData/>`}</${p}worksheet>`]);
     }
   });
 

@@ -68,17 +68,10 @@ const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
 const EOCD_MIN = 22;
 /** Parts a zip may list. A workbook has a few dozen; a directory of millions is only work. */
-export const MAX_ZIP_ENTRIES = 10_000;
+const MAX_ZIP_ENTRIES = 10_000;
 const MAX_COMMENT = 0xffff;
 /** Compressed bytes handed to the inflater per write: the most one write can expand to is about 1,000 times this. */
 const INFLATE_SLICE_BYTES = 8 * 1024;
-
-/** Whether the bytes start like a zip: a local file header (`PK\x03\x04`), or the end record of an empty zip. */
-export function looksLikeZip(head: Buffer): boolean {
-  if (head.length < 4) return false;
-  const sig = head.readUInt32LE(0);
-  return sig === LOCAL_SIGNATURE || sig === EOCD_SIGNATURE;
-}
 
 function u64(buf: Buffer, offset: number): number {
   const value = buf.readBigUInt64LE(offset);

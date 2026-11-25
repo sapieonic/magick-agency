@@ -5,6 +5,7 @@ import {
   classifyNumberFormat,
   compileFormat,
   formatsCompiled,
+  plainNumber,
   renderFormattedNumber,
   type NumberStyle,
 } from '../../../src/agency/agency-xlsx-numfmt.js';
@@ -150,8 +151,8 @@ describe('what is not rendered keeps the value rule', () => {
 
 const LIMITS = { maxDataRows: 1_000, maxColumns: 100, maxCsvBytes: 1_000_000 };
 
-async function csvOf(buf: Buffer): Promise<string> {
-  const workbook = await openXlsxWorkbook(buf, LIMITS);
+async function csvOf(buf: Buffer, limits: Partial<typeof LIMITS> = {}): Promise<string> {
+  const workbook = await openXlsxWorkbook(buf, { ...LIMITS, ...limits });
   let csv = '';
   for await (const chunk of workbook.toCsv() as AsyncIterable<Buffer>) csv += chunk.toString('utf8');
   return csv;
@@ -352,20 +353,70 @@ describe('work: compiled once per format, linearly', () => {
     expect(formatsCompiled() - before).toBe(1);
   });
 
-  it('an adversarial code just under 1,024 characters compiles in linear time', () => {
+  it('an adversarial code at Excel\'s 255-character limit compiles in linear time', () => {
     const codes = [
-      '"[\\'.repeat(341),
-      '[\\"'.repeat(341),
-      '\\['.repeat(511),
-      '['.repeat(1_000),
-      '"'.repeat(1_023),
-      '_"*['.repeat(255),
+      '"[\\'.repeat(85),
+      '[\\"'.repeat(85),
+      '\\['.repeat(127),
+      '['.repeat(255),
+      '"'.repeat(255),
+      '_"*['.repeat(63),
+      'General'.repeat(36),
     ];
     for (const code of codes) {
-      expect(code.length).toBeLessThanOrEqual(1_024);
+      expect(code.length).toBeLessThanOrEqual(255);
+      // Under the cap, so the compiler runs (a longer code never reaches it).
+      const before = formatsCompiled();
+      compileFormat(code);
+      expect(formatsCompiled() - before, code.slice(0, 12)).toBe(1);
       const t0 = performance.now();
       for (let i = 0; i < 1_000; i += 1) compileFormat(code);
       expect(performance.now() - t0, code.slice(0, 12)).toBeLessThan(1_000);
     }
+  });
+});
+
+describe('fresh review: text-only formats, digitless sections, huge Generals, the hog', () => {
+  it('a format whose only section is text writes the number as General', async () => {
+    for (const code of ['@', '"Ref "@', '[Red]@']) expect(classifyNumberFormat(code), code).toEqual({ kind: 'plain' });
+    const buf = handWorkbook({
+      styles: { numFmts: '<numFmt numFmtId="164" formatCode="@"/><numFmt numFmtId="165" formatCode="&quot;Ref &quot;@"/>', cellXfs: '<xf numFmtId="0"/><xf numFmtId="164"/><xf numFmtId="165"/>' },
+      sheets: [{ name: 'S', xml: '<sheetData><row r="1"><c r="A1" s="1"><v>123456</v></c><c r="B1" s="2"><v>1250.5</v></c></row></sheetData>' }],
+    });
+    expect(await csvOf(buf)).toBe('123456,1250.5\n');
+    // With a numeric section before it, the text section is only for text.
+    expect(show('General;@', -3)).toBe('-3');
+  });
+
+  it('a section with no digits is never switched by the zero rule', () => {
+    expect(show('"Cr";"Dr"', -0.3)).toBe('Dr');
+    expect(show('"Cr";"Dr"', -5)).toBe('Dr');
+    expect(show('"Due";"Overdue";"None"', -0.25)).toBe('Overdue');
+    expect(show('"Due";"Overdue";"None"', 0)).toBe('None');
+  });
+
+  it('General writes a whole number past 2^53 as Excel holds it, at 15 significant digits', () => {
+    expect(plainNumber(9.87654321098765e19)).toBe('98765432109876500000');
+    expect(plainNumber(2 ** 53)).toBe('9007199254740990');
+    expect(plainNumber(2 ** 53 - 1)).toBe('9007199254740991');
+    expect(plainNumber(-9.87654321098765e19)).toBe('-98765432109876500000');
+    expect(plainNumber(1e308).length).toBe(309);
+  });
+
+  it('a section with more than one General, or a code past Excel\'s 255 characters, is plain', () => {
+    expect(show('General General', 5)).toBeNull();
+    expect(classifyNumberFormat('General'.repeat(146))).toEqual({ kind: 'plain' });
+    expect(classifyNumberFormat(`0${' '.repeat(255)}`)).toEqual({ kind: 'plain' });
+    expect(classifyNumberFormat(`0${' '.repeat(254)}`).kind).toBe('format');
+  });
+
+  it('the hog: 10,000 rows of 1e308 under a General-heavy format convert in a couple of seconds', { timeout: 30_000 }, async () => {
+    const code = 'General'.repeat(36);
+    const cells = Array.from({ length: 10_000 }, (_, i) => `<row r="${i + 1}">${Array.from({ length: 10 }, (_, c) => `<c r="${String.fromCharCode(65 + c)}${i + 1}" s="1"><v>1E+308</v></c>`).join('')}</row>`).join('');
+    const buf = handWorkbook({ styles: { numFmts: `<numFmt numFmtId="164" formatCode="${code}"/>`, cellXfs: '<xf numFmtId="0"/><xf numFmtId="164"/>' }, sheets: [{ name: 'S', xml: `<sheetData>${cells}</sheetData>` }] });
+    const t0 = performance.now();
+    const csv = await csvOf(buf, { maxDataRows: 20_000, maxCsvBytes: 512 * 1024 * 1024 });
+    expect(performance.now() - t0).toBeLessThan(5_000);
+    expect(csv.split('\n')[0]!.split(',')[0]).toHaveLength(309);
   });
 });

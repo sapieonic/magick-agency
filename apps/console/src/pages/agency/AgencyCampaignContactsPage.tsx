@@ -9,7 +9,8 @@ import { mappingBlockReason } from '../../utils/agencyColumnMapping';
 import { ColumnMapper } from '../campaigns/agency/ColumnMapper';
 import { IngestSummary, ReviewNextSteps } from '../campaigns/agency/IngestSummary';
 import { SheetNotice } from '../campaigns/agency/SheetNotice';
-import { CUSTOMER_FILE_ACCEPT, CUSTOMER_FILE_LABEL } from '../../utils/agencyCustomerFile';
+import { CUSTOMER_FILE_ACCEPT, CUSTOMER_FILE_LABEL, uploadingLine } from '../../utils/agencyCustomerFile';
+import { useCustomerFileDrop } from '../../hooks/useCustomerFileDrop';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { CampaignWorkspace, type CampaignWorkspaceSection } from './campaign-detail/CampaignWorkspace';
@@ -89,6 +90,7 @@ function AddContactsSection({
     checkJob,
     importing,
     importChecked,
+    uploadingWorkbook,
     upload,
     analysis,
     mapping,
@@ -138,6 +140,9 @@ function AddContactsSection({
     }, [id, tenantId, accountId, commitCampaign]),
   });
 
+  // Dropped or picked, one file at a time, as on New campaign's Customers step.
+  const { dropzoneProps, onInputChange } = useCustomerFileDrop(canAdd && phase === 'idle', onPickFile);
+
   if (loading) return <LoadingSpinner />;
   // The workspace says why above, with Retry.
   if (!campaign) return null;
@@ -177,9 +182,10 @@ function AddContactsSection({
           {error && <ErrorAlert message={error} />}
 
           {phase === 'idle' || phase === 'uploading' || phase === 'analyzing' ? (
-            <div className={styles.dropzone}>
+            <div className={styles.dropzone} data-testid="contacts-dropzone" {...dropzoneProps}>
               <p className={styles.dropzoneCopy}>
-                Upload an Excel or CSV file. Any columns you like — you pick the phone column next.
+                Drop an Excel or CSV file here, or choose one. Any columns you like — you pick the
+                phone column next.
               </p>
               {limits && (
                 <p className={styles.limits}>
@@ -196,11 +202,7 @@ function AddContactsSection({
                 aria-label={CUSTOMER_FILE_LABEL}
                 className={styles.fileInput}
                 disabled={!canAdd || phase !== 'idle'}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void onPickFile(file);
-                  event.target.value = '';
-                }}
+                onChange={onInputChange}
               />
               <button
                 type="button"
@@ -210,15 +212,18 @@ function AddContactsSection({
               >
                 Choose a file
               </button>
-              {phase === 'uploading' && <p className={styles.progressLine}>Uploading…</p>}
+              {phase === 'uploading' && <p className={styles.progressLine} role="status">{uploadingLine(uploadingWorkbook)}</p>}
               {phase === 'analyzing' && <p className={styles.progressLine}>Reading the columns…</p>}
             </div>
           ) : upload?.sheet ? (
             // An Excel upload: which sheet was read, and any that were not (CS7). Kept through
             // the check and the import, until the file is replaced.
-            <div className={styles.sheetNotice} data-testid="sheet-notice">
-              <SheetNotice upload={upload} readClassName={styles.sheetRead} othersClassName={styles.sheetOthers} />
-            </div>
+            <SheetNotice
+              upload={upload}
+              className={styles.sheetNotice}
+              readClassName={styles.limits}
+              othersClassName={styles.sheetOthers}
+            />
           ) : null}
 
           {analysis && mapping && (phase === 'mapping' || phase === 'ingesting') ? (
@@ -247,6 +252,10 @@ function AddContactsSection({
                     disabled={mappingBlock !== null}
                   >
                     Import without checking
+                  </button>
+                  {/* The wrong file, or the wrong sheet: back to the picker, as the builder's Replace file. */}
+                  <button type="button" className="btn-secondary" onClick={reset}>
+                    Choose another file
                   </button>
                 </div>
               )}

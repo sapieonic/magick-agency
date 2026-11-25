@@ -61,8 +61,8 @@ describe('the Excel upload in the production build', () => {
         { name: 'Customers', xml: '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Mobile</t></is></c></row><row r="2"><c r="A2"><v>9876543210</v></c></row></sheetData>' },
       ],
     });
-    const conversion = await bundled.convertXlsxInWorker(buf, { maxDataRows: 1_000, maxColumns: 100, maxCsvBytes: 1_000_000 });
-    expect(conversion.sheet).toEqual({ name: 'Customers', other_sheet_names: [] });
+    const conversion = await bundled.convertXlsxInChild(buf, { maxDataRows: 1_000, maxColumns: 100, maxCsvBytes: 1_000_000 });
+    expect(conversion.sheet).toEqual({ name: 'Customers', other_sheet_names: [], other_sheet_count: 0 });
     let csv = '';
     for await (const chunk of conversion.csv as AsyncIterable<Buffer>) csv += chunk.toString('utf8');
     expect(csv).toBe('Mobile\n9876543210\n');
@@ -70,8 +70,8 @@ describe('the Excel upload in the production build', () => {
 
   it('a bundle without its worker says so plainly, and never falls back to tsx', async () => {
     const buf = handWorkbook({ sheets: [{ name: 'S', xml: '<sheetData/>' }] });
-    expect(() => broken.xlsxWorkerEntry()).toThrow(/worker is missing .*xlsx-worker\.js/);
-    await expect(broken.convertXlsxInWorker(buf, { maxDataRows: 10, maxColumns: 10, maxCsvBytes: 1_000 }))
+    expect(() => broken.xlsxWorkerEntry()).toThrow(/child's bundle is missing .*xlsx-worker\.js/);
+    await expect(broken.convertXlsxInChild(buf, { maxDataRows: 10, maxColumns: 10, maxCsvBytes: 1_000 }))
       .rejects.toThrow(/the build did not include dist\/xlsx-worker\.js/);
     expect(broken.xlsxConversionRunning()).toBe(false);
   });

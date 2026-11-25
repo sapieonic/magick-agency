@@ -15,7 +15,8 @@ import type { UploadPhase, useRosterIngest } from '../../../../hooks/useRosterIn
 import { MAPPING_BLOCK_COPY, mappingBlockReason } from '../../../../utils/agencyColumnMapping';
 import { buildIngestSummary, checkComparison } from '../../../../utils/agencyIngestSummary';
 import { formatSpineTimestamp } from '../../../../utils/agencySpineCopy';
-import { CUSTOMER_FILE_ACCEPT, CUSTOMER_FILE_LABEL } from '../../../../utils/agencyCustomerFile';
+import { CUSTOMER_FILE_ACCEPT, CUSTOMER_FILE_LABEL, uploadingLine } from '../../../../utils/agencyCustomerFile';
+import { useCustomerFileDrop } from '../../../../hooks/useCustomerFileDrop';
 import { formatCount } from '../../../../utils/format/number';
 import {
   fileRowLine,
@@ -47,6 +48,7 @@ export type CustomersIngest = Pick<
   | 'retryable'
   | 'checkJob'
   | 'importing'
+  | 'uploadingWorkbook'
   | 'upload'
   | 'analysis'
   | 'mapping'
@@ -111,6 +113,7 @@ export function CustomersStep({
     retryable,
     checkJob,
     importing,
+    uploadingWorkbook,
     upload,
     analysis,
     mapping,
@@ -126,22 +129,9 @@ export function CustomersStep({
     reset,
   } = ingest;
 
-  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // `phase` is render state, so two drop/change events can both see `idle` before React commits
-  // `uploading`; this lock takes the first file only.
-  const pickingRef = useRef(false);
-
-  const pick = async (file: File | undefined) => {
-    if (!file || phase !== 'idle' || pickingRef.current) return;
-    pickingRef.current = true;
-    setDragOver(false);
-    try {
-      await onPickFile(file);
-    } finally {
-      pickingRef.current = false;
-    }
-  };
+  // One file at a time, while idle; the picker cleared after each pick (shared with Add contacts).
+  const { dropzoneProps, onInputChange } = useCustomerFileDrop(phase === 'idle', onPickFile);
 
   /*
     CS8: a fresh analysis that is sure of the phone column starts the check here. Until the check
@@ -189,17 +179,7 @@ export function CustomersStep({
         <div
           className={styles.dropzone}
           data-testid="contacts-dropzone"
-          data-drag-over={dragOver || undefined}
-          onDragOver={(event) => {
-            event.preventDefault();
-            if (phase === 'idle' && !pickingRef.current) setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragOver(false);
-            void pick(event.dataTransfer.files[0]);
-          }}
+          {...dropzoneProps}
         >
           <span className={styles.dropIcon} aria-hidden="true">
             <Upload size={22} />
@@ -220,9 +200,7 @@ export function CustomersStep({
             accept={CUSTOMER_FILE_ACCEPT}
             aria-label={CUSTOMER_FILE_LABEL}
             disabled={phase !== 'idle'}
-            onChange={(event) => {
-              void pick(event.target.files?.[0]);
-            }}
+            onChange={onInputChange}
           />
           <button
             type="button"
@@ -232,7 +210,7 @@ export function CustomersStep({
           >
             Choose a file
           </button>
-          {phase === 'uploading' ? <p className={styles.busy} role="status">Uploading…</p> : null}
+          {phase === 'uploading' ? <p className={styles.busy} role="status">{uploadingLine(uploadingWorkbook)}</p> : null}
           {phase === 'analyzing' ? <p className={styles.busy} role="status">Reading the columns…</p> : null}
         </div>
       ) : null}
@@ -247,7 +225,12 @@ export function CustomersStep({
             <span className={styles.muted}>
               {fileRowLine(upload, analysis, finished ? job : null)}
             </span>
-            <SheetNotice upload={upload} readClassName={styles.muted} othersClassName={styles.note} />
+            <SheetNotice
+              upload={upload}
+              className={styles.sheetNotice}
+              readClassName={styles.muted}
+              othersClassName={styles.note}
+            />
           </div>
           {!importedDone ? (
             <button

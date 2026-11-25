@@ -69,7 +69,7 @@ vi.mock('../../hooks/useCampaignStaffing', async (importOriginal) => ({
 }));
 vi.mock('../../api/agencyCampaigns', () => ({
   getIngestLimits: mocks.getIngestLimits,
-  uploadRosterCsv: vi.fn(),
+  uploadCustomerFile: vi.fn(),
   analyzeRosterColumns: vi.fn(),
   startRosterIngest: vi.fn(),
   getIngestJob: vi.fn(),

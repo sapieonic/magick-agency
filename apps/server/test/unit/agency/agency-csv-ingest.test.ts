@@ -5,6 +5,8 @@ import {
   AgencyIngestError,
   dedupeHeaders,
   AGENCY_MAX_COLUMNS,
+  AGENCY_MAX_ROWS,
+  AGENCY_LIMIT_MESSAGES,
   type AgencyIngestContact,
   type AgencyIngestRejection,
   type AgencyIngestSummary,
@@ -847,6 +849,12 @@ describe('summary', () => {
     await expect(run(`Mobile\n${rows}\n`, { phoneColumn: 'Mobile', maxRows: 10 })).rejects.toMatchObject({
       code: 'too_many_rows',
     });
+  });
+
+  it('says the row limit grouped the Indian way, as the console shows it (10,00,000)', () => {
+    expect(AGENCY_MAX_ROWS).toBe(1_000_000);
+    expect(AGENCY_LIMIT_MESSAGES.tooManyRows(AGENCY_MAX_ROWS)).toBe('The file has more than 10,00,000 rows. Split it into smaller campaigns.');
+    expect(AGENCY_LIMIT_MESSAGES.tooManyColumns(102, 100)).toBe('The file has 102 columns. The maximum is 100.');
   });
 });
 

@@ -19,7 +19,7 @@ const result = await build({
     index: 'src/index.ts',
     migrate: 'src/migrate.ts',
     'create-super-admin': 'scripts/create-super-admin.ts',
-    // The Excel upload's worker thread (IM8): `agency-xlsx-runner.ts` starts dist/xlsx-worker.js
+    // The Excel upload's child process (IM8): `agency-xlsx-runner.ts` forks dist/xlsx-worker.js
     // beside the bundle. Guarded by test/unit/agency/agency-xlsx-worker-build.test.ts.
     'xlsx-worker': 'src/agency/agency-xlsx-worker.ts',
   },

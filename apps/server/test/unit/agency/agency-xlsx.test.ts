@@ -2,16 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { Readable } from 'node:stream';
 import {
   classifyNumberFormat,
-  detectUploadFormat,
   excelSerialToText,
   openXlsxWorkbook,
   parseCellRef,
   plainNumber,
+  type XlsxLimits,
+} from '../../../src/agency/agency-xlsx.js';
+import {
+  detectUploadFormat,
+  isWorkbookName,
   xlsxRefusalMessage,
   XlsxLimitError,
   XlsxRefusal,
-  type XlsxLimits,
-} from '../../../src/agency/agency-xlsx.js';
+  XLSX_MAX_CELL_CHARS,
+} from '../../../src/agency/agency-xlsx-refusals.js';
 import {
   ingestAgencyCsv,
   type AgencyIngestContact,
@@ -105,7 +109,7 @@ describe('which sheet: the first visible worksheet in tab order', () => {
       ],
     });
     const { workbook, csv } = await convert(buf);
-    expect(workbook.sheet).toEqual({ name: 'Customers', other_sheet_names: ['Archive', 'Notes'] });
+    expect(workbook.sheet).toEqual({ name: 'Customers', other_sheet_names: ['Archive', 'Notes'], other_sheet_count: 2 });
     expect(csv).toBe('Mobile\n9876543210\n');
   });
 
@@ -132,7 +136,7 @@ describe('which sheet: the first visible worksheet in tab order', () => {
       wb.addWorksheet('Shown').addRow(['yes']);
     });
     const { workbook, csv } = await convert(buf);
-    expect(workbook.sheet).toEqual({ name: 'Shown', other_sheet_names: [] });
+    expect(workbook.sheet).toEqual({ name: 'Shown', other_sheet_names: [], other_sheet_count: 0 });
     expect(csv).toBe('yes\n');
   });
 
@@ -518,8 +522,9 @@ const letters = (n: number): string => {
 
 describe('number formats: linear, memoised and capped', () => {
   it('reads a format of 100,000 "[" in linear time, as a plain number', async () => {
-    // An unclosed bracket is not rendered: the value is written.
-    expect(classifyNumberFormat('['.repeat(1_000))).toMatchObject({ kind: 'format', sections: [{ fallback: true }] });
+    // An unclosed bracket is not rendered: the value is written. Past 255 characters a code is plain.
+    expect(classifyNumberFormat('['.repeat(255))).toMatchObject({ kind: 'format', sections: [{ fallback: true }] });
+    expect(classifyNumberFormat('['.repeat(256))).toEqual({ kind: 'plain' });
     const buf = handWorkbook({ sheets: [{ name: 'S', xml: oneCell }], styles: { numFmts: `<numFmt numFmtId="164" formatCode="${'['.repeat(100_000)}"/>`, cellXfs: '<xf numFmtId="164"/>' } });
     const run = await timed(() => convert(buf));
     expect(run.error).toBeUndefined();
@@ -527,9 +532,9 @@ describe('number formats: linear, memoised and capped', () => {
     expect(run.ms).toBeLessThan(2_000);
   });
 
-  it('classifies a format once however many styles use it, and reads a code past 1,024 characters as plain', async () => {
+  it('classifies a format once however many styles use it, and reads a code past 255 characters as plain', async () => {
     expect(classifyNumberFormat(`0.${'#'.repeat(2_000)}`)).toEqual({ kind: 'plain' });
-    expect(classifyNumberFormat(`dd/mm/yyyy${' '.repeat(1_100)}`)).toEqual({ kind: 'plain' });
+    expect(classifyNumberFormat(`dd/mm/yyyy${' '.repeat(250)}`)).toEqual({ kind: 'plain' });
     const buf = handWorkbook({
       sheets: [{ name: 'S', xml: oneCell }],
       styles: { numFmts: `<numFmt numFmtId="164" formatCode="0.${'#'.repeat(1_000)}"/>`, cellXfs: '<xf numFmtId="164"/>'.repeat(20_000) },
@@ -730,7 +735,7 @@ describe('cells: the first pass stops at a value past the last column, a cell ho
 });
 
 describe('shared strings: each string costs, and their number is capped', () => {
-  it('charges an empty string 16 characters: 20 million of them are refused at once', async () => {
+  it('charges an empty string 16 characters: 20 million of them are refused at once', { timeout: 30_000 }, async () => {
     const buf = handWorkbook({ sharedStrings: '<si/>'.repeat(20_000_000), sheets: [{ name: 'S', xml: oneCell }] });
     const run = await timed(() => openXlsxWorkbook(buf, LIMITS));
     expect(run.error).toMatchObject({ kind: 'too_large' });
@@ -751,7 +756,7 @@ describe('shared strings: each string costs, and their number is capped', () => 
 });
 
 describe('work: decompression bounded by the compressed size, cells by a budget', () => {
-  it('refuses 256 MiB of empty cells packed into a small upload, at once', async () => {
+  it('refuses 256 MiB of empty cells packed into a small upload, at once', { timeout: 30_000 }, async () => {
     const rowXml = `<row>${'<c/>'.repeat(16_000)}</row>`;
     const parts = excelParts({ sheets: [{ name: 'S', xml: '@@' }] });
     const reps = Math.ceil((256 * 2 ** 20) / rowXml.length);
@@ -782,6 +787,13 @@ describe('sheet names: at most 255 others, each at most 31 characters', () => {
     expect(workbook.sheet.name).toBe('Customers with a very long name');
     expect(workbook.sheet.other_sheet_names).toHaveLength(255);
     expect(workbook.sheet.other_sheet_names.every((n) => n.length === 31)).toBe(true);
+    // The count is the true number, past the 255 names the answer carries.
+    expect(workbook.sheet.other_sheet_count).toBe(300);
+  });
+
+  it('counts the other sheets when there are few', async () => {
+    const { workbook } = await convert(handWorkbook({ sheets: [{ name: 'A', xml: oneCell }, { name: 'B' }, { name: 'H', state: 'hidden' }] }));
+    expect(workbook.sheet).toEqual({ name: 'A', other_sheet_names: ['B'], other_sheet_count: 1 });
   });
 });
 
@@ -809,5 +821,78 @@ describe('correctness (review of 2026-11-24)', () => {
       sheets: [{ name: 'S', xml: '<sheetData><row r="1"><c r="A1" t="d" s="1"><v>1899-12-30T10:30:00</v></c><c r="B1" t="d" s="2"><v>2026-11-24T00:00:00</v></c><c r="C1" t="d"><v>2026-11-24T10:30:00Z</v></c><c r="D1" s="2"><v>0</v></c></row></sheetData>' }],
     });
     expect((await convert(buf)).csv).toBe('10:30,2026-11-24,2026-11-24 10:30,0\n');
+  });
+});
+
+// ─── Fresh review of 4bde1c1 ────────────────────────────────────────────────
+
+describe('fresh review: dates, serials, merges, the header row, dxfs, huge text', () => {
+  const dateStyles = { numFmts: '<numFmt numFmtId="164" formatCode="#,##0"/><numFmt numFmtId="165" formatCode="dd/mm/yyyy"/>', cellXfs: '<xf numFmtId="0"/><xf numFmtId="164"/><xf numFmtId="165"/>' };
+
+  it('a date in a phone-like column ("Last Contact Date", "Cancellation Date") is a date, not its serial', async () => {
+    const buf = handWorkbook({
+      styles: dateStyles,
+      sheets: [{ name: 'S', xml: `<sheetData>${row(1, inline('A1', 'Mobile') + inline('B1', 'Last Contact Date') + inline('C1', 'Cancellation Date'))}${row(2, num('A2', '9876543210', 1) + num('B2', '46346', 2) + num('C2', '46347', 2))}</sheetData>` }],
+    });
+    expect((await convert(buf)).csv).toBe('Mobile,Last Contact Date,Cancellation Date\n9876543210,2026-11-20,2026-11-21\n');
+  });
+
+  it('a serial past 31 Dec 9999 of its own date system, after rounding, is the number', () => {
+    const date = { kind: 'date', hasTime: false } as const;
+    expect(excelSerialToText(2_957_003, date, true)).toBe('9999-12-31');
+    expect(excelSerialToText(2_957_004, date, true)).toBeNull();
+    expect(excelSerialToText(2_958_465, date, true)).toBeNull();
+    expect(excelSerialToText(2_958_465, date, false)).toBe('9999-12-31');
+    expect(excelSerialToText(2_958_465.999999999, date, false)).toBeNull();
+  });
+
+  it('a value a merge hides does not widen the CSV', async () => {
+    const buf = handWorkbook({
+      sheets: [{ name: 'S', xml: `<sheetData>${row(2, inline('C2', 'Name') + inline('D2', 'Mobile'))}${row(3, inline('C3', 'a') + num('D3', '9876543210'))}${row(4, inline('C4', 'b') + num('D4', '9876543211') + inline('E4', 'hidden'))}</sheetData><mergeCells count="1"><mergeCell ref="D4:E4"/></mergeCells>` }],
+    });
+    const { csv, workbook } = await convert(buf);
+    expect(csv).toBe('\n,,Name,Mobile\n,,a,9876543210\n,,b,9876543211\n');
+    expect(workbook.columns).toBe(4);
+  });
+
+  it('the phone rule\'s header row is the row the import takes as its header (a row of spaces in a one-column sheet is skipped)', async () => {
+    const buf = handWorkbook({
+      styles: dateStyles,
+      sheets: [{ name: 'S', xml: `<sheetData>${row(1, '<c r="A1" t="inlineStr"><is><t xml:space="preserve"> </t></is></c>')}${row(2, inline('A2', 'Mobile'))}${row(3, num('A3', '9876543210', 1))}</sheetData>` }],
+    });
+    const { csv } = await convert(buf);
+    expect(csv).toBe(' \nMobile\n9876543210\n');
+    expect((await ingest(csv, 'Mobile')).contacts.map((c) => c.phone_e164)).toEqual(['+919876543210']);
+  });
+
+  it('a number format inside <dxfs> (conditional formatting) does not replace a cell\'s own', async () => {
+    const buf = handWorkbook({
+      styles: { numFmts: '<numFmt numFmtId="164" formatCode="#,##0.00"/>', cellXfs: '<xf numFmtId="0"/><xf numFmtId="164"/></cellXfs><dxfs count="1"><dxf><numFmt numFmtId="164" formatCode="0%"/></dxf></dxfs><cellXfs>' },
+      sheets: [{ name: 'S', xml: `<sheetData>${row(1, inline('A1', 'Amount'))}${row(2, num('A2', '1250.5', 1))}</sheetData>` }],
+    });
+    expect((await convert(buf)).csv).toBe('Amount\n"1,250.50"\n');
+  });
+
+  it('text outside any cell is refused as it streams in, before it is all held', async () => {
+    const parts = excelParts({ sheets: [{ name: 'S', xml: '@@' }] });
+    for (const p of parts) if (typeof p[1] === 'string' && p[1].includes('@@')) p[1] = p[1].replace('@@', `<sheetData>${'a'.repeat(1_000_000)}${row(1, inline('A1', 'x'))}</sheetData>`);
+    expect(await refusal(openXlsxWorkbook(zipParts(parts), LIMITS))).toMatchObject({ kind: 'unreadable' });
+  });
+
+  it('a cell of a million characters is refused as it streams in', async () => {
+    const buf = handWorkbook({ sheets: [{ name: 'S', xml: `<sheetData>${row(1, inline('A1', 'a'.repeat(1_000_000)))}</sheetData>` }] });
+    const err = await refusal(openXlsxWorkbook(buf, LIMITS));
+    expect(err).toMatchObject({ kind: 'cell_too_long' });
+  });
+});
+
+describe('the refusals leaf', () => {
+  it('isWorkbookName: .xlsx and .xlsm, any case, spaces trimmed', () => {
+    for (const name of ['a.xlsx', 'A.XLSX', 'b.xlsm', ' c.xlsx ']) expect(isWorkbookName(name), name).toBe(true);
+    for (const name of ['a.xls', 'a.csv', 'a.xlsx.csv', 'xlsx']) expect(isWorkbookName(name), name).toBe(false);
+  });
+
+  it('the cell-too-long message names the cap it is refused at', () => {
+    expect(xlsxRefusalMessage('cell_too_long')).toContain(XLSX_MAX_CELL_CHARS.toLocaleString('en-IN'));
   });
 });

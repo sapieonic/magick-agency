@@ -6,14 +6,14 @@
  * process group.
  */
 import fs from 'node:fs';
-import { convertXlsxInWorker, xlsxConversionRunning } from '../../src/agency/agency-xlsx-runner.js';
+import { convertXlsxInChild, xlsxConversionRunning } from '../../src/agency/agency-xlsx-runner.js';
 
 const fds: number[] = [];
 try {
   for (;;) fds.push(fs.openSync('/dev/null', 'r'));
 } catch { /* exhausted */ }
 let outcome = 'pending';
-convertXlsxInWorker(Buffer.alloc(100), { maxDataRows: 10, maxColumns: 10, maxCsvBytes: 1_000 }, { deadlineMs: 1_000 })
+convertXlsxInChild(Buffer.alloc(100), { maxDataRows: 10, maxColumns: 10, maxCsvBytes: 1_000 }, { deadlineMs: 1_000 })
   .then(() => { outcome = 'resolved'; }, (err: Error) => { outcome = `rejected: ${err.message}`; });
 setTimeout(() => {
   for (const fd of fds) fs.closeSync(fd);

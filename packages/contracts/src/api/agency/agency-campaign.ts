@@ -102,7 +102,7 @@ export type AgencyIngestDncScope = 'tenant' | 'account' | 'campaign' | 'unknown'
 
 /** One rejected row as the review screen shows it (`AgencyIngestJob.rejected_sample`). */
 export interface AgencyIngestRowSample {
-  /** The line in the uploaded file. */
+  /** The row number the supervisor sees: the spreadsheet row of an Excel upload, the line a spreadsheet app shows for a CSV (IM8). */
   row_number: number;
   /** The column the reason is about, or null for a whole-row problem. */
   column: string | null;
@@ -143,11 +143,45 @@ export interface AgencyIngestLimits {
 export interface AgencyUploadSheet {
   /** The name of the sheet that was read: the workbook's first visible worksheet, in tab order. */
   name: string;
-  /** The workbook's other visible worksheets, in tab order (hidden and chart sheets are not named). None of them was read. */
+  /**
+   * The workbook's other visible worksheets, in tab order (hidden and chart sheets are not
+   * named). None of them was read. At most the first 255, each cut to 31 characters (Excel's
+   * own limit on a sheet name).
+   */
   other_sheet_names: string[];
+  /** How many other visible worksheets there are: `other_sheet_names.length` unless the list was cut at 255. */
+  other_sheet_count: number;
 }
 
-/** `POST /proxy/agency/ingest/upload`. */
+/**
+ * The `code` of an upload refusal (`POST /proxy/agency/ingest/upload`, IM8). The body is
+ * `{ error, code, message }`, `message` in plain words for the supervisor.
+ * - 400 `workbook_unsupported` (an old `.xls` or a password-protected workbook),
+ *   `not_a_workbook`, `workbook_unreadable`, `workbook_no_sheet` (no visible worksheet),
+ *   `cell_too_long`.
+ * - 413 `file_too_large`: the file, or the CSV an Excel file becomes, is over the size limit.
+ * - 422 `too_many_rows`, `too_many_columns` (the ingest's own limits, checked at upload for an
+ *   Excel file), `workbook_too_slow`, `workbook_too_complex`.
+ * - 429 `workbook_busy` and `upload_rate_limited`, with `retry_after_seconds` and `Retry-After`.
+ * - 503 `server_restarting`, `upload_storage_slow`, with `retry_after_seconds` and `Retry-After`.
+ */
+export type AgencyUploadRefusalCode =
+  | 'workbook_unsupported'
+  | 'not_a_workbook'
+  | 'workbook_unreadable'
+  | 'workbook_no_sheet'
+  | 'cell_too_long'
+  | 'file_too_large'
+  | 'too_many_rows'
+  | 'too_many_columns'
+  | 'workbook_too_slow'
+  | 'workbook_too_complex'
+  | 'workbook_busy'
+  | 'upload_rate_limited'
+  | 'server_restarting'
+  | 'upload_storage_slow';
+
+/** `POST /proxy/agency/ingest/upload`. Refusals: `AgencyUploadRefusalCode`. */
 export interface AgencyUploadResponse {
   s3_key: string;
   /** The name the supervisor's file had, `.xlsx` included for an Excel upload. */

@@ -540,7 +540,7 @@ contact import check and re-import (IM)".
 ### Excel customer list 2026-11-24 (IM8)
 
 ClickUp "Campaign customer upload: accept Excel (.xlsx) as well as CSV". Rulings: IM8 in
-[`decisions.md`](decisions.md) (default, pending Manas); the console's side is CS7
+[`decisions.md`](decisions.md) (decided, Manas 2026-11-25); the console's side is CS7
 ([`campaign-setup.md`](campaign-setup.md)).
 
 - **Server.** `POST /ingest/upload` detects a workbook by its bytes (then its name), reads its first
@@ -587,8 +587,23 @@ ClickUp "Campaign customer upload: accept Excel (.xlsx) as well as CSV". Rulings
   fixes: a text section never read as negative or zero, zero written as zero (never `-0`/`(0)`),
   the integer placed before a format's own point, `%` and scaling capped, padding only for a lone
   zeros section, slots precomputed, whole characters escaped, a malformed condition falling back.
-- Not done: an Excel file's other sheets cannot be chosen (only the first visible one is read); a
-  number's display format other than all zeros is not applied (`1,25,000.00` is read as `125000`).
+- **Fresh review (2026-11-25).** Four reviewers with no part in the build read the whole change.
+  Converter: a number under a text-only format (`@` spelled out) is written as General, not lost;
+  a date-formatted cell stays a date in a phone-like column (`Last Contact Date`); serials past
+  9999 by either system's limit, after rounding; a no-digit section chosen by sign; a value under a
+  merge does not widen the CSV; the phone rule's header row is the ingest's; `<dxfs>` formats left
+  out; General past 2^53 at 15 digits; a format code capped at 255 characters with one `General`
+  per section, so a cell's cost is bounded (an 80 KB workbook had held the conversion slot for the
+  full 5 minutes); long text refused as it streams in. Route and runner: shutdown stops every live
+  conversion, one whose CSV is still being stored and one whose body is still arriving included;
+  at most 10 Excel conversions per user in 15 minutes (429 `upload_rate_limited`); every refusal
+  carries a code (`AgencyUploadRefusalCode`) and a 413 says `file_too_large` in plain words; the
+  row limit reads "10,00,000"; the parser stays out of the server's own process
+  (`agency-xlsx-refusals.ts`). Console: the same file can be picked again after a refusal; Add
+  contacts takes a dropped file and offers "Choose another file"; the sheet notice counts every
+  other sheet, names five and names the sheet to move customers to, as a status; a proxy's 413 in
+  plain words; New campaign's error line keeps the request id out of the sentence.
+- Not done: an Excel file's other sheets cannot be chosen (only the first visible one is read).
 
 ### Wrap-up redial 2026-11-03
 
@@ -3161,7 +3176,7 @@ account their browser last had open. Every signed-in console page is now served 
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.
 - [ ] Terraform state bucket made (`aws/state`) and any local state moved into it
       (`aws/README.md`, "State").
-- [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and CSV uploads, applied per
+- [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and customer file uploads, applied per
       environment from `aws/terraform` (`aws/README.md`). The same module can create the VM, its
       security group and Elastic IP (`create_server`).
 - [ ] Analysis: `DIALER_ANALYSIS_ENABLED`, transcriber and LLM keys, `RECORDING_URL_SIGNING_SECRET`.

@@ -1,7 +1,6 @@
 import { Readable } from 'node:stream';
 import { SaxesParser } from 'saxes';
 import {
-  looksLikeZip,
   openZipEntry,
   readZipDirectory,
   ZipEntryTooLargeError,
@@ -18,8 +17,9 @@ import {
   type NumberStyle,
 } from './agency-xlsx-numfmt.js';
 import { looksLikePhoneHeader } from './phone-header.js';
+import { XlsxLimitError, XlsxRefusal, XLSX_MAX_CELL_CHARS } from './agency-xlsx-refusals.js';
 
-export { classifyNumberFormat, plainNumber, type NumberStyle } from './agency-xlsx-numfmt.js';
+export { classifyNumberFormat, plainNumber } from './agency-xlsx-numfmt.js';
 
 /**
  * An Excel workbook (`.xlsx`) uploaded as a customer list, converted to the CSV the
@@ -93,85 +93,6 @@ export { classifyNumberFormat, plainNumber, type NumberStyle } from './agency-xl
  * exceljs itself uses (`saxes`) on parts it opens by their relationships.
  */
 
-/** What was uploaded. Detected from the bytes first, then the name. */
-export type UploadFormat = 'csv' | 'xlsx';
-
-/** Why a workbook cannot be read at all: refused 400 with {@link xlsxRefusalMessage}. */
-export type XlsxRefusalKind = 'legacy_or_encrypted' | 'not_a_workbook' | 'unreadable' | 'no_visible_sheet' | 'cell_too_long';
-
-export class XlsxRefusal extends Error {
-  constructor(public readonly kind: XlsxRefusalKind, detail?: string) {
-    super(detail ?? xlsxRefusalMessage(kind));
-    this.name = 'XlsxRefusal';
-  }
-}
-
-/**
- * A workbook over one of the upload's limits. `too_many_rows`, `too_many_columns` and
- * `too_large` are refused as the CSV path refuses them; `too_slow` and `too_much_memory`
- * are the worker's deadline and heap cap (`agency-xlsx-runner.ts`).
- */
-export type XlsxLimitKind = 'too_many_rows' | 'too_many_columns' | 'too_large' | 'too_slow' | 'too_much_memory';
-
-export class XlsxLimitError extends Error {
-  constructor(
-    public readonly kind: XlsxLimitKind,
-    /** For `too_many_columns`: the column number found over the limit. */
-    public readonly columns?: number,
-  ) {
-    super(`The workbook is over the upload's limit (${kind}).`);
-    this.name = 'XlsxLimitError';
-  }
-}
-
-/** The most characters a cell may hold: past Excel's 32,767 and Google Sheets' 50,000. */
-export const XLSX_MAX_CELL_CHARS = 65_536;
-
-const REFUSAL_MESSAGE: Record<XlsxRefusalKind, string> = {
-  legacy_or_encrypted:
-    'This is an older Excel file (.xls) or a workbook with a password, which cannot be read. ' +
-    'Open it in Excel and save it as an Excel Workbook (.xlsx) without a password, or as CSV, then upload it again.',
-  not_a_workbook:
-    'This file is named like an Excel workbook but is not one. ' +
-    'Open it in Excel and save it as an Excel Workbook (.xlsx) or as CSV, then upload it again.',
-  unreadable:
-    'This Excel file could not be read. ' +
-    'Open it in Excel and save it again as an Excel Workbook (.xlsx) or as CSV, then upload it again.',
-  no_visible_sheet:
-    'This workbook has no sheet to read: every sheet is hidden or is a chart. ' +
-    'Unhide the sheet with your customers, save the workbook and upload it again.',
-  cell_too_long:
-    'A cell in this workbook holds more than 65,536 characters, more than a spreadsheet cell can. ' +
-    'Shorten it, save the workbook and upload it again.',
-};
-
-/** The plain-words message a refusal is answered with. */
-export function xlsxRefusalMessage(kind: XlsxRefusalKind): string {
-  return REFUSAL_MESSAGE[kind];
-}
-
-/** The compound-file (OLE) signature: an Excel 97–2003 `.xls`, and also what a password-protected `.xlsx` is. */
-const CFB_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
-
-/**
- * What the upload is, by its bytes and then its name:
- *
- *  - a compound file (`.xls`, or a `.xlsx` with a password): refused, whatever its name;
- *  - a zip: read as a workbook, whatever its name (a workbook renamed `.csv` is still a
- *    workbook, and no zip is a CSV); a zip that is not a workbook is refused when it is read;
- *  - text named `.xlsx` or `.xlsm`: refused (it is not the workbook its name says, and
- *    reading it as CSV would show whatever it holds as columns);
- *  - anything else: CSV, as before (a CSV named `.txt` or `.xls` included).
- */
-export function detectUploadFormat(head: Buffer, fileName: string): UploadFormat {
-  if (head.length >= CFB_SIGNATURE.length && head.subarray(0, CFB_SIGNATURE.length).equals(CFB_SIGNATURE)) {
-    throw new XlsxRefusal('legacy_or_encrypted');
-  }
-  if (looksLikeZip(head)) return 'xlsx';
-  if (/\.xls[xm]$/i.test(fileName.trim())) throw new XlsxRefusal('not_a_workbook');
-  return 'csv';
-}
-
 export interface XlsxLimits {
   /** Data rows the ingest takes (`AGENCY_MAX_ROWS`); the header row is on top. */
   maxDataRows: number;
@@ -190,7 +111,10 @@ export interface XlsxLimits {
 /** The sheet that was read and the other visible sheets, in tab order (the contract's `AgencyUploadSheet`). */
 export interface XlsxSheetChoice {
   name: string;
+  /** The other visible sheets' names, at most the first 255, each cut to 31 characters. */
   other_sheet_names: string[];
+  /** How many other visible sheets there are, past the 255 names too. */
+  other_sheet_count: number;
 }
 
 export interface XlsxWorkbook {
@@ -247,7 +171,21 @@ interface SaxHandlers {
   open?: (name: string, attrs: Attrs) => void;
   close?: (name: string) => void;
   text?: (text: string) => void;
+  /**
+   * What to refuse with when text saxes holds between two tags outgrows
+   * {@link MAX_PENDING_TEXT_CHARS}: set for the sheet and the shared strings, whose text is
+   * cells'. The small parts (workbook, relationships, styles) are bounded by their size alone
+   * (a styles part's 8 MB format code is read, and not rendered).
+   */
+  textTooLong?: () => Error;
 }
+
+/**
+ * Text saxes may hold between two tags (it hands text on only at the next tag): four times
+ * the longest cell, so a cell's own cap can still answer for a cell, and a run of text no
+ * cell could hold is refused as it streams in, a chunk past this at most, never held whole.
+ */
+const MAX_PENDING_TEXT_CHARS = 4 * XLSX_MAX_CELL_CHARS;
 
 /** The element or attribute name without its namespace prefix (`x:c` is `c`). */
 function local(name: string): string {
@@ -288,6 +226,11 @@ async function* saxChunks(source: Readable, handlers: SaxHandlers): AsyncGenerat
     for await (const chunk of source as AsyncIterable<Buffer>) {
       parser.write(decoder.decode(chunk, { stream: true }));
       if (failure) throw new XlsxRefusal('unreadable', `XML: ${failure.message}`);
+      // saxes keeps the text (and attribute value) it has not handed on in `text`, a public
+      // field its typings omit.
+      if (handlers.textTooLong && ((parser as unknown as { text?: string }).text?.length ?? 0) > MAX_PENDING_TEXT_CHARS) {
+        throw handlers.textTooLong();
+      }
       yield;
     }
     parser.write(decoder.decode());
@@ -425,12 +368,16 @@ async function readStyles(pkg: Package, path: string | null): Promise<NumberStyl
   const custom = new Map<number, string>();
   const xfIds: number[] = [];
   let inCellXfs = false;
+  let inNumFmts = false;
   await parsePart(pkg.open(path, MAX_SMALL_PART_BYTES), {
     open(name, attrs) {
-      if (name === 'numFmt') {
+      // Only the cells' formats: a `<numFmt>` inside `<dxfs>` is conditional formatting's.
+      if (name === 'numFmt' && inNumFmts) {
         if (custom.size >= MAX_NUMBER_FORMATS) throw new XlsxRefusal('unreadable', `More than ${MAX_NUMBER_FORMATS} number formats.`);
         const id = Number(attrs['numFmtId']);
         if (Number.isInteger(id)) custom.set(id, attrs['formatCode'] ?? '');
+      } else if (name === 'numFmts') {
+        inNumFmts = true;
       } else if (name === 'cellXfs') {
         inCellXfs = true;
       } else if (name === 'xf' && inCellXfs) {
@@ -441,6 +388,7 @@ async function readStyles(pkg: Package, path: string | null): Promise<NumberStyl
     },
     close(name) {
       if (name === 'cellXfs') inCellXfs = false;
+      else if (name === 'numFmts') inNumFmts = false;
     },
   });
   const byFormat = new Map<number, NumberStyle>();
@@ -475,6 +423,7 @@ async function readSharedStrings(
   };
   // The XML is about the text it holds plus its tags: four times the text budget is ample.
   await parsePart(pkg.open(path, maxChars * 4), {
+    textTooLong: () => new XlsxRefusal('cell_too_long'),
     open(name) {
       if (name === 'si') {
         if (strings.length >= maxCount) throw new XlsxLimitError('too_large');
@@ -510,6 +459,8 @@ const EPOCH_1900_AFTER_LEAP = Date.UTC(1899, 11, 30);
 const EPOCH_1904 = Date.UTC(1904, 0, 1);
 /** 31 Dec 9999, Excel's last date, in the 1900 system. */
 const MAX_SERIAL = 2_958_465;
+/** 31 Dec 9999 in the 1904 system (day 0 is 1 Jan 1904). */
+const MAX_SERIAL_1904 = 2_957_003;
 
 const two = (n: number): string => String(n).padStart(2, '0');
 
@@ -534,6 +485,8 @@ export function excelSerialToText(serial: number, style: NumberStyle, date1904: 
     days += 1;
     seconds -= 86_400;
   }
+  // Past 31 Dec 9999 of its own system once rounded: not a date Excel can name.
+  if (style.kind === 'date' && days > (date1904 ? MAX_SERIAL_1904 : MAX_SERIAL)) return null;
   if (style.kind === 'time') {
     return clock(seconds, style.elapsed ? days * 24 + Math.floor(seconds / 3600) : null);
   }
@@ -614,11 +567,12 @@ function cellText(
       const x = Number(text);
       if (!Number.isFinite(x)) return text;
       const style = styleOf(ctx, styleIndex);
+      // A date or time is one in any column ("Last Contact Date" reads as a phone header).
+      if (style.kind === 'date' || style.kind === 'time') return excelSerialToText(x, style, ctx.date1904) ?? plainNumber(x);
       // A phone column's whole number: its digits, whatever the format (padding still pads).
       if (ctx.phoneColumns.has(column) && Number.isInteger(x)) {
         return style.kind === 'pad' ? padNumber(x, style.width) : plainNumber(x);
       }
-      if (style.kind === 'date' || style.kind === 'time') return excelSerialToText(x, style, ctx.date1904) ?? plainNumber(x);
       if (style.kind === 'pad' && Number.isInteger(x)) return padNumber(x, style.width);
       // As the sheet shows it (`1,25,000.00`, `15%`), or the value where the format is not rendered.
       const format = style.kind === 'pad' ? style.format : style;
@@ -709,6 +663,8 @@ function readSheet(
   const tooWide = () => new XlsxLimitError('too_many_columns', column);
 
   return saxChunks(source, {
+    // Text past the cap inside a cell is that cell's; anywhere else in a sheet it is not a workbook's.
+    textTooLong: () => (inCell ? new XlsxRefusal('cell_too_long') : new XlsxRefusal('unreadable', 'Text outside any cell.')),
     open(name, attrs) {
       switch (name) {
         case 'row': {
@@ -780,8 +736,9 @@ function readSheet(
       // Inside `<is>` only `<t>` text counts (not a phonetic run, not the whitespace of a
       // pretty-printed `<is>`); `<v>` holds its text directly.
       if (target === 'is' && !inT) return;
-      // Text in a cell past the last column the ingest takes is a value there: refused now,
-      // before it is held (a shared-string index or number is judged when the cell closes).
+      // Text in a cell past the last column the ingest takes is a value there: refused as saxes
+      // hands it on, before this reader holds it (saxes itself holds at most
+      // MAX_PENDING_TEXT_CHARS of it; a shared-string index or number is judged when the cell closes).
       if (pastLimit && (target === 'is' || type === 'str' || type === 'inlineStr')) throw tooWide();
       cellChars += text.length;
       if (cellChars > XLSX_MAX_CELL_CHARS) throw new XlsxRefusal('cell_too_long');
@@ -993,15 +950,29 @@ async function openWorkbook(buf: Buffer, limits: XlsxLimits): Promise<XlsxWorkbo
   let rows = 0;
   let columns = 0;
   const merges: Merge[] = [];
+  // The candidates for the row the import takes as its header: the first row holding a value,
+  // and the first holding one that is not only spaces, tabs or form feeds (a one-column CSV's
+  // line of those is a blank line to the import's parser, which skips it).
+  let firstRow: Array<[number, string]> | null = null;
+  let firstSolidRow: Array<[number, string]> | null = null;
+  // Up to SAMPLED_ROWS rows each column holds a value on, to tell once the merges are known
+  // (they come after the rows) whether a merge hides every value of a column.
+  const sampled = new Map<number, { rows: number[]; more: boolean }>();
   await drain(readSheet(
     pkg.open(chosen.rel.target, maxSheetXmlBytes),
     ctx,
-    (_row, cells) => {
+    (row, cells) => {
       if (cells.length === 0) return;
-      // The header row (the first holding a value): which columns are phone columns.
-      if (rows === 0) for (const [c, text] of cells) if (looksLikePhoneHeader(text.trim())) ctx.phoneColumns.add(c);
+      firstRow ??= cells;
+      if (firstSolidRow === null && cells.some(([, text]) => !/^[ \t\f]*$/.test(text))) firstSolidRow = cells;
       rows += 1;
       if (rows > limits.maxDataRows + 1) throw new XlsxLimitError('too_many_rows');
+      for (const [c] of cells) {
+        let sample = sampled.get(c);
+        if (!sample) sampled.set(c, (sample = { rows: [], more: false }));
+        if (sample.rows.length < SAMPLED_ROWS) sample.rows.push(row);
+        else sample.more = true;
+      }
       const last = cells[cells.length - 1]![0];
       if (last > columns) columns = last;
     },
@@ -1015,11 +986,20 @@ async function openWorkbook(buf: Buffer, limits: XlsxLimits): Promise<XlsxWorkbo
     },
   ));
 
+  // The width: the last column holding a value a merge does not hide.
+  if (merges.length > 0) columns = visibleWidth(sampled, merges);
+  // The phone rule's header row is the row the import takes as its header.
+  const header = columns === 1 ? firstSolidRow : firstRow;
+  for (const [c, text] of (header ?? []) as Array<[number, string]>) {
+    if (c <= columns && looksLikePhoneHeader(text.trim())) ctx.phoneColumns.add(c);
+  }
+
   let used = false;
   return {
     sheet: {
       name: clip(chosen.sheet.name, MAX_SHEET_NAME_CHARS),
       other_sheet_names: visible.slice(1, 1 + MAX_OTHER_SHEETS).map((s) => clip(s.sheet.name, MAX_SHEET_NAME_CHARS)),
+      other_sheet_count: visible.length - 1,
     },
     rows,
     columns,
@@ -1032,6 +1012,27 @@ async function openWorkbook(buf: Buffer, limits: XlsxLimits): Promise<XlsxWorkbo
       );
     },
   };
+}
+
+/** Rows sampled per column for {@link visibleWidth}. */
+const SAMPLED_ROWS = 64;
+
+/**
+ * The last column holding a value no merge hides (a value in a merged range other than its
+ * top-left cell is not shown, so it must not widen the CSV). A column whose sampled rows all
+ * sit hidden, with no more rows than were sampled, holds no shown value; a column with more
+ * values than were sampled counts as shown (a merge hiding all of them is not worth holding
+ * every row for).
+ */
+function visibleWidth(sampled: Map<number, { rows: number[]; more: boolean }>, merges: Merge[]): number {
+  let width = 0;
+  for (const [column, sample] of sampled) {
+    if (column <= width) continue;
+    const covering = merges.filter((m) => m.c1 <= column && column <= m.c2);
+    const hidden = (row: number) => covering.some((m) => m.r1 <= row && row <= m.r2 && !(row === m.r1 && column === m.c1));
+    if (sample.more || sample.rows.some((row) => !hidden(row))) width = column;
+  }
+  return width;
 }
 
 async function drain(chunks: AsyncGenerator<void>): Promise<void> {

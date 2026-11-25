@@ -39,6 +39,12 @@
   background: var(--bg-secondary);
 }
 
+/* A file dragged over it, as New campaign's Customers step marks it. */
+.dropzone[data-drag-over='true'] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
 .dropzoneCopy {
   font-size: 13px;
   color: var(--text-secondary);
@@ -54,18 +60,13 @@
   composes: sr-only from global;
 }
 
-/* An Excel upload's sheet, above the columns: the sheet read, then any that were not (CS7). */
+/* An Excel upload's sheet, above the columns: the sheet read (in `.limits`' muted line), then
+   any that were not (CS7). */
 .sheetNotice {
   display: flex;
   flex-direction: column;
   gap: 4px;
   margin-bottom: 12px;
-}
-
-.sheetRead {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 .sheetOthers {

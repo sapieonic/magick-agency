@@ -427,6 +427,15 @@ describe('the campaign Settings sections search links to', () => {
     expect(ids(agent)).not.toContain('roster-uploads');
   });
 
+  it('finds the uploads by Excel as well as CSV (CS7)', () => {
+    const keys = (query: string) => searchConsole({
+      query, gate: ALL_ON('account_admin'), accountId: 'a-1', defaultCallingCode: '+91', campaigns: [{ id: 'c-1', name: 'Diwali renewals' }],
+    }).groups.flatMap((g) => g.results).map((r) => r.key);
+    for (const word of ['csv', 'excel', 'xlsx']) {
+      expect(keys(`diwali ${word}`)).toContain('campaign-section:c-1:roster-uploads');
+    }
+  });
+
   it('links a setting the tabs moved to the section on the tab that has it now (CS16)', () => {
     const keys = (query: string) => searchConsole({
       query, gate: ALL_ON('account_admin'), accountId: 'a-1', defaultCallingCode: '+91', campaigns: [{ id: 'c-1', name: 'Diwali renewals' }],
