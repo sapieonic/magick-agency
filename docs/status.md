@@ -2360,7 +2360,7 @@ Known limits: the dialler-conversations count reads the day's attempts deploymen
 filters to the account (an account-first index would bound it); Will pay shows Successes for a
 moment until the promises read answers.
 
-### Live floor Phase 3 2026-11-19 (LF4–LF7 decided; LF11–LF39 built as defaults, pending Manas)
+### Live floor Phase 3 2026-11-19 (LF4–LF7 decided; LF11–LF38 built as defaults, pending Manas)
 
 Phase 3 of the Live floor, as Manas decided LF4–LF7, on the console, the app and the server.
 **Need help** (LF4, LF11–LF16, LF24, LF28, LF35): the agent raises it on their own live session, on
@@ -2810,7 +2810,7 @@ server already accepted a raise on a soft-phone session and sent the frames to e
   (`SupervisorBanner`, `SideNeedHelpButton`).
 - **A message vibrates the app.** One short vibration, never a sound, when a message first arrives:
   once per id, once per burst (2 s), only while Me → Vibration is on. The console is unchanged.
-- **Telemetry**, the same seven events from both clients (`decisions.md` LF39 (c)): `agency_help_raised`,
+- **Telemetry**, six events from both clients and one from the console (`decisions.md` LF39 (c)): `agency_help_raised`,
   `_cancelled`, `_answered`, `_expired`, `_refused`, `agency_supervisor_message_shown`, and the
   console's `agency_supervisor_message_sent`. Each Need help event at most once per request;
   `cancelled` only on the server's `help_cleared {cancelled}`; no text, names or customer details.
@@ -2859,7 +2859,14 @@ until the server is deployed.
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
 control on the cards. Phase 3's follow-up: break limits on the campaign Agents tab (LF33). (Need
 help on the inbound and soft-phone screens of both clients, LF24 and LF39, is done: the agent
-station redesign and LF39.)
+station redesign and LF39.) LF39's message vibration is unproven on a phone: Android's
+`HapticFeedback.vibrate` does nothing with the system's touch feedback off (fix: `Vibrator` over a
+platform channel; `VIBRATE` is in the manifest) and iOS mutes it while the call records (fix:
+`setAllowHapticsAndSystemSoundsDuringRecording(true)` in `VoiceEngine.swift`); neither native change
+could be compiled in the build container ([`mobile.md`](mobile.md) "Not verified yet"). The PostHog
+event names the console and the app share are typed by hand on each side, with no check that they
+match (the soft phone's and LF39's alike): a shared list in `packages/contracts`, carried to the app
+through `literals.json`, would guard them.
 
 **Launch work** (phase 10):
 
