@@ -11,15 +11,18 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  *  (a) a full call: `add_lead` on the TENANT's login (never the service's), from the tenant's
  *      DID, with the stream URL in it → pstn-stream → the customer heard by the agent → the
  *      status webhooks → `completed`, the row keeping the credential; the recording URL is
- *      persisted, offered to the client as the proxy path (never the raw URL, CR12), and served
- *      through the proxy with nothing attached; once the credential is revoked it is not;
+ *      persisted, offered to the client as the proxy path (never the raw URL, CR12), and the
+ *      proxy, once the credential serves `recording`, redirects the viewer to it (fetching
+ *      nothing); once the credential is revoked it refuses, with no redirect;
  *  (b) a login the carrier refuses 401 pauses the campaign `carrier_auth`, audited, and marks
  *      the credential `invalid`; no `add_lead` is sent and the contact is returned uncharged;
  *  (c) a credential disabled while its campaign runs: the dial is refused before the carrier
  *      and the campaign is paused `carrier_account_unavailable`, audited;
  *  (d) a service-account VoiceLink campaign running beside the tenant's dials on the service's
  *      own login, each from its own DID; neither login ever carries the other's dial;
- *  (e) the service's own username is refused as a tenant credential (CR3).
+ *  (e) the service's own username is refused as a tenant credential (CR3);
+ *  (f) the account ref is the username lower-cased, so the same login typed in another case is
+ *      the same account (`duplicate_account`), and the login sends the username as typed.
  */
 
 const { env } = vi.hoisted(() => {
@@ -90,7 +93,7 @@ async function contactReturned(contactId: string) {
 }
 
 describe('a call on the tenant`s own VoiceLink login, through the real server', () => {
-  it('(a) dials on the tenant login from its DID; full call; the credential stays on the row; the recording is proxied, never raw', async () => {
+  it('(a) dials on the tenant login from its DID; full call; the credential stays on the row; the recording goes through the proxy, which redirects, never raw', async () => {
     const r = rig!;
     const pattern = Array.from({ length: 25 }, (_, i) => i % 3 !== 1);
     r.carrier.setScript(() => carrierScripts.answered({ pattern, recordingUrl: REC_URL }).script);
@@ -140,7 +143,8 @@ describe('a call on the tenant`s own VoiceLink login, through the real server', 
       recordingUrl: row.recording_url, provider: row.provider, telephonyCredentialId: null, proxyPath,
     })).toBe(REC_URL);
 
-    // Served through the proxy, from the configured host, with nothing attached.
+    // Through the proxy, which checks the credential and the host, then sends the viewer to the
+    // file itself (our egress cannot reach VoiceLink's recording host): nothing is fetched here.
     const upstream = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       void url; void init;
       return new Response(Buffer.from('ID3 tenant recording'), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
@@ -148,22 +152,21 @@ describe('a call on the tenant`s own VoiceLink login, through the real server', 
     vi.stubGlobal('fetch', upstream);
     const signed = signRecordingUrl({ callId: call.callId, tenantId: TENANT, accountId: ACCOUNT }).path;
     const played = await r.app.inject({ method: 'GET', url: signed });
-    expect(played.statusCode).toBe(200);
-    expect(played.body).toBe('ID3 tenant recording');
-    expect(upstream).toHaveBeenCalledTimes(1);
-    const [fetchedUrl, fetchInit] = upstream.mock.calls[0]!;
-    expect(String(fetchedUrl)).toBe(REC_URL);
-    expect(fetchInit?.headers).toEqual({});
-    expect(JSON.stringify(fetchInit)).not.toContain(TENANT_PASSWORD.trim());
+    expect(played.statusCode).toBe(302);
+    expect(played.headers['location']).toBe(REC_URL);
+    expect(played.headers['cache-control']).toBe('no-store');
+    expect(played.body).not.toContain(TENANT_PASSWORD.trim());
+    expect(upstream).not.toHaveBeenCalled();
 
-    // Revoking the credential ends playback (B21), with nothing fetched.
+    // Revoking the credential ends playback (B21): no redirect, nothing fetched.
     await getTestPool().query(`UPDATE agency_campaigns SET status = 'stopped' WHERE id = $1`, [campaignId]);
     const revoked = await r.credentials.revoke(r.credentialId, ADMIN);
     expect(revoked.ok).toBe(true);
     const gone = await r.app.inject({ method: 'GET', url: signRecordingUrl({ callId: call.callId, tenantId: TENANT, accountId: ACCOUNT }).path });
     expect(gone.statusCode).toBe(404);
     expect(gone.json()).toMatchObject({ code: 'recording_unavailable' });
-    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(gone.headers['location']).toBeUndefined();
+    expect(upstream).not.toHaveBeenCalled();
     expect(r.bridge.getActiveCount()).toBe(0);
   }, 60_000);
 

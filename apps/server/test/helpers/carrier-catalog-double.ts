@@ -35,7 +35,7 @@ export function catalogDouble(actual: CatalogModule, overrides: Record<string, C
         cancelsRinging: false,
         accounts: { service: false, tenant: false },
         inbound: false,
-        serviceRecordingsArePublic: false,
+        recordingsArePublic: false,
         webhookBaseUrl: () => '',
       }),
       ...over,

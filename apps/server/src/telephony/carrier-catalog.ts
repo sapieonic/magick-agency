@@ -29,10 +29,13 @@ export interface CarrierDescriptor {
   /** Whether a tenant account on it takes inbound calls (docs/inbound.md; CR11). */
   readonly inbound: boolean;
   /**
-   * Whether a recording of a call on the service's account goes to the client as its raw URL
-   * (`utils/recording-url-resolver.ts`). Never for a call pinned to a credential (CR12).
+   * Whether its recording URLs, on every account it supports, are unauthenticated and playable
+   * by the viewer's browser directly (`utils/recording-url-resolver.ts`). A call on the
+   * service's account goes to the client as its raw URL; a call pinned to a credential goes
+   * through the recording proxy, which checks the credential and then redirects the viewer to
+   * the URL rather than fetching it (CR12).
    */
-  readonly serviceRecordingsArePublic: boolean;
+  readonly recordingsArePublic: boolean;
   /**
    * The carrier's webhook namespace, from env only, never from tenant data (the SSRF rule in
    * `factory.ts`). Read by `core/webhook-url-builder.ts`.

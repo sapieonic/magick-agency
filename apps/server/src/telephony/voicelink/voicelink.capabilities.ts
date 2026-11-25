@@ -12,9 +12,9 @@ export const voicelinkCapabilities: CarrierDescriptor = {
   // in `recording-access.ts`.
   accounts: { service: true, tenant: true },
   inbound: false,
-  // Public https MP3s needing no auth, which the viewer's browser can reach where our egress
-  // cannot (`utils/recording-url-resolver.ts`).
-  serviceRecordingsArePublic: true,
+  // Public https MP3s needing no auth on either account, which the viewer's browser can reach
+  // where our egress cannot (`utils/recording-url-resolver.ts`, CR12).
+  recordingsArePublic: true,
   webhookBaseUrl: (telephony) => telephony.voicelink.webhookBaseUrl,
   // A tenant's login is checked and dialled at `VOICELINK_BASE_URL`, never a host of the
   // tenant's (CR2): without it a tenant account cannot dial, so it is not offered or started.

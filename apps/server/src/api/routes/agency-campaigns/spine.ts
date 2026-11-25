@@ -463,7 +463,8 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       // recording host — a 502 where the browser could fetch the file itself. Hand back
       // the raw URL, no expiry (the provider link is the durable resource). The rule
       // lives in one place, `isDirectRecordingProvider`; a call pinned to a credential is
-      // never direct (CR12).
+      // never direct (CR12): it is signed, and the proxy checks the credential before it
+      // redirects the viewer to the file (`recordingRedirectsToCarrier`).
       if (isDirectRecordingProvider(found.call.provider, found.call.telephony_credential_id)) {
         return reply.send({ url: found.call.recording_url, expires_at: null });
       }

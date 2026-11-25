@@ -167,7 +167,9 @@ const RECORDING_ACCESS: ReadonlyMap<string, CarrierRecordingAccess> = new Map<st
     // A tenant's own account (CR12): the same configured hosts and nothing attached, since
     // VoiceLink serves recordings unauthenticated. The wrapper has already opened the pinned
     // credential for `recording`, so revoking it ends access here as on every carrier (B21);
-    // the credential itself is never sent.
+    // the credential itself is never sent. Playback does not fetch with this: the proxy checks
+    // the URL against these hosts and redirects the viewer (`recordingRedirectsToCarrier`); the
+    // analysis worker does fetch, as for the service's account.
     tenant: async (_call, _credential, deps) => ({ allowedHosts: deps.voicelinkHosts, headers: {}, exactHosts: false }),
   }],
   ['plivo', {

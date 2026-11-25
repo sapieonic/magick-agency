@@ -8,21 +8,23 @@ import { findCarrier } from '../telephony/carrier-catalog.js';
  * Whether a call's recording URL is a plain, unauthenticated, directly playable link — so
  * the client can `<audio src>` it straight from the provider instead of round-tripping
  * through our proxy. True only for a call on the service's own account (no pinned
- * credential) of a carrier whose catalogue entry declares `serviceRecordingsArePublic`
+ * credential) of a carrier whose catalogue entry declares `recordingsArePublic`
  * (`telephony/carrier-catalog.ts`). For every other call the raw recording URL is never
- * surfaced to the client: it goes through the proxy (`recording-proxy.ts`), which fetches
- * only allow-listed hosts.
+ * surfaced to the client: it goes through the proxy (`recording-proxy.ts`).
  *
  * A call pinned to a tenant credential always goes through the proxy, even on a carrier
- * whose service-account recordings are public (CR12): the proxy resolves the credential for
- * `recording` first, so revoking it ends playback on every carrier (B21). Only a null
- * credential counts as unpinned; a row read without the column (undefined) is proxied.
+ * whose recordings are public (CR12): the proxy resolves the credential for `recording`
+ * first, so revoking it ends playback on every carrier (B21). On such a carrier the proxy
+ * then REDIRECTS the viewer to the recording URL ({@link recordingRedirectsToCarrier}) rather
+ * than fetching it. Only a null credential counts as unpinned; a row read without the column
+ * (undefined) is proxied.
  *
  * VoiceLink (Elision, India-only) recordings are public https mp3s needing no
  * auth; serving them directly also sidesteps the fact that our (non-India cloud)
  * egress is firewalled off from Elision's host while Indian end-user browsers
- * are not. Declare a carrier's service recordings public only once you've confirmed its
- * recording URL is (a) unauthenticated and (b) reachable by the end user directly.
+ * are not. Declare a carrier's recordings public only once you've confirmed its
+ * recording URL is (a) unauthenticated and (b) reachable by the end user directly,
+ * on every account mode it supports.
  *
  * Note which way this cuts once our own egress CAN reach the host: the proxy path
  * starts working too, and the allowlist becomes a choice rather than a necessity —
@@ -38,7 +40,21 @@ import { findCarrier } from '../telephony/carrier-catalog.js';
  * in our code having changed.
  */
 export function isDirectRecordingProvider(provider: string, telephonyCredentialId: string | null | undefined): boolean {
-  return telephonyCredentialId === null && findCarrier(provider)?.serviceRecordingsArePublic === true;
+  return telephonyCredentialId === null && findCarrier(provider)?.recordingsArePublic === true;
+}
+
+/**
+ * Whether the recording proxy answers a call's recording with a redirect to the stored URL
+ * instead of fetching it (CR12): a call pinned to a credential, on a carrier whose recordings
+ * are public. The proxy has resolved the credential for `recording` by then (B21) and checked
+ * the URL's host against the same allow-list its fetch would; the viewer's browser then fetches
+ * the file itself, which is the only party that can reach VoiceLink's recording host (see
+ * {@link isDirectRecordingProvider}). Every other proxied call is fetched server-side, Plivo's
+ * included (its recordings need the credential).
+ */
+export function recordingRedirectsToCarrier(provider: string, telephonyCredentialId: string | null | undefined): boolean {
+  return typeof telephonyCredentialId === 'string' && telephonyCredentialId !== ''
+    && findCarrier(provider)?.recordingsArePublic === true;
 }
 
 /**
@@ -57,7 +73,7 @@ export function isDirectRecordingProvider(provider: string, telephonyCredentialI
  *
  * `proxyPath` is a parameter so each caller names its own streaming route while
  * the direct-recording rule stays in one place and is not forked: a carrier whose
- * service recordings are declared public has to take effect on every playback surface
+ * recordings are declared public has to take effect on every playback surface
  * at once, or a VoiceLink recording stays unplayable on whichever surface was missed.
  */
 export function resolveClientRecordingUrl(input: {

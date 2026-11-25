@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
 import { trackRecordingFetchFailure, type RecordingFetchFailureReason } from '@magick-agency/observability/metrics/voice';
+import { recordingRedirectsToCarrier } from './recording-url-resolver.js';
 import {
   RecordingAccessRefusedError,
   type RecordingAccess,
@@ -16,7 +17,9 @@ import {
  * carrier-hosted MP3s (nothing attached); a BYOC carrier's are fetched with the
  * tenant's credential, sent to its recording media hosts only (Plivo: `media.plivo.com`
  * and its regional subdomains, never `api.plivo.com`) and never past a redirect.
- * `proxyCallRecording` streams the body and forwards Range.
+ * `proxyCallRecording` streams the body and forwards Range, or, for a call pinned to a credential
+ * on a carrier whose recordings are public (VoiceLink, CR12), checks the credential and the
+ * host and then redirects the viewer to the recording rather than fetching it.
  */
 
 const log = createChildLogger({ component: 'recording-proxy' });
@@ -236,7 +239,10 @@ export type ProxiedRecordingCall = RecordingCallRef & {
  * audio seeking works on long recordings.
  *
  * The call's own provider, pinned credential and tenant decide the hosts and headers
- * (`resolveAccess`). A refused access (a revoked credential, a BYOC call with none, an
+ * (`resolveAccess`). A call pinned to a credential on a carrier whose recordings are public
+ * (`recordingRedirectsToCarrier`, CR12) is answered 302 to its URL once the access is resolved
+ * and the URL's host passes the allow-list, with `Cache-Control: no-store`; nothing is fetched.
+ * A refused access (a revoked credential, a BYOC call with none, an
  * unknown provider) is a 404 `recording_unavailable`, before any fetch. A URL, or a
  * redirect hop, whose host is off the allow-list is a 502, rather than fetching
  * whatever `recording_url` says.
@@ -299,11 +305,33 @@ export async function proxyCallRecording(
     return reply.code(502).send({ error: 'Bad Gateway', message: 'Failed to fetch recording' });
   }
 
+  const host = recordingHostname(callRecord.recording_url);
+
+  // CR12: a pinned call on a carrier whose recordings are public. The credential has served
+  // `recording` above (B21: a revoked one is the 404 already), so the viewer is sent to the
+  // file itself, which their browser can reach where our egress cannot. Only a URL the fetch
+  // would have taken: the same allow-list check, else the same refusal as a fetch's.
+  if (recordingRedirectsToCarrier(provider, callRecord.telephony_credential_id)) {
+    if (!recordingHostMatches(callRecord.recording_url, access.allowedHosts, access.exactHosts)) {
+      failed('host_not_allowed');
+      log.warn(
+        { callId: callRecord.id, provider, reason: 'host_not_allowed', hop: 0, host },
+        'Recording URL is not on the recording-host allow-list; refusing to redirect',
+      );
+      return reply.code(502).send({
+        error: 'Bad Gateway',
+        message: 'The recording is not hosted on an allowed carrier host',
+      });
+    }
+    // `no-store`: the redirect is this request's answer, after this check, never a cached one
+    // that would outlive the credential's revocation.
+    return reply.code(302).header('Location', callRecord.recording_url).header('Cache-Control', 'no-store').send();
+  }
+
   const headers: Record<string, string> = { ...access.headers };
   const range = request.headers['range'];
   if (typeof range === 'string' && range.length > 0) headers['Range'] = range;
 
-  const host = recordingHostname(callRecord.recording_url);
   // Times the carrier's response headers only (not the access resolved above, which is ours):
   // cleared once they arrive, so the body streams untimed.
   const headersTimeout = new AbortController();

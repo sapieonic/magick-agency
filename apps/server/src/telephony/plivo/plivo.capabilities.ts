@@ -11,8 +11,8 @@ export const plivoCapabilities: CarrierDescriptor = {
   accounts: { service: false, tenant: true },
   // The inbound Application on a tenant's account (docs/inbound.md).
   inbound: true,
-  // No service account, so no service recording either; a tenant's recordings always go
-  // through the recording proxy on its credential (B21).
-  serviceRecordingsArePublic: false,
+  // A tenant's recordings need its credential (Basic auth, B21), so they are always fetched by
+  // the recording proxy, never handed to the viewer.
+  recordingsArePublic: false,
   webhookBaseUrl: (telephony) => telephony.plivo.webhookBaseUrl,
 };

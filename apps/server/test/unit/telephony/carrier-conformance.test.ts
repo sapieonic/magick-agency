@@ -198,15 +198,15 @@ describe('carrier conformance: every list equals the catalogue', () => {
 });
 
 describe('carrier conformance: the modes today', () => {
-  it('VoiceLink is the service’s account and tenants’ own (CR1), not inbound (CR11), its service recordings public', () => {
+  it('VoiceLink is the service’s account and tenants’ own (CR1), not inbound (CR11), its recordings public', () => {
     expect(findCarrier('voicelink')).toMatchObject({
-      accounts: { service: true, tenant: true }, inbound: false, serviceRecordingsArePublic: true, cancelsRinging: false,
+      accounts: { service: true, tenant: true }, inbound: false, recordingsArePublic: true, cancelsRinging: false,
     });
   });
 
   it('Plivo is tenant accounts only, inbound, never a public recording', () => {
     expect(findCarrier('plivo')).toMatchObject({
-      accounts: { service: false, tenant: true }, inbound: true, serviceRecordingsArePublic: false, cancelsRinging: true,
+      accounts: { service: false, tenant: true }, inbound: true, recordingsArePublic: false, cancelsRinging: true,
     });
   });
 });
