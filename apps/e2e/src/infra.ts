@@ -152,40 +152,46 @@ export async function takeRunLock(): Promise<RunLock> {
   };
 }
 
-/** Drop and recreate the e2e database, migrate it, and empty the e2e Redis db. */
+/**
+ * Drop and recreate the e2e database, migrate it, and empty the e2e Redis db. Redis is checked
+ * first, so a refusal leaves both stores as they were.
+ */
 export async function freshDatabase(log: (m: string) => void): Promise<void> {
-  const admin = new pg.Client({ connectionString: databaseUrl('postgres') });
-  await admin.connect();
-  try {
-    log(`db: recreating ${PG.database}`);
-    await admin.query(`DROP DATABASE IF EXISTS ${PG.database} WITH (FORCE)`);
-    await admin.query(`CREATE DATABASE ${PG.database}`);
-  } finally {
-    await admin.end();
-  }
-  log('db: migrating');
-  // node-pg-migrate prints a line per migration (and timestamp notes on stderr): shown only on failure.
-  const migrate = spawnSync('pnpm', ['--filter', '@magick-agency/db', 'run', 'migrate:up'], {
-    cwd: REPO_ROOT,
-    env: { ...process.env, DATABASE_URL: databaseUrl() },
-    encoding: 'utf8',
-  });
-  if (migrate.status !== 0) {
-    process.stderr.write(`${migrate.stdout}\n${migrate.stderr}\n`);
-    throw new Error(`migrations failed (exit ${migrate.status})`);
-  }
   const redis = new Redis({ host: REDIS.host, port: REDIS.port, db: REDIS.db, lazyConnect: true, maxRetriesPerRequest: 2 });
   await redis.connect();
-  // Never flush a db another client is on (an integration worker configured onto it, a second
-  // run): refuse, naming them.
-  const me = Number(await redis.client('ID'));
-  const others = String(await redis.client('LIST'))
-    .split('\n')
-    .filter((line) => new RegExp(`\\bdb=${REDIS.db}\\b`).test(line) && !new RegExp(`^id=${me}\\b`).test(line));
-  if (others.length > 0) {
-    await redis.quit();
-    throw new Error(`e2e refuses to flush Redis db ${REDIS.db}: ${others.length} other client(s) are on it (${others.map((l) => /addr=(\S+)/.exec(l)?.[1]).join(', ')})`);
+  try {
+    // Never flush a db another client is on (an integration worker configured onto it, a
+    // server left running): refuse, naming them.
+    const me = Number(await redis.client('ID'));
+    const others = String(await redis.client('LIST'))
+      .split('\n')
+      .filter((line) => new RegExp(`\\bdb=${REDIS.db}\\b`).test(line) && !new RegExp(`^id=${me}\\b`).test(line));
+    if (others.length > 0) {
+      throw new Error(`e2e refuses to flush Redis db ${REDIS.db}: ${others.length} other client(s) are on it (${others.map((l) => /addr=(\S+)/.exec(l)?.[1]).join(', ')})`);
+    }
+
+    const admin = new pg.Client({ connectionString: databaseUrl('postgres') });
+    await admin.connect();
+    try {
+      log(`db: recreating ${PG.database}`);
+      await admin.query(`DROP DATABASE IF EXISTS ${PG.database} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${PG.database}`);
+    } finally {
+      await admin.end();
+    }
+    log('db: migrating');
+    // node-pg-migrate prints a line per migration (and timestamp notes on stderr): shown only on failure.
+    const migrate = spawnSync('pnpm', ['--filter', '@magick-agency/db', 'run', 'migrate:up'], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, DATABASE_URL: databaseUrl() },
+      encoding: 'utf8',
+    });
+    if (migrate.status !== 0) {
+      process.stderr.write(`${migrate.stdout}\n${migrate.stderr}\n`);
+      throw new Error(`migrations failed (exit ${migrate.status})`);
+    }
+    await redis.flushdb();
+  } finally {
+    await redis.quit().catch(() => undefined);
   }
-  await redis.flushdb();
-  await redis.quit();
 }
