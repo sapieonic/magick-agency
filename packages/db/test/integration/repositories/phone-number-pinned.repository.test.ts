@@ -7,7 +7,10 @@
 //  - a hand-pinned number follows PL4, PL5 and PL13 as a synced one does: offered as a caller ID
 //    only while its credential is `active`, one of that credential's numbers for its campaigns,
 //    never assigned to another tenant;
-//  - `findPinnedAmong`: the numbers pinned to any credential, whatever their status or tenant.
+//  - `findPinnedAmong`: the numbers pinned to any credential, whatever their status or tenant;
+//  - `pinToCredential`: a number on the service's own account moved, one way, onto a tenant's
+//    own account of its carrier, with every refusal, and its locks against a concurrent disable,
+//    assignment, `createPinned` and sync.
 // The carrier here is VoiceLink, the one whose tenant-account numbers are added by hand: these
 // rows need no catalogue (the route decides which carrier may take them).
 import { randomUUID } from 'node:crypto';
@@ -200,5 +203,186 @@ describe('phoneNumberRepository.findInboundLink carries the number`s carrier (in
       provider_name: 'voicelink', telephony_credential_id: cred, credential_tenant_id: tenant, assigned: true,
     });
     expect(await phoneNumberRepository.findInboundLink(own)).toMatchObject({ provider_name: 'voicelink', telephony_credential_id: null });
+  });
+});
+
+/** A service-account number (no credential), optionally assigned to `assignedTo`. */
+async function serviceNumber(phone: string, assignedTo: string[] = [], provider: 'voicelink' | 'plivo' = 'voicelink'): Promise<string> {
+  const id = (await getTestPool().query<{ id: string }>(
+    `INSERT INTO phone_numbers (phone_number, provider_id) VALUES ($1, $2) RETURNING id`, [phone, providers[provider]])).rows[0]!.id;
+  for (const t of assignedTo) await tenantPhoneAssignmentRepository.assign(t, id, false);
+  return id;
+}
+
+async function campaign(name: string, callerIds: string[], over: { status?: string; credentialId?: string | null; tenantId?: string; accountId?: string } = {}) {
+  await getTestPool().query(
+    `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids, telephony_provider, telephony_credential_id, status)
+     VALUES ($1, $2, $3, $4, 'voicelink', $5, $6)`,
+    [over.tenantId ?? tenant, over.accountId ?? account, name, callerIds, over.credentialId ?? null, over.status ?? 'draft'],
+  );
+}
+
+describe('phoneNumberRepository.pinToCredential (integration: a service number moved onto a tenant`s own account)', () => {
+  it('pins the number and assigns it untagged to the credential`s tenant, keeping an assignment it already had there', async () => {
+    const cred = await insertCredential();
+    const id = await serviceNumber('+919000000001');
+    const pinned = await phoneNumberRepository.pinToCredential(id, cred, admin);
+    expect(pinned).toMatchObject({
+      ok: true, tenantId: tenant,
+      phoneNumber: { id, phone_number: '+919000000001', telephony_credential_id: cred, status: 'active', provider_name: 'voicelink' },
+    });
+    expect(await assignments('+919000000001')).toEqual([{ tenant_id: tenant, is_default: false, assigned_by: admin, tags: 0 }]);
+    // Now one of the credential's numbers for its campaigns (PL13), and refused to another tenant (CR7).
+    expect(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(tenant, account, cred, ['+919000000001'])).toEqual(['+919000000001']);
+    expect(await tenantPhoneAssignmentRepository.assign(otherTenant, id, false).catch((e: unknown) => e)).toBeInstanceOf(PhoneNumberOtherTenantError);
+
+    // Already assigned to the credential's tenant, as default and tagged: left as it was.
+    const kept = await serviceNumber('+919000000002');
+    const a = await tenantPhoneAssignmentRepository.assign(tenant, kept, true, admin);
+    await getTestPool().query(`INSERT INTO phone_account_tags (assignment_id, account_id) VALUES ($1, $2)`, [a.id, account]);
+    expect((await phoneNumberRepository.pinToCredential(kept, cred, null)).ok).toBe(true);
+    expect(await assignments('+919000000002')).toEqual([{ tenant_id: tenant, is_default: true, assigned_by: admin, tags: 1 }]);
+  });
+
+  it('refuses, writing nothing: no number, retired or deleted, already pinned, unknown credential or another carrier`s, credential not active', async () => {
+    const cred = await insertCredential();
+    expect(await phoneNumberRepository.pinToCredential(randomUUID(), cred, admin)).toEqual({ ok: false, reason: 'phone_number_not_found' });
+    for (const [phone, status] of [['+919000000101', 'retired'], ['+919000000102', 'deleted']] as const) {
+      const id = await serviceNumber(phone);
+      await getTestPool().query(`UPDATE phone_numbers SET status = $2 WHERE id = $1`, [id, status]);
+      expect(await phoneNumberRepository.pinToCredential(id, cred, admin)).toEqual({ ok: false, reason: 'phone_number_not_active', status });
+    }
+    await phoneNumberRepository.createPinned(input('+919800000001'), cred);
+    const pinnedId = (await numberRow('+919800000001'))!.id;
+    expect(await phoneNumberRepository.pinToCredential(pinnedId, cred, admin)).toEqual({ ok: false, reason: 'already_pinned' });
+    expect(await phoneNumberRepository.pinToCredential(pinnedId, await insertCredential(), admin)).toEqual({ ok: false, reason: 'already_pinned' });
+
+    const id = await serviceNumber('+919000000001');
+    expect(await phoneNumberRepository.pinToCredential(id, randomUUID(), admin)).toEqual({ ok: false, reason: 'credential_not_found' });
+    expect(await phoneNumberRepository.pinToCredential(id, await insertCredential('plivo'), admin)).toEqual({ ok: false, reason: 'credential_not_found' });
+    for (const status of ['disabled', 'invalid', 'revoked'] as const) {
+      expect(await phoneNumberRepository.pinToCredential(id, await insertCredential('voicelink', tenant, status), admin))
+        .toEqual({ ok: false, reason: 'credential_not_active', status });
+    }
+    expect(await numberRow('+919000000001')).toMatchObject({ telephony_credential_id: null });
+    expect(await assignments('+919000000001')).toEqual([]);
+  });
+
+  it('refuses a number assigned to any tenant other than the credential`s, naming how many', async () => {
+    const cred = await insertCredential();
+    const third = (await insertTenant()).id as string;
+    const id = await serviceNumber('+919000000001', [tenant, otherTenant, third]);
+    expect(await phoneNumberRepository.pinToCredential(id, cred, admin)).toEqual({ ok: false, reason: 'assigned_elsewhere', tenantCount: 2 });
+    expect(await numberRow('+919000000001')).toMatchObject({ telephony_credential_id: null });
+  });
+
+  it('refuses while a service-account campaign that is not finished holds it as a caller ID, naming up to the limit, running first', async () => {
+    const cred = await insertCredential();
+    const id = await serviceNumber('+919000000001', [tenant]);
+    const otherAccount = (await insertAccount({ tenant_id: otherTenant })).id as string;
+    await campaign('Draft one', ['+919000000001']);
+    await campaign('Running one', ['+919000000002', '+919000000001'], { status: 'running' });
+    await campaign('Theirs paused', ['+919000000001'], { status: 'paused', tenantId: otherTenant, accountId: otherAccount });
+    await campaign('Stopping one', ['+919000000001'], { status: 'stopping' });
+    // Not counted: finished, another number, or on a credential.
+    await campaign('Stopped one', ['+919000000001'], { status: 'stopped' });
+    await campaign('Completed one', ['+919000000001'], { status: 'completed' });
+    await campaign('Other number', ['+919000000002'], { status: 'running' });
+    await campaign('On the credential', ['+919000000001'], { status: 'running', credentialId: cred });
+
+    const refused = await phoneNumberRepository.pinToCredential(id, cred, admin, { campaignsNamed: 3 });
+    expect(refused).toMatchObject({ ok: false, reason: 'in_use', total: 4 });
+    expect(refused.ok === false && refused.reason === 'in_use' && refused.campaigns.map((c) => [c.campaign_name, c.status])).toEqual([
+      ['Running one', 'running'], ['Stopping one', 'stopping'], ['Theirs paused', 'paused'],
+    ]);
+    expect(refused.ok === false && refused.reason === 'in_use' && refused.campaigns[0]).toMatchObject({ tenant_name: expect.any(String), account_name: expect.any(String) });
+    expect(await numberRow('+919000000001')).toMatchObject({ telephony_credential_id: null });
+
+    await getTestPool().query(`UPDATE agency_campaigns SET status = 'stopped' WHERE telephony_credential_id IS NULL`);
+    expect((await phoneNumberRepository.pinToCredential(id, cred, admin)).ok).toBe(true);
+  });
+
+  it('waits for a disable holding the credential row, then sees it and writes nothing', async () => {
+    const cred = await insertCredential();
+    const id = await serviceNumber('+919000000001');
+    const holder = await getTestPool().connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(`UPDATE telephony_credentials SET status = 'disabled' WHERE id = $1`, [cred]);
+      const pending = phoneNumberRepository.pinToCredential(id, cred, admin);
+      await new Promise((r) => setTimeout(r, 100));
+      await holder.query('COMMIT');
+      expect(await pending).toEqual({ ok: false, reason: 'credential_not_active', status: 'disabled' });
+    } finally {
+      holder.release();
+    }
+    expect(await numberRow('+919000000001')).toMatchObject({ telephony_credential_id: null });
+  });
+
+  it('an assignment to another tenant racing the pin: whichever takes the number`s row first, the other sees it', async () => {
+    const cred = await insertCredential();
+    // The pin first: the assignment waits for it, then is refused on the credential.
+    const id = await serviceNumber('+919000000001');
+    const holder = await getTestPool().connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(`SELECT 1 FROM telephony_credentials WHERE id = $1 FOR NO KEY UPDATE`, [cred]);
+      await holder.query(`SELECT 1 FROM phone_numbers WHERE id = $1 FOR UPDATE`, [id]);
+      await holder.query(`UPDATE phone_numbers SET telephony_credential_id = $2 WHERE id = $1`, [id, cred]);
+      const assigning = tenantPhoneAssignmentRepository.assign(otherTenant, id, false).catch((e: unknown) => e);
+      await new Promise((r) => setTimeout(r, 100));
+      await holder.query('COMMIT');
+      expect(await assigning).toBeInstanceOf(PhoneNumberOtherTenantError);
+    } finally {
+      holder.release();
+    }
+    expect(await assignments('+919000000001')).toEqual([]);
+
+    // The assignment first: the pin waits for it, then refuses the number as assigned elsewhere.
+    const second = await serviceNumber('+919000000002');
+    const assigner = await getTestPool().connect();
+    try {
+      await assigner.query('BEGIN');
+      await assigner.query(`SELECT 1 FROM phone_numbers WHERE id = $1 FOR SHARE`, [second]);
+      await assigner.query(`INSERT INTO tenant_phone_assignments (tenant_id, phone_number_id, is_default) VALUES ($1, $2, false)`, [otherTenant, second]);
+      const pinning = phoneNumberRepository.pinToCredential(second, cred, admin);
+      await new Promise((r) => setTimeout(r, 100));
+      await assigner.query('COMMIT');
+      expect(await pinning).toEqual({ ok: false, reason: 'assigned_elsewhere', tenantCount: 1 });
+    } finally {
+      assigner.release();
+    }
+  });
+
+  it('takes its locks in createPinned`s and a sync`s order: all of them on one credential at once finish, none deadlocks', async () => {
+    const cred = await insertCredential();
+    const plivo = await insertCredential('plivo');
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) ids.push(await serviceNumber(`+91900000000${i}`));
+    const results = await Promise.all([
+      ...ids.map((id) => phoneNumberRepository.pinToCredential(id, cred, admin)),
+      ...Array.from({ length: 6 }, (_, i) => phoneNumberRepository.createPinned(input(`+91980000000${i}`), cred)),
+      // A sync of another credential naming the numbers being pinned: they are not its to take.
+      phoneNumberRepository.syncForCredential(plivo, ids.map((_, i) => ({ phone_number: `+91900000000${i}`, label: null })), admin),
+      // A pin of the same number twice at once: one lands, the other sees it pinned.
+      phoneNumberRepository.pinToCredential(ids[0]!, cred, admin),
+      // An assignment of a number being pinned, to another tenant: refused, whichever goes first.
+      tenantPhoneAssignmentRepository.assign(otherTenant, ids[1]!, false).catch((e: unknown) => e),
+    ]);
+    const pins = results.slice(0, 6) as Array<{ ok: boolean; reason?: string }>;
+    const created = results.slice(6, 12) as Array<{ ok: boolean }>;
+    expect(created.every((r) => r.ok)).toBe(true);
+    // ids[0] was pinned by one of the two pins; ids[1] by its pin unless the assignment went first.
+    const twice = [pins[0]!, results[13] as { ok: boolean; reason?: string }];
+    expect(twice.filter((r) => r.ok)).toHaveLength(1);
+    expect(twice.find((r) => !r.ok)).toEqual({ ok: false, reason: 'already_pinned' });
+    expect(pins.slice(2).every((r) => r.ok)).toBe(true);
+    const assigned = results[14];
+    if (pins[1]!.ok) expect(assigned).toBeInstanceOf(PhoneNumberOtherTenantError);
+    else expect(pins[1]).toEqual({ ok: false, reason: 'assigned_elsewhere', tenantCount: 1 });
+    expect(results[12]).toMatchObject({ added: [] });
+    const { rows } = await getTestPool().query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM phone_numbers WHERE telephony_credential_id = $1`, [cred]);
+    expect(rows[0]!.n).toBe(pins[1]!.ok ? 12 : 11);
   });
 });

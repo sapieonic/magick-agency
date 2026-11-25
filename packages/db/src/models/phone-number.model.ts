@@ -56,6 +56,29 @@ export type CreatePinnedPhoneNumberResult =
   | { ok: false; reason: 'credential_not_found' | 'duplicate' }
   | { ok: false; reason: 'credential_not_active'; status: string };
 
+/** A service-account campaign that still holds a number as a caller ID (`pinToCredential`'s `in_use`). */
+export interface CampaignHoldingCallerId {
+  campaign_id: string;
+  campaign_name: string;
+  status: string;
+  tenant_name: string;
+  account_name: string | null;
+}
+
+/**
+ * What `pinToCredential` answers: the number as pinned and the tenant it is now assigned to, or
+ * why nothing was written.
+ */
+export type PinPhoneNumberResult =
+  | { ok: true; phoneNumber: PhoneNumberRecord; tenantId: string }
+  | { ok: false; reason: 'phone_number_not_found' | 'already_pinned' | 'credential_not_found' }
+  | { ok: false; reason: 'phone_number_not_active'; status: string }
+  | { ok: false; reason: 'credential_not_active'; status: string }
+  /** Assigned to `tenantCount` tenants other than the credential's. */
+  | { ok: false; reason: 'assigned_elsewhere'; tenantCount: number }
+  /** `total` campaigns on the service's own account that are not finished hold it; `campaigns` names the first few. */
+  | { ok: false; reason: 'in_use'; total: number; campaigns: CampaignHoldingCallerId[] };
+
 export interface UpdatePhoneNumberInput {
   label?: string;
   notes?: string;

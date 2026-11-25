@@ -29,6 +29,12 @@ export const updatePhoneNumberSchema = z.object({
   // strips them, so a client sending them changes nothing.
 });
 
+// CR6: move a service-account number onto a tenant's own carrier account (`POST
+// /phone-numbers/:id/pin`). The credential is the only field; the route and the repository judge it.
+export const pinPhoneNumberSchema = z.object({
+  telephony_credential_id: z.string().uuid(),
+}).strict();
+
 export const assignPhoneNumberSchema = z.object({
   tenant_id: z.string().uuid(),
   is_default: z.boolean().optional().default(false),

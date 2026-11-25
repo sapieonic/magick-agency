@@ -16,6 +16,7 @@ import type { Membership, Tenant } from './auth';
 import type { InviteEmailResult } from './team';
 import type { Role } from '../../rbac';
 import type { TelephonyNumberSource } from './super-admin-telephony-credentials';
+import type { AllListed } from '../../primitives';
 
 // ─── Super-admins and login ─────────────────────────────────────────────────
 
@@ -385,6 +386,90 @@ export interface UpdatePhoneNumberBody {
   label?: string;
   notes?: string;
   max_concurrent_calls?: number;
+}
+
+/**
+ * `POST /super-admin/phone-numbers/:id/pin` (docs/carriers.md CR6): move a number on the
+ * service's own carrier account onto a tenant's own account of the same carrier, pinning it to
+ * that tenant's credential and assigning it, untagged, to the credential's tenant. One way:
+ * nothing unpins a number. Only on a carrier whose tenant-account numbers are added by hand
+ * (`number_source: 'manual'`, VoiceLink): a synced carrier's numbers come from the sync.
+ */
+export interface PinPhoneNumberBody {
+  telephony_credential_id: string;
+}
+
+/** `POST /super-admin/phone-numbers/:id/pin`, 200. */
+export interface PinPhoneNumberResponse {
+  phone_number: PhoneNumber;
+  /** The credential's tenant, which the number is now assigned to. */
+  tenant_id: string;
+}
+
+/**
+ * Why `POST /super-admin/phone-numbers/:id/pin` refused (`code` on the error body; nothing was
+ * changed). A malformed id or body is a plain 400 with no code.
+ * - `phone_number_not_found` (404): no such number.
+ * - `phone_number_not_active` (409): the number is retired or deleted.
+ * - `phone_number_already_pinned` (409): it is on a tenant's carrier account already; a pin
+ *   never changes.
+ * - `carrier_numbers_not_pinned_by_hand` (409): its carrier takes no numbers by hand on tenant
+ *   accounts (no tenant accounts, or numbers that come from a sync).
+ * - `telephony_credential_not_found` (404): no such credential, or one on another carrier.
+ * - `telephony_credential_not_active` (409): the credential is disabled, invalid or revoked.
+ * - `phone_number_assigned_elsewhere` (409): assigned to tenants other than the credential's
+ *   (`tenant_count`); unassign it from them first.
+ * - `phone_number_in_use` (409): campaigns on the service's own account that are not finished
+ *   use it as a caller ID (`campaigns_total`, the first five in `campaigns`); remove it from them
+ *   or stop them first.
+ */
+export type PinPhoneNumberErrorCode =
+  | 'phone_number_not_found'
+  | 'phone_number_not_active'
+  | 'phone_number_already_pinned'
+  | 'carrier_numbers_not_pinned_by_hand'
+  | 'telephony_credential_not_found'
+  | 'telephony_credential_not_active'
+  | 'phone_number_assigned_elsewhere'
+  | 'phone_number_in_use';
+
+/** Runtime list of {@link PinPhoneNumberErrorCode}, in declaration order. */
+export const PIN_PHONE_NUMBER_ERROR_CODES = [
+  'phone_number_not_found',
+  'phone_number_not_active',
+  'phone_number_already_pinned',
+  'carrier_numbers_not_pinned_by_hand',
+  'telephony_credential_not_found',
+  'telephony_credential_not_active',
+  'phone_number_assigned_elsewhere',
+  'phone_number_in_use',
+] as const satisfies readonly PinPhoneNumberErrorCode[];
+
+const _allPinPhoneNumberErrorCodesListed: AllListed<PinPhoneNumberErrorCode, typeof PIN_PHONE_NUMBER_ERROR_CODES> = true;
+void _allPinPhoneNumberErrorCodesListed;
+
+/** A service-account campaign that holds the number (`phone_number_in_use`). */
+export interface PinPhoneNumberCampaign {
+  campaign_id: string;
+  campaign_name: string;
+  status: 'draft' | 'running' | 'paused' | 'stopping';
+  tenant_name: string;
+  /** Null when the account was removed. */
+  account_name: string | null;
+}
+
+/** The error body of `POST /super-admin/phone-numbers/:id/pin`. `message` is ready to show. */
+export interface PinPhoneNumberError {
+  error: string;
+  code: PinPhoneNumberErrorCode;
+  message: string;
+  /** `phone_number_not_active`, `telephony_credential_not_active`: the status it has. */
+  status?: string;
+  /** `phone_number_assigned_elsewhere`: how many other tenants it is assigned to. */
+  tenant_count?: number;
+  /** `phone_number_in_use`: how many campaigns hold it, and the first five. */
+  campaigns_total?: number;
+  campaigns?: PinPhoneNumberCampaign[];
 }
 
 /** `POST /super-admin/phone-numbers/:id/assign`. */

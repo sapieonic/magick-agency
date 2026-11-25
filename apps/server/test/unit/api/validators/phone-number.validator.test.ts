@@ -15,6 +15,7 @@ describe('phone-number.validator — deleted schemas', () => {
     expect(Object.keys(validators).sort()).toEqual([
       'assignPhoneNumberSchema',
       'createPhoneNumberSchema',
+      'pinPhoneNumberSchema',
       'updatePhoneNumberSchema',
     ]);
   });

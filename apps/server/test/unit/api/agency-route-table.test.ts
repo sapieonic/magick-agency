@@ -84,6 +84,8 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['WS /api/v1/webrtc-call/:_/pstn-stream', 'carrier PSTN media leg, VoiceLink and Plivo (carrier-facing WS)'],
   ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (the HMAC token is the credential)'],
   ['GET /super-admin/usage', 'super-admin usage counts'],
+  // No super-admin screen calls it yet; once one does it moves to the console inventory.
+  ['POST /super-admin/phone-numbers/:_/pin', 'move a service number onto a tenant`s own carrier account (docs/carriers.md CR6)'],
   ['GET /super-admin/tenants/:_/accounts/:_/settings', 'per-account settings'],
   ['PUT /super-admin/tenants/:_/accounts/:_/settings', 'per-account settings'],
   ['PUT /super-admin/tenants/:_/memberships/:_/role', 'membership role change (decision Q3d)'],

@@ -13,6 +13,8 @@ import type {
   PhoneNumberInboundLinkRecord,
   UnroutedMissedSummary,
   CreatePinnedPhoneNumberResult,
+  PinPhoneNumberResult,
+  CampaignHoldingCallerId,
 } from '../models/phone-number.model.js';
 
 /**
@@ -393,6 +395,109 @@ export class PhoneNumberRepository {
       }
       await assignPinnedToCredentialTenant(client, row!.tenant_id, credentialId, input.created_by ?? null, [phoneNumber.id]);
       return { ok: true, phoneNumber, tenantId: row!.tenant_id };
+    }, { pool: getPool() });
+  }
+
+  /**
+   * Move a number on the service's own carrier account onto a tenant's own account of the same
+   * carrier: pin it to tenant credential `credentialId` and assign it untagged to the
+   * credential's tenant (PL5, {@link assignPinnedToCredentialTenant}), in one transaction. One way
+   * only: nothing unpins a number (CR6). Whether the carrier takes numbers by hand on tenant
+   * accounts is the caller's rule (the catalogue), as for {@link createPinned}.
+   *
+   * Locks the credential row first (`FOR NO KEY UPDATE`), then the number's (`FOR UPDATE`): the
+   * order `createPinned` and `syncForCredential` take them in, so none of the three can deadlock
+   * another. A disable or revoke of the credential waits for the pin, or the pin sees the
+   * credential no longer `active`; an assignment of the number (`tenantPhoneAssignmentRepository
+   * .assign`, which takes the number's row `FOR SHARE` first) waits for the pin and then sees it
+   * pinned, or the pin waits for the assignment and sees it. Refused, with nothing written, when:
+   *  - `phone_number_not_found`: no such number;
+   *  - `phone_number_not_active`: the number is retired or deleted (`status` says which);
+   *  - `already_pinned`: it is pinned to a credential already (this one or another);
+   *  - `credential_not_found`: no such credential, or one on another carrier than the number's;
+   *  - `credential_not_active`: the credential is not `active` (`status` says what it is);
+   *  - `assigned_elsewhere`: it is assigned to a tenant other than the credential's
+   *    (`tenantCount` of them): unassigning is a separate action;
+   *  - `in_use`: a campaign on the service's own account that is not finished (draft, running,
+   *    paused, stopping: the statuses a credential's revoke is refused for) holds it as a caller
+   *    ID; it would dial the tenant's number on the service's account (CR9). `total` of them, the
+   *    first `campaignsNamed` in `campaigns`.
+   */
+  async pinToCredential(
+    phoneNumberId: string,
+    credentialId: string,
+    adminId: string | null,
+    opts: { campaignsNamed?: number } = {},
+  ): Promise<PinPhoneNumberResult> {
+    return withTransaction(async (client, tx) => {
+      const refuse = async (result: PinPhoneNumberResult): Promise<PinPhoneNumberResult> => {
+        await tx.rollback();
+        return result;
+      };
+      const cred = await client.query<{ tenant_id: string; status: string; provider_id: string }>(
+        `SELECT c.tenant_id, c.status, p.id AS provider_id
+           FROM telephony_credentials c
+           JOIN telephony_providers p ON p.name = c.provider
+          WHERE c.id = $1::uuid
+            FOR NO KEY UPDATE OF c`,
+        [credentialId],
+      );
+      const number = await client.query<{ phone_number: string; provider_id: string; status: string; telephony_credential_id: string | null }>(
+        `SELECT phone_number, provider_id, status, telephony_credential_id
+           FROM phone_numbers WHERE id = $1::uuid
+            FOR UPDATE`,
+        [phoneNumberId],
+      );
+      const n = number.rows[0];
+      if (!n) return refuse({ ok: false, reason: 'phone_number_not_found' });
+      if (n.status !== 'active') return refuse({ ok: false, reason: 'phone_number_not_active', status: n.status });
+      if (n.telephony_credential_id !== null) return refuse({ ok: false, reason: 'already_pinned' });
+      const c = cred.rows[0];
+      if (!c || c.provider_id !== n.provider_id) return refuse({ ok: false, reason: 'credential_not_found' });
+      if (c.status !== 'active') return refuse({ ok: false, reason: 'credential_not_active', status: c.status });
+
+      const others = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM tenant_phone_assignments
+          WHERE phone_number_id = $1::uuid AND tenant_id <> $2::uuid`,
+        [phoneNumberId, c.tenant_id],
+      );
+      const tenantCount = others.rows[0]!.n;
+      if (tenantCount > 0) return refuse({ ok: false, reason: 'assigned_elsewhere', tenantCount });
+
+      const holding = await client.query<CampaignHoldingCallerId & { total: number }>(
+        `SELECT c.id AS campaign_id, c.name AS campaign_name, c.status, t.name AS tenant_name, a.name AS account_name,
+                count(*) OVER ()::int AS total
+           FROM agency_campaigns c
+           JOIN tenants t ON t.id = c.tenant_id
+           LEFT JOIN accounts a ON a.id = c.account_id
+          WHERE c.telephony_credential_id IS NULL
+            AND c.status IN ${LIVE_CAMPAIGN}
+            AND $1::text = ANY(c.caller_ids)
+          ORDER BY CASE c.status WHEN 'running' THEN 0 WHEN 'stopping' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,
+                   t.name, a.name NULLS LAST, c.name, c.id
+          LIMIT $2`,
+        [n.phone_number, Math.max(1, opts.campaignsNamed ?? 5)],
+      );
+      if (holding.rows.length > 0) {
+        return refuse({
+          ok: false, reason: 'in_use', total: holding.rows[0]!.total,
+          campaigns: holding.rows.map(({ total: _total, ...row }) => row),
+        });
+      }
+
+      // The row is locked and was read unpinned and active above, so this lands.
+      const pinned = await client.query<PhoneNumberRecord>(
+        `WITH moved AS (
+           UPDATE phone_numbers SET telephony_credential_id = $2::uuid
+            WHERE id = $1::uuid AND telephony_credential_id IS NULL AND status = 'active'
+            RETURNING *
+         )
+         SELECT moved.*, tp.name AS provider_name, tp.display_name AS provider_display_name
+           FROM moved JOIN telephony_providers tp ON tp.id = moved.provider_id`,
+        [phoneNumberId, credentialId],
+      );
+      await assignPinnedToCredentialTenant(client, c.tenant_id, credentialId, adminId, [phoneNumberId]);
+      return { ok: true, phoneNumber: pinned.rows[0]!, tenantId: c.tenant_id };
     }, { pool: getPool() });
   }
 
