@@ -103,6 +103,8 @@ async function plivoCampaign(over: Record<string, unknown> = {}) {
 }
 
 beforeEach(async () => {
+  // Service-only unless a test says otherwise (the header).
+  carriers.voicelink = { accounts: { service: true, tenant: false } };
   await truncateAll();
   flags.isEnabled.mockResolvedValue(true);
   await (await pool()).query(
@@ -182,8 +184,10 @@ describe('POST /api/v1/agency-campaigns — the carrier account', () => {
     const without = await create({ telephony_provider: 'plivo', caller_ids: MINE });
     expect(without.statusCode).toBe(400);
     expect(without.json().details).toHaveProperty('telephony_credential_id');
-    // VoiceLink takes tenant accounts too (docs/carriers.md CR1), so a credential on it is looked
-    // up, and a Plivo credential is not one of this tenant's VoiceLink credentials (CR8).
+    // VoiceLink as the real catalogue declares it, taking tenant accounts too (docs/carriers.md
+    // CR1): a credential on it is looked up, and a Plivo credential is not one of this tenant's
+    // VoiceLink credentials (CR8).
+    carriers.voicelink = { accounts: { service: true, tenant: true } };
     const withOne = await create({ telephony_provider: 'voicelink', telephony_credential_id: credA, caller_ids: ['+919000000001'] });
     expect(withOne.statusCode).toBe(404);
     expect(withOne.json()).toMatchObject({ code: 'telephony_credential_not_found' });
@@ -213,7 +217,9 @@ describe('PATCH /api/v1/agency-campaigns/:id — the carrier account', () => {
 
   it('moving back to the service carrier must clear the credential in the same PATCH', async () => {
     const campaign = await plivoCampaign();
-    // The Plivo credential kept is no VoiceLink credential of this tenant (CR8).
+    // VoiceLink as the real catalogue declares it (both modes): the Plivo credential kept is no
+    // VoiceLink credential of this tenant (CR8).
+    carriers.voicelink = { accounts: { service: true, tenant: true } };
     const kept = await patch(campaign.id, { telephony_provider: 'voicelink', caller_ids: ['+919000000001'] });
     expect(kept.statusCode).toBe(404);
     expect(kept.json()).toMatchObject({ code: 'telephony_credential_not_found' });
