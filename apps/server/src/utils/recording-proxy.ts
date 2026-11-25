@@ -346,13 +346,17 @@ export async function proxyCallRecording(
         message: 'The recording is not hosted on an allowed carrier host',
       });
     }
+    // The URL as the host check parsed it, never the stored string: the parser drops tabs and
+    // line breaks and percent-encodes what a header may not carry, so the viewer is sent exactly
+    // where the check looked and a stray character cannot make writing `Location` throw.
+    const target = new URL(callRecord.recording_url).href;
     // `no-store`: the redirect is this request's answer, after this check, never a cached one
     // that would outlive the credential's revocation. `Vary: Accept`: the two answers differ by it.
     if (acceptsJsonRedirect(request.headers['accept'])) {
-      const body: RecordingRedirectBody = { redirect_url: callRecord.recording_url };
+      const body: RecordingRedirectBody = { redirect_url: target };
       return reply.code(200).header('Cache-Control', 'no-store').header('Vary', 'Accept').send(body);
     }
-    return reply.code(302).header('Location', callRecord.recording_url).header('Cache-Control', 'no-store')
+    return reply.code(302).header('Location', target).header('Cache-Control', 'no-store')
       .header('Vary', 'Accept').send();
   }
 

@@ -502,6 +502,7 @@ describe('the recording route — a recording the internal handler points at (do
     expect(res.statusCode).toBe(302);
     expect(res.headers['location']).toBe(CARRIER_URL);
     expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.headers['vary']).toBe('Accept');
     expect(res.headers['content-type']).toBeUndefined();
   });
 
@@ -514,6 +515,7 @@ describe('the recording route — a recording the internal handler points at (do
     expect(lastCore()).toMatchObject({ rawResponse: true, headers: { accept, range: 'bytes=0-' } });
     expect(res.statusCode).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.headers['vary']).toBe('Accept');
     expect(res.json()).toEqual({ redirect_url: CARRIER_URL });
   });
 });

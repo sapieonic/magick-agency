@@ -549,6 +549,22 @@ describe('proxyCallRecording — the redirect as JSON for a script that asks (CR
     expect(r.sent.headers).toEqual({ 'Cache-Control': 'no-store', Vary: 'Accept' });
   });
 
+  it('sends the viewer to the URL as the host check parsed it, never the stored string', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    // A stored URL with a stray line break and a character a header cannot carry: the parser
+    // drops the one and percent-encodes the other, and that is what the viewer is sent.
+    const stored = `${GOOD.replace('.mp3', '')}\n-€.mp3 `;
+    const normalised = new URL(stored).href;
+    expect(normalised).not.toBe(stored);
+    const json = reply();
+    await proxyCallRecording(vlPinned(stored), { headers: { accept: JSON_ACCEPT } } as any, json, access(HOSTS, vlCredentials()));
+    expect(json.sent.body).toEqual({ redirect_url: normalised });
+    const redirect = reply();
+    await proxyCallRecording(vlPinned(stored), { headers: {} } as any, redirect, access(HOSTS, vlCredentials()));
+    expect(redirect.sent.code).toBe(302);
+    expect(redirect.sent.headers['Location']).toBe(normalised);
+  });
+
   it.each([
     ['no Accept', {}],
     ['an audio element’s Accept', { accept: 'audio/webm,audio/ogg,audio/*;q=0.9,*/*;q=0.5' }],

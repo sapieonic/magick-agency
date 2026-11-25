@@ -555,6 +555,7 @@ describe('forwarding to the internal handler', () => {
       expect(res.statusCode).toBe(302);
       expect(res.headers['location']).toBe(CARRIER_URL);
       expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.headers['vary']).toBe('Accept');
       expect(res.headers['content-type']).toBeUndefined();
       await app.close();
     });
@@ -574,6 +575,7 @@ describe('forwarding to the internal handler', () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers['content-type']).toContain('application/json');
       expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.headers['vary']).toBe('Accept');
       expect(res.json()).toEqual({ redirect_url: CARRIER_URL });
       await app.close();
     });
