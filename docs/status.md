@@ -2816,9 +2816,9 @@ server already accepted a raise on a soft-phone session and sent the frames to e
   `cancelled` only on the server's `help_cleared {cancelled}`; no text, names or customer details.
 
 **Not verified:** the vibration has not been felt on a phone (Android with touch feedback off, iOS
-while the call's audio session records); none of it has been seen against a deployed server. Noticed,
-not changed: the app's Vibration switch gates only the message vibration; the call-arrival and
-connect buzzes ignore it, as before.
+while the call's audio session records); none of it has been seen against a deployed server. Me →
+Vibration now gates the call-arrival and connect buzzes too (before LF39 it gated nothing), as its
+subtitle says; the buzz on a refused Save is form feedback and stays.
 
 ### Abandonment on 23 Nov: the 3 s grace, the Resume warning, answer-to-audio 2026-11-24 (AG1, AW1–AW3)
 
