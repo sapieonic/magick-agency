@@ -140,7 +140,7 @@ describe('VoicelinkTokenManager', () => {
     mockFetch.mockReturnValue(pending.then(() => loginOk()));
     const mgr = new VoicelinkTokenManager(VOICELINK_CONFIG);
 
-    const promises = Array.from({ length: 8 }, () => mgr.refresh());
+    const promises = Array.from({ length: 8 }, () => mgr.refresh('stale-token'));
     resolveLogin(null);
     const tokens = await Promise.all(promises);
 
@@ -148,12 +148,12 @@ describe('VoicelinkTokenManager', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('refresh() forces a fresh login even when the cache is still warm', async () => {
+  it('refresh(the cached token) forces a fresh login even when the cache is still warm', async () => {
     mockFetch.mockResolvedValueOnce(loginOk('first-token')).mockResolvedValueOnce(loginOk('second-token'));
     const mgr = new VoicelinkTokenManager(VOICELINK_CONFIG);
 
     const first = await mgr.getToken();
-    const refreshed = await mgr.refresh();
+    const refreshed = await mgr.refresh(first);
     const afterRefresh = await mgr.getToken();
 
     expect(first).toBe('first-token');
@@ -161,6 +161,55 @@ describe('VoicelinkTokenManager', () => {
     // After refresh the new token is cached — no third login.
     expect(afterRefresh).toBe('second-token');
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  // ─── a 401 on a token that is no longer the cached one (CR4) ───────────────
+  describe('refresh(staleToken): one login per refused token', () => {
+    it('a late 401 on a token already replaced returns the newer token with no login', async () => {
+      mockFetch.mockResolvedValueOnce(loginOk('t1')).mockResolvedValueOnce(loginOk('t2'));
+      const mgr = new VoicelinkTokenManager(VOICELINK_CONFIG);
+      // A and B both sent on t1.
+      const t1 = await mgr.getToken();
+      // A's 401 on t1: a fresh login, t2.
+      expect(await mgr.refresh(t1)).toBe('t2');
+      // B's late 401 on t1: t2 is already cached, so no login that would retire it.
+      expect(await mgr.refresh(t1)).toBe('t2');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('a 401 on an old token while a login is in flight joins that login', async () => {
+      let resolveLogin: (v: unknown) => void = () => {};
+      const pending = new Promise((resolve) => { resolveLogin = resolve; });
+      mockFetch.mockResolvedValueOnce(loginOk('t1')).mockReturnValueOnce(pending.then(() => loginOk('t2')));
+      const mgr = new VoicelinkTokenManager(VOICELINK_CONFIG);
+      const t1 = await mgr.getToken();
+      const a = mgr.refresh(t1);
+      const b = mgr.refresh(t1);
+      resolveLogin(null);
+      expect(await Promise.all([a, b])).toEqual(['t2', 't2']);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('a 401 on a token the proactive refresh replaced reuses the refreshed one', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-11T00:00:00Z'));
+      mockFetch.mockResolvedValueOnce(loginOk('t1')).mockResolvedValueOnce(loginOk('t2'));
+      const mgr = new VoicelinkTokenManager(VOICELINK_CONFIG);
+      const t1 = await mgr.getToken();
+      vi.setSystemTime(new Date('2026-07-11T08:30:00Z'));
+      expect(await mgr.getToken()).toBe('t2'); // the 8 h refresh
+      expect(await mgr.refresh(t1)).toBe('t2');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('a 401 on the newer token logs in again (one login per refused token)', async () => {
+      mockFetch.mockResolvedValueOnce(loginOk('t1')).mockResolvedValueOnce(loginOk('t2')).mockResolvedValueOnce(loginOk('t3'));
+      const mgr = new VoicelinkTokenManager(VOICELINK_CONFIG);
+      const t1 = await mgr.getToken();
+      const t2 = await mgr.refresh(t1);
+      expect(await mgr.refresh(t2)).toBe('t3');
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
   });
 
   it('never writes the token to a log line on the success path', async () => {

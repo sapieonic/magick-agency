@@ -3,9 +3,10 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 /**
  * VoiceLink on a tenant's own account (docs/carriers.md CR2, CR4), against the mock carrier over
  * real sockets: the tenant factory builds its adapter from env plus the credential's login only;
- * a tenant adapter's refusals are typed for the dial path (a refused login and a 401 after one
- * re-login are `CarrierAuthRejectedError`, a 4xx `CarrierDialRefusedError` the PL11 breaker
- * counts), while a service adapter's errors are what they always were; the `dial` and
+ * a tenant adapter's refusals are typed for the dial path (a refused login is
+ * `CarrierAuthRejectedError`, a 401 after a successful re-login an ordinary failed dial, a 4xx
+ * `CarrierDialRefusedError` the PL11 breaker counts), a late 401 on an old token reuses the
+ * newer login, while a service adapter's errors are what they always were; the `dial` and
  * `call_control` adapters of one credential share one login, and a rotation brings a new one;
  * the registry resolves a VoiceLink credential and still refuses a mismatch.
  */
@@ -91,6 +92,15 @@ const tenantAdapter = (over: Partial<AppConfig['telephony']['voicelink']> = {}, 
   createVoicelinkTenantAdapter(cred, appConfig(over));
 const serviceAdapter = () => new VoicelinkAdapter(appConfig().telephony.voicelink, { accountMode: 'service' });
 
+/** Poll until `cond` holds (bounded: a deadlock guard, not a speed check). */
+async function waitUntil(cond: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error('condition not met before the deadline');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 async function dialError(adapter: VoicelinkAdapter): Promise<unknown> {
   return adapter.initiateCall(dialRequest()).then(() => null, (e: unknown) => e);
 }
@@ -170,18 +180,58 @@ describe('a tenant adapter`s refusals are typed for the dial path (CR4); a servi
     expect((err as Error).message).toBe('VoiceLink login failed: HTTP 500');
   });
 
-  it('an add_lead still 401 after one re-login: tenant → CarrierAuthRejectedError; service → a plain Error', async () => {
+  it('an add_lead still 401 after a successful re-login is an ordinary failed dial on either account: no credential verdict, no breaker count', async () => {
     carrier.injectFault('add_lead', { kind: 'status', status: 401 }, 2);
     const tenantErr = await dialError(tenantAdapter());
-    expect(tenantErr).toMatchObject({ carrierAuthRejected: true, provider: 'voicelink', httpStatus: 401 });
-    expect(carrier.requestsTo('login')).toHaveLength(2);
+    // The re-login was accepted, so the credential is good: the only verdict on it is the login.
+    expect(carrier.requestsTo('login').map((r) => r.status)).toEqual([200, 200]);
     expect(carrier.requestsTo('add_lead')).toHaveLength(2);
+    expect(tenantErr).not.toBeInstanceOf(CarrierAuthRejectedError);
+    expect(isCarrierAuthRejected(tenantErr)).toBe(false);
+    expect((tenantErr as Error).message).toMatch(/^VoiceLink \/v1\/add_lead error 401/);
+    // Not unplaced (no `carrier_auth` pause, the credential not marked `invalid`): the bridge
+    // ends it `telephony_init_failed` with no status, which the PL11 breaker does not count.
+    expect(carrierUnplacedRefusal(tenantErr)).toBeNull();
+    expect(classifyDialRefusal(asBridgeRefusal(tenantErr))).toEqual({ kind: 'carrier_refused', outcomeUnknown: false, httpStatus: null });
+    expect(countsTowardBreaker(asBridgeRefusal(tenantErr))).toBe(false);
 
     carrier.reset();
     carrier.injectFault('add_lead', { kind: 'status', status: 401 }, 2);
     const serviceErr = await dialError(serviceAdapter());
     expect(isCarrierAuthRejected(serviceErr)).toBe(false);
     expect((serviceErr as Error).message).toMatch(/^VoiceLink \/v1\/add_lead error 401/);
+  });
+
+  it('two dials refused on one old token: the late one retries on the newer login, it does not log in again (CR4)', async () => {
+    // The worst case: each login retires the account's earlier tokens.
+    carrier.retireTokensOnLogin(true);
+    try {
+      const adapter = tenantAdapter();
+      await adapter.initiateCall(dialRequest()); // logs in T1
+      carrier.reset();
+      // B sends add_lead on T1 and its answer is held …
+      let release: () => void = () => {};
+      carrier.injectFault('add_lead', { kind: 'hold', gate: new Promise<void>((r) => { release = r; }) });
+      const b = adapter.initiateCall(dialRequest());
+      await waitUntil(() => carrier.requestsTo('add_lead').length === 1);
+      // … T1 is retired (another process's login, or an expiry) …
+      carrier.revokeTokens(TENANT_USER);
+      // … A is refused on T1, logs in T2 and is placed on it …
+      await expect(adapter.initiateCall(dialRequest())).resolves.toMatchObject({ providerCallId: expect.any(String) });
+      expect(carrier.requestsTo('login')).toHaveLength(1);
+      // … then B's late 401 on T1 retries on T2, with no login that would retire T2.
+      release();
+      await expect(b).resolves.toMatchObject({ providerCallId: expect.any(String) });
+      expect(carrier.requestsTo('login')).toHaveLength(1);
+      const leads = carrier.requestsTo('add_lead');
+      // In arrival order: B on T1 (answered last), A on T1, A's retry on T2, B's retry on T2.
+      expect(leads.map((r) => r.status)).toEqual([401, 401, 200, 200]);
+      expect(leads[1]!.authorization).toBe(leads[0]!.authorization);
+      expect(leads[3]!.authorization).toBe(leads[2]!.authorization);
+      expect(leads[3]!.authorization).not.toBe(leads[0]!.authorization);
+    } finally {
+      carrier.retireTokensOnLogin(false);
+    }
   });
 
   it('one 401 then a re-login that works places the dial on either account', async () => {

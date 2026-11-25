@@ -76,11 +76,19 @@ export class VoicelinkTokenManager {
   }
 
   /**
-   * Forces a re-login regardless of cache freshness (called on a 401 from any
-   * VoiceLink REST call). Single-flight: concurrent callers await the same
-   * in-flight login promise.
+   * The token to retry with after VoiceLink refused `staleToken` with a 401 (any VoiceLink REST
+   * call). Logs in again only when `staleToken` is still the cached token: if a login is in
+   * flight, the caller joins it; if the cache already holds a newer token (another dial's
+   * re-login, or the proactive refresh, got there first), that token is returned with no login.
+   *
+   * VoiceLink may retire an account's earlier tokens when it logs in again. Re-logging in on
+   * every 401 regardless let two dials refused on the same old token log each other out: A
+   * logs in T2, then B's late 401 on T1 logs in T3 and retires T2 under A's retry (CR4). One
+   * login per refused token is the fewest that can recover. Single-flight as {@link getToken}.
    */
-  async refresh(): Promise<string> {
+  async refresh(staleToken: string): Promise<string> {
+    if (this.inFlight) return this.inFlight;
+    if (this.cached && this.cached.token !== staleToken) return this.cached.token;
     this.cached = null;
     return this.login();
   }

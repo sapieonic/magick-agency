@@ -143,6 +143,8 @@ export class MockVoicelinkCarrier {
   private readonly accounts = new Map<string, string>();
   /** username → the status its next logins are refused with, and how many remain. */
   private readonly loginRefusals = new Map<string, { status: number; remaining: number }>();
+  /** Whether a login retires the account's earlier tokens ({@link retireTokensOnLogin}). */
+  private retireOnLogin = false;
   private tokenSeq = 0;
   private reqSeq = 0;
   private queueSeq = 1000;
@@ -227,6 +229,15 @@ export class MockVoicelinkCarrier {
       return;
     }
     for (const [token, owner] of [...this.validTokens]) if (owner === account) this.validTokens.delete(token);
+  }
+
+  /**
+   * Whether a successful login retires every earlier token of its account (off by default).
+   * Whether the real VoiceLink does is not known (docs/carriers.md §6, CR4); this models the
+   * worst case, where two logins of one account log each other out.
+   */
+  retireTokensOnLogin(on: boolean): void {
+    this.retireOnLogin = on;
   }
 
   requestsTo(route: CarrierRoute): RecordedRequest[] {
@@ -398,6 +409,7 @@ export class MockVoicelinkCarrier {
       send(200, { status: true, message: 'Login successful', data: { token_type: 'Bearer' } });
       return;
     }
+    if (this.retireOnLogin) this.revokeTokens(username);
     const n = ++this.tokenSeq;
     const token = `${n}|mockSanctumToken${randomUUID().replace(/-/g, '')}`;
     this.validTokens.set(token, username);
