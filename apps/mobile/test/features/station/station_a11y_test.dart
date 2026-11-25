@@ -2,6 +2,7 @@ import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/session/local_preferences.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/station/station_copy.dart';
 
@@ -147,6 +148,19 @@ void main() {
           call: call(bridgedAt: t0),
         ),
       );
+      expect(h.haptics, ['HapticFeedbackType.heavyImpact', 'HapticFeedbackType.mediumImpact']);
+    });
+
+    testWidgets('Me → Vibration off: no haptic when a call arrives or connects; on again, read at the moment, they buzz', (tester) async {
+      final h = await pumpStation(tester, station());
+      await h.container.read(localPreferencesProvider.notifier).setHaptics(false);
+      await h.setView(station(phase: AgentPhase.reserved, call: call(countdown: 3)));
+      await h.setView(station(phase: AgentPhase.onCall, call: call(bridgedAt: t0)));
+      expect(h.haptics, isEmpty);
+      await h.setView(station());
+      await h.container.read(localPreferencesProvider.notifier).setHaptics(true);
+      await h.setView(station(phase: AgentPhase.reserved, call: call(countdown: 3)));
+      await h.setView(station(phase: AgentPhase.onCall, call: call(bridgedAt: t0)));
       expect(h.haptics, ['HapticFeedbackType.heavyImpact', 'HapticFeedbackType.mediumImpact']);
     });
 

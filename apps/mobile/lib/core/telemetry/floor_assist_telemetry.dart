@@ -36,8 +36,8 @@ enum HelpSurface {
 /// fire at most once per request (`raised_at`) on this phone, whatever reconnects, repeated frames
 /// or the order of a reply and its frames would otherwise send twice: a request reported raised is
 /// never reported raised again, and a request reported ended (cancelled, answered or expired) is
-/// never reported ended again. A `session_ended` or `cancelled`-by-nobody clear, and a frame about
-/// a request this phone did not hold, are for the controller never to report at all.
+/// never reported ended again. A `session_ended` (or unknown-reason) clear, and a frame about a
+/// request this phone did not hold, are for the controller never to report at all.
 final class FloorAssistTelemetry {
   /// How many requests are remembered per kind; far more than one session raises.
   static const remembered = 64;

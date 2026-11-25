@@ -120,13 +120,13 @@ void main() {
 
     test('a raise in flight: its request answered and ended before the reply lands, the reply opens nothing', () {
       var s = FloorAssistState.empty
-          .onAnswered(answeredFrame(raisedInstant, by: 'Anitha N'), raising: true)
-          .onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered), raising: true);
+          .onAnswered(answeredFrame(raisedInstant, by: 'Anitha N'), raisingSince: raisedInstant)
+          .onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered), raisingSince: raisedInstant);
       expect([s.help, s.notice?.text], [null, 'Anitha N is listening to your call.'], reason: 'told at once');
       s = s.onRaised(open);
       expect([s.help, s.notice?.text], [null, 'Anitha N is listening to your call.']);
       // Answered only: the reply opens it with the answer kept, and the help_cleared that follows names who.
-      final answeredFirst = FloorAssistState.empty.onAnswered(answeredFrame(raisedInstant, by: 'Ravi'), raising: true).onRaised(open);
+      final answeredFirst = FloorAssistState.empty.onAnswered(answeredFrame(raisedInstant, by: 'Ravi'), raisingSince: raisedInstant).onRaised(open);
       expect(answeredFirst.help, open);
       expect(answeredFirst.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered)).notice?.text,
           'Ravi is listening to your call.');
@@ -136,8 +136,22 @@ void main() {
       // and a repeat of its frames while raising again says nothing new.
       final cancelled = FloorAssistState.empty.onRaised(open).onCancelled();
       expect(cancelled.onRaised(open).help, isNull);
-      final repeat = cancelled.onCleared(clearedFrame(raisedInstant, HelpClearedReason.expired), raising: true);
+      final repeat = cancelled.onCleared(clearedFrame(raisedInstant, HelpClearedReason.expired), raisingSince: raisedInstant);
       expect([repeat.help, repeat.notice], [null, null]);
+    });
+
+    test('a raise in flight takes a frame only about a request stamped no earlier than a minute before the press', () {
+      final press = raisedInstant;
+      final older = press.subtract(FloorAssistState.inFlightSlack + const Duration(seconds: 1));
+      final within = press.subtract(FloorAssistState.inFlightSlack - const Duration(seconds: 1));
+      // An older request (the raise expired it) is not the raise's: no notice, nothing held.
+      final ignored = FloorAssistState.empty.onCleared(clearedFrame(older, HelpClearedReason.expired), raisingSince: press);
+      expect([ignored.notice, ignored.ended], [null, older], reason: 'only remembered as ended');
+      expect(FloorAssistState.empty.holds(older, raisingSince: press), isFalse);
+      expect(FloorAssistState.empty.onAnswered(answeredFrame(older, by: 'X'), raisingSince: press), same(FloorAssistState.empty));
+      // Within the slack (the clocks a little apart), it is.
+      expect(FloorAssistState.empty.holds(within, raisingSince: press), isTrue);
+      expect(FloorAssistState.empty.onCleared(clearedFrame(within, HelpClearedReason.expired), raisingSince: press).notice?.expired, isTrue);
     });
 
     test('raising again puts the last notice away; the cancel clears the request and says nothing', () {

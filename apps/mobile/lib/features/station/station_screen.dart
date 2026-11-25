@@ -5,6 +5,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/session/local_preferences.dart';
 import '../../core/softphone/softphone_view.dart';
 import '../../core/speech/read_aloud.dart';
 import '../../core/station/station_view.dart';
@@ -164,8 +165,10 @@ class _StationScreenState extends ConsumerState<StationScreen> {
 
   void _onPhase(AgentPhase? prev, AgentPhase? next) {
     if (next == prev || next == null) return;
-    // Feel the call arrive and connect without looking. The ring tone itself
-    // is the core's.
+    // Feel the call arrive and connect without looking, while Me → Vibration is on (read now: the
+    // switch's subtitle promises exactly these and a supervisor's message, LF39). The ring tone
+    // itself is the core's.
+    if (!ref.read(localPreferencesProvider).haptics) return;
     if (next == AgentPhase.reserved) unawaited(HapticFeedback.heavyImpact());
     if (next == AgentPhase.onCall) unawaited(HapticFeedback.mediumImpact());
   }

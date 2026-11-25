@@ -176,6 +176,11 @@ class StationController extends Notifier<StationView?>
   /// events from the press on, whatever the reply or a reconnect does to it on screen (LF39).
   DateTime? _cancelPressedFor;
 
+  /// When the agent pressed Need help last, on the server-aligned clock: a frame counts for the
+  /// raise in flight only about a request stamped no earlier than a minute before it
+  /// ([FloorAssistState.inFlightSlack]).
+  DateTime? _raisePressedAt;
+
   // The soft-phone call's local facts (the call itself is in the reducer).
   /// The ring is muted for [_ringCallId]; any other call rings.
   bool _ringMuted = false;
@@ -777,6 +782,8 @@ class StationController extends Notifier<StationView?>
     _helpError = null;
     _helpOnlyOnCall = false;
     _cancelPressedFor = null;
+    _raisePressedAt = null;
+    _lastMessageAt = null;
     _messageViews = const [];
     _messageViewsFrom = null;
   }
@@ -955,17 +962,17 @@ class StationController extends Notifier<StationView?>
         if (_s == null) break;
         _log.info('help answered', {'how': frame.howRaw});
         // While a raise is in flight, about the request it is opening too (its answer can be late).
-        final raising = _helpBusy == HelpBusy.raising;
-        if (_helpInScope(frame.raisedAt, raising: raising)) {
+        final since = _raisingSince;
+        if (_helpInScope(frame.raisedAt, raisingSince: since)) {
           _assistEvents.answered(frame.raisedAt, frame.how, now: _serverInstant(_now()));
         }
-        _setAssist(_assist.onAnswered(frame, raising: raising));
+        _setAssist(_assist.onAnswered(frame, raisingSince: since));
       case HelpClearedFrame():
         if (_s == null) break;
         _log.info('help cleared', {'reason': frame.reasonRaw});
-        final raising = _helpBusy == HelpBusy.raising;
-        if (_helpInScope(frame.raisedAt, raising: raising)) _helpEnded(frame);
-        _setAssist(_assist.onCleared(frame, raising: raising));
+        final since = _raisingSince;
+        if (_helpInScope(frame.raisedAt, raisingSince: since)) _helpEnded(frame);
+        _setAssist(_assist.onCleared(frame, raisingSince: since));
       case UnknownFrame(:final eventRaw, :final reason):
         // Expected after a server deploy; never logged whole (it can hold contact data).
         _log.debug('unknown frame', {'event': eventRaw ?? '', 'reason': reason});
@@ -1267,6 +1274,7 @@ class StationController extends Notifier<StationView?>
     final s = _s;
     if (s == null || _helpBusy != HelpBusy.none || _assist.help != null || _terminal) return;
     _helpBusy = HelpBusy.raising;
+    _raisePressedAt = _serverInstant(_now());
     _helpError = null;
     _assist = _assist.dismissNotice();
     final from = (surface: _helpSurface(s), onCall: _onCallNow);
@@ -1360,8 +1368,11 @@ class StationController extends Notifier<StationView?>
   /// "in scope"): the request on screen, the one a raise in flight ([raising]) is opening, or one the
   /// agent pressed Cancel for (from the press, [_cancelPressedFor]). A raise whose reply failed is no
   /// longer in flight; a request a `ready` said is over is held by none of these.
-  bool _helpInScope(DateTime raisedAt, {required bool raising}) =>
-      _assist.holds(raisedAt, raising: raising) || (_cancelPressedFor?.isAtSameMomentAs(raisedAt) ?? false);
+  bool _helpInScope(DateTime raisedAt, {required DateTime? raisingSince}) =>
+      _assist.holds(raisedAt, raisingSince: raisingSince) || (_cancelPressedFor?.isAtSameMomentAs(raisedAt) ?? false);
+
+  /// When the raise in flight was pressed, on the server-aligned clock; null with none in flight.
+  DateTime? get _raisingSince => _helpBusy == HelpBusy.raising ? _raisePressedAt : null;
 
   /// `help_cleared` [f] ends a request in scope ([_helpInScope]): its end event, at most one per
   /// request (an answer already sent on its `help_answered` is not sent again). The session ending,

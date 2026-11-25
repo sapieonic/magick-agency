@@ -336,6 +336,82 @@ void main() {
       });
     });
 
+    test('a request that lapsed before this run saw it, expired by the raise ahead of the new reply: nothing for it, no notice', () {
+      // A relaunch: the ready says none open (A lapsed, unswept); the raise expires A in its own
+      // statement and sends A's help_cleared {expired} before B's reply (floor-assist.ts, raise).
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('a1');
+        const lapsed = '2026-11-01T08:44:50.000Z';
+        app.routes['POST $helpPath'] = (_) async {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          return json(200, helpBody());
+        };
+        final pending = app.controller.raiseHelp();
+        async.flushMicrotasks();
+        app.frame(cleared(raised: lapsed, reason: 'expired'));
+        expect([app.view!.help.stage, app.view!.help.notice], [HelpStage.raising, null], reason: 'no expiry notice for A');
+        async.elapse(const Duration(seconds: 1));
+        app.run(pending);
+        expect([app.view!.help.stage, app.view!.help.raisedAt, app.view!.help.notice], [HelpStage.open, raisedInstant, null]);
+        expect(_help(sink), ['agency_help_raised']);
+        app.dispose();
+      });
+    });
+
+    test('wait_bucket is on the server-aligned clock, not this phone\'s', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        // The server runs 5 minutes behind this phone: a request raised as the agent pressed reads
+        // over 5 minutes old on the phone's clock, and moments old on the server's.
+        app.socket.serverPong(serverOffsetMs: -5 * 60 * 1000);
+        app.onCall('a1');
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody(raised: '2026-11-01T08:55:00.000Z'));
+        app.run(app.controller.raiseHelp());
+        app.frame(answered(raised: '2026-11-01T08:55:00.000Z'));
+        app.frame(cleared(raised: '2026-11-01T08:55:00.000Z'));
+        expect(sink.last('agency_help_answered'), {'how': 'listen', 'wait_bucket': 'under_60'}, reason: 'on help_answered');
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody(raised: '2026-11-01T08:55:01.000Z'));
+        app.routes['DELETE $helpPath'] = (_) => json(200, {'session_id': 'sess-1', 'help': null});
+        app.run(app.controller.raiseHelp());
+        app.run(app.controller.cancelHelp());
+        app.frame(cleared(raised: '2026-11-01T08:55:01.000Z', reason: 'cancelled'));
+        expect(sink.last('agency_help_cancelled'), {'wait_bucket': 'under_60'}, reason: 'on help_cleared');
+        app.dispose();
+      });
+    });
+
+    test('an inbound call offered (ringing) is not on a call; connected it is: raised and message_shown alike', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        final frames = realInboundCallFrames();
+        var i = 0;
+        void until(String step) {
+          while (true) {
+            final f = frames[i++];
+            app.frame(f.frame);
+            if (f.step == step) return;
+          }
+        }
+
+        until('offered');
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody());
+        app.run(app.controller.raiseHelp());
+        expect(sink.last('agency_help_raised'), {'surface': 'inbound', 'on_call': false});
+        app.frame(message('m-offered'));
+        expect(sink.last('agency_supervisor_message_shown'), {'on_call': false});
+        app.frame(cleared(reason: 'expired'));
+        until('connected');
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody(raised: '2026-11-01T09:01:00.000Z'));
+        app.run(app.controller.raiseHelp());
+        expect(sink.last('agency_help_raised'), {'surface': 'inbound', 'on_call': true});
+        app.frame(message('m-connected'));
+        expect(sink.last('agency_supervisor_message_shown'), {'on_call': true});
+        app.dispose();
+      });
+    });
+
     test('the cancel won: cancelled once, whether its help_cleared lands before or after the reply', () {
       for (final frameFirst in [false, true]) {
         fakeAsync((async) {

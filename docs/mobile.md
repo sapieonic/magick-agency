@@ -1400,7 +1400,11 @@ the flag is on). Break limits are not behind it.
     same instant, or the cancel's answer. A frame about another request never touches the one shown.
     A `ready` with no `help` clears the one shown, with nothing said (the frame that ended it was
     missed). The frames can beat the raise's own reply: while it is in flight, `help_answered` is
-    kept and `help_cleared` leaves its notice at once, and a reply naming a request already ended
+    kept and `help_cleared` leaves its notice at once, for a request stamped no earlier than a
+    minute before the press on the server-aligned clock (`FloorAssistState.inFlightSlack`): an
+    older request the raise itself expired (one never shown here, say after a relaunch, at least
+    15 minutes old), whose `help_cleared {expired}` the server sends ahead of the reply, is not the
+    raise's and says nothing. A reply naming a request already ended
     (its `help_cleared` or the cancel's answer) opens nothing, so a slow reply never re-opens it.
     A `help_cleared` with nothing shown and no raise in flight is remembered the same way, with
     nothing said, and a `ready.help` naming a request already ended is stale and opens nothing: the
@@ -1450,6 +1454,13 @@ the flag is on). Break limits are not behind it.
     up; messages arriving within 2 seconds of the one before are one burst and vibrate once
     (`StationController.messageBuzzQuiet`). The preference and the vibration are the core's seams
     `stationHapticsProvider` and `stationVibrateProvider` (`station_deps.dart`).
+  - **The Vibration switch** ("A buzz when a call arrives, when it connects and when your
+    supervisor sends a message"; on the station "Feel a call come and connect, and a message from
+    your supervisor.") gates exactly those three: the message's vibration above, and the station's
+    buzz when a call arrives (`reserved`) and when it connects (`on_call`, `station_screen.dart`
+    `_onPhase`), each reading the preference at that moment. The short buzz of a refused Save
+    (What happened? and an inbound call's outcome) is the form's feedback, not an alert, and does
+    not follow it.
 - **Telemetry** (LF39; `lib/core/telemetry/floor_assist_telemetry.dart`), the same names,
   properties and rules as the console's, closed values, counts and booleans only (never a
   message's text, a name, a number or who answered):
@@ -1459,11 +1470,12 @@ the flag is on). Break limits are not behind it.
     on screen when it lands (the frames may have ended it, or a `ready.help` shown it, first). A
     `ready.help` or a frame never sends it.
   - The end events count a `help_answered` or `help_cleared` only for a request **in scope** when
-    it lands: the one on screen, the one a raise in flight is opening (a raise whose reply failed
-    is no longer in flight), or one the agent pressed Cancel for (from the press, not the
-    cancel's reply). A request a reconnect's `ready` said is over is remembered as ended, so an
-    older request's `help_cleared {expired}`, which the server sends ahead of a new raise's reply,
-    is never taken for the new one (nor shown as its expiry).
+    it lands: the one on screen, the one a raise in flight is opening (stamped no earlier than 60 s
+    before the press, on the server-aligned clock; a raise whose reply failed is no longer in
+    flight), or one the agent pressed Cancel for (from the press, not the cancel's reply). A
+    request a reconnect's `ready` said is over is remembered as ended. Either way an older
+    request's `help_cleared {expired}`, which the server sends ahead of a new raise's reply, is
+    never taken for the new one (nor shown as its expiry).
   - `agency_help_answered` (`how`: `listen` or `message` from the frame; `wait_bucket`) on
     `help_answered`, a cancel that lost the race to the answer included; on `help_cleared
     {answered}` only when no `help_answered` was seen for it (`how: unknown`).

@@ -20,7 +20,9 @@ import 'station_view.dart' show HelpNoticeTone, HelpStage, HelpView, SupervisorM
 ///
 /// **A raise in flight.** The frames can beat the raise's answer: a supervisor may answer, and the
 /// request end, before the HTTP reply lands. While raising with nothing shown, `help_answered` is
-/// kept for its `raised_at` and `help_cleared` leaves its notice at once; the `raised_at` of the
+/// kept for its `raised_at` and `help_cleared` leaves its notice at once, for a request stamped no
+/// earlier than [inFlightSlack] before the press (an older request the raise expired is not the
+/// raise's: its `help_cleared {expired}` comes ahead of the reply); the `raised_at` of the
 /// last `help_cleared` (or the cancel's answer) is remembered, even with nothing shown, and a
 /// raise's answer or a `ready.help` naming it is ignored, so a late reply or a stale snapshot never
 /// re-opens a request that already ended (the server keeps no memory of what it cleared).
@@ -106,19 +108,32 @@ final class FloorAssistState {
 
   bool _shows(DateTime raisedAt) => help != null && help!.raisedAt.isAtSameMomentAs(raisedAt);
 
-  /// A frame about the request a raise in flight is opening: nothing shown yet, and not one that
-  /// already ended.
-  bool _inFlight(DateTime raisedAt, bool raising) => raising && help == null && !_same(ended, raisedAt);
+  /// How much earlier than the press a request a raise in flight is opening may be stamped: its
+  /// `raised_at` is the server's, the press is this phone's server-aligned clock, and the offset
+  /// estimate can be a little off. An older request (one never shown here, after a relaunch, that
+  /// the raise itself expired: at least [FloorAssistCopy.expiryMinutes] old) is well outside it.
+  static const inFlightSlack = Duration(seconds: 60);
+
+  /// A frame about the request a raise in flight is opening: a raise pressed at [raisingSince]
+  /// (the server-aligned clock; null for no raise in flight), nothing shown yet, not one that
+  /// already ended, and stamped no earlier than [inFlightSlack] before the press. An older request
+  /// the raise expired (its `help_cleared {expired}` comes ahead of the reply) is not the raise's.
+  bool _inFlight(DateTime raisedAt, DateTime? raisingSince) =>
+      raisingSince != null &&
+      help == null &&
+      !_same(ended, raisedAt) &&
+      !raisedAt.isBefore(raisingSince.subtract(inFlightSlack));
 
   /// The answer held for [raisedAt], if any.
   HelpAnswer? _answerOf(DateTime raisedAt) => _same(answerFor, raisedAt) ? answer : null;
 
   /// Whether a `help_answered` or `help_cleared` for [raisedAt] is about a request this station
   /// holds (part of what LF39's end events count): the one shown, the one a raise in flight
-  /// ([raising]) is opening, or the one the cancel's answer just ended. A frame about any other
-  /// request (an earlier one, or one seen to end already, a `ready` without it included) is not.
-  bool holds(DateTime raisedAt, {bool raising = false}) =>
-      _shows(raisedAt) || _inFlight(raisedAt, raising) || _cancelledFirst(raisedAt);
+  /// (pressed at [raisingSince]) is opening, or the one the cancel's answer just ended. A frame
+  /// about any other request (an earlier one, or one seen to end already, a `ready` without it
+  /// included) is not.
+  bool holds(DateTime raisedAt, {DateTime? raisingSince}) =>
+      _shows(raisedAt) || _inFlight(raisedAt, raisingSince) || _cancelledFirst(raisedAt);
 
   /// `ready`: the server's whole view of the request ([ReadyFrame.help]). None open clears the
   /// one shown, with no notice (the frame that ended it was missed; nothing says how), and
@@ -163,12 +178,13 @@ final class FloorAssistState {
     );
   }
 
-  /// `help_answered`: about the request shown, or ([raising]) the one a raise in flight is opening.
+  /// `help_answered`: about the request shown, or the one a raise in flight (pressed at
+  /// [raisingSince], the server-aligned clock) is opening.
   /// About the request the cancel's answer just ended ([_cancelledFirst]), the cancel lost the race:
   /// the notice says who answered at once.
-  FloorAssistState onAnswered(HelpAnsweredFrame f, {bool raising = false}) {
+  FloorAssistState onAnswered(HelpAnsweredFrame f, {DateTime? raisingSince}) {
     final answer = HelpAnswer(byName: f.byName, how: f.how);
-    if (_shows(f.raisedAt) || _inFlight(f.raisedAt, raising)) return _with(answer: answer, answerFor: f.raisedAt);
+    if (_shows(f.raisedAt) || _inFlight(f.raisedAt, raisingSince)) return _with(answer: answer, answerFor: f.raisedAt);
     if (_cancelledFirst(f.raisedAt)) return _with(answer: answer, answerFor: f.raisedAt, notice: HelpNotice.answered(answer));
     return this;
   }
@@ -177,13 +193,13 @@ final class FloorAssistState {
   /// its frames came behind the reply.
   bool _cancelledFirst(DateTime raisedAt) => help == null && _same(cancelled, raisedAt);
 
-  /// `help_cleared`: ends the request shown, or ([raising]) the one a raise in flight is opening,
+  /// `help_cleared`: ends the request shown, or the one a raise in flight ([raisingSince]) is opening,
   /// whose answer then opens nothing. With nothing shown and no raise in flight it is only
   /// remembered as [ended], with no notice, so a stale `ready.help` naming it opens nothing;
   /// except `answered` for the request the cancel's answer just ended ([_cancelledFirst]): a
   /// supervisor got there first, and the notice says so (with the answer held for it, if any).
-  FloorAssistState onCleared(HelpClearedFrame f, {bool raising = false}) {
-    if (!_shows(f.raisedAt) && !_inFlight(f.raisedAt, raising)) {
+  FloorAssistState onCleared(HelpClearedFrame f, {DateTime? raisingSince}) {
+    if (!_shows(f.raisedAt) && !_inFlight(f.raisedAt, raisingSince)) {
       if (_cancelledFirst(f.raisedAt)) {
         final told = f.reason == HelpClearedReason.answered ? HelpNotice.answered(_answerOf(f.raisedAt)) : this.notice;
         return _with(answer: null, answerFor: null, notice: told, cancelled: null);
