@@ -730,7 +730,8 @@ for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
   calls' Soft phone chip (the agent's own calls from `GET /proxy/agency/my-calls`, which carries
   no media; [`call-log.md`](call-log.md) §7); the contact's card on a
   tagged call, by the tagged campaign's `context_display` and its own `phone_display` (agent
-  station AS19 S3(b), S4).
+  station AS19 S3(b), S4); Need help and supervisors' messages on the Phone tab and the station's
+  soft phone alike, as on `/dialer/phone` (LF39 (a); [`mobile.md`](mobile.md) "Floor assist").
 - **Every call must belong to a campaign** in the app ([`call-log.md`](call-log.md) §5): with
   `campaign_required` the picker reads "Log to (required)", "Not logged to a campaign" is not
   offered, Call says "Choose a campaign to log this call to." until one is chosen, a redial of a
