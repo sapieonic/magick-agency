@@ -13,9 +13,11 @@ export interface PhoneNumberRecord {
   // admin and is never handed to an unverified signup.
   pool_eligible: boolean;
   /**
-   * The tenant carrier credential this number was synced from (BYOC, B18; 0019).
-   * NULL = a number on the service's own account, added by a super-admin. Written only
-   * by `syncForCredential`.
+   * The tenant carrier credential this number is pinned to (BYOC, B18; 0019): synced from it
+   * (`syncForCredential`), or added by hand onto it on a carrier whose numbers the carrier
+   * cannot list (`createPinned`, CR6). NULL = a number on the service's own account, added by
+   * a super-admin. Set only when the row is written by one of those two; never changed after,
+   * except a sync's takeover from a revoked registration of the same carrier account.
    */
   telephony_credential_id: string | null;
   /**
@@ -47,6 +49,12 @@ export interface CreatePhoneNumberInput {
   created_by?: string;
   pool_eligible?: boolean;
 }
+
+/** What `createPinned` answers (CR6): the number and the tenant it was assigned to, or why nothing was written. */
+export type CreatePinnedPhoneNumberResult =
+  | { ok: true; phoneNumber: PhoneNumberRecord; tenantId: string }
+  | { ok: false; reason: 'credential_not_found' | 'duplicate' }
+  | { ok: false; reason: 'credential_not_active'; status: string };
 
 export interface UpdatePhoneNumberInput {
   label?: string;
@@ -119,6 +127,8 @@ export interface PhoneNumberInboundLinkRecord {
   phone_number_id: string;
   phone_number: string;
   status: PhoneNumberRecord['status'];
+  /** The number's carrier (`telephony_providers.name`): whether it takes inbound at all is its catalogue entry's (CR11). */
+  provider_name: string;
   /** NULL: a number on the service's own account, which can never be linked. */
   telephony_credential_id: string | null;
   inbound_linked_at: Date | null;

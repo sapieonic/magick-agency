@@ -14,18 +14,28 @@ import {
 } from '../validators/phone-number.validator.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.js';
-import { carrierHasServiceAccount, carrierTakesTenantAccounts } from '../../telephony/carrier-catalog.js';
+import { carrierHasServiceAccount, carrierSupportsInbound, carrierTakesTenantAccounts } from '../../telephony/carrier-catalog.js';
+import { carrierNumberSource } from '../../telephony/carrier-number-source.js';
 import { getTelephonyInboundService } from '../../telephony/credentials/index.js';
 import type { InboundReleaseCause, TelephonyInboundService } from '../../telephony/credentials/inbound-service.js';
 
 const log = createChildLogger({ component: 'super-admin-phone-routes' });
 
 /*
- * The super-admin phone inventory and assignment routes. Numbers on the service's
- * own carrier account are added here by hand; numbers on a carrier dialled on a
- * tenant's own account (Plivo, B18) come only from that credential's number sync
- * (`POST /super-admin/telephony-credentials/:id/sync-numbers`), so creation refuses
- * that carrier and an assignment of a synced number to another tenant is refused.
+ * The super-admin phone inventory and assignment routes. Which numbers may be added here by
+ * hand follows the carrier's account modes (docs/carriers.md CR1, CR6), never its name:
+ *  - with no credential, a number on the service's own carrier account: only on a carrier that
+ *    has one;
+ *  - with `telephony_credential_id`, a number on a tenant's own carrier account, pinned to that
+ *    credential: only on a carrier that takes tenant accounts AND whose numbers the carrier
+ *    cannot list (`carrierNumberSource` is `manual`). The credential must be `active` and of that
+ *    carrier, and the number is assigned untagged to the credential's tenant in the same
+ *    transaction (`phoneNumberRepository.createPinned`), as a sync assigns the numbers it adds;
+ *  - a carrier whose numbers are synced (`sync`) refuses both: its numbers come only from that
+ *    credential's number sync (`POST /super-admin/telephony-credentials/:id/sync-numbers`).
+ * A number's pin never changes after it is created (CR7): `PUT` takes no credential or carrier,
+ * and an assignment of a pinned number to another tenant than its credential's is refused
+ * (`PhoneNumberOtherTenantError`, keyed on the credential), whichever way it was pinned.
  * Deliberately absent:
  *  - Telephony-provider writes: the migrations seed the provider rows (`voicelink`,
  *    and `plivo`, which 0019 activates). `provider_id` still references
@@ -43,6 +53,26 @@ const log = createChildLogger({ component: 'super-admin-phone-routes' });
  * (`TelephonyInboundService.reconcileNumber`, a no-op for a number that is not linked). Linking
  * and unlinking themselves are the credential routes' (`/phone-numbers/:id/inbound/*`).
  */
+
+/** Synced numbers are never added by hand, with or without a credential (CR6): today's copy. */
+const SYNCED_NUMBERS = 'Numbers on this carrier come from the tenant’s carrier account: sync them from its credential instead';
+
+/**
+ * Why a number may not be added by hand on `provider` with `credentialId` (CR1, CR6), or null
+ * when it may. A carrier the catalogue does not know allows neither mode.
+ */
+export function numberModeRefusal(provider: string, credentialId: string | null): string | null {
+  const source = carrierNumberSource(provider);
+  if (source === 'sync') return SYNCED_NUMBERS;
+  if (credentialId === null) {
+    if (carrierHasServiceAccount(provider)) return null;
+    return source === 'manual'
+      ? 'Numbers on this carrier are on a tenant’s own carrier account: choose the credential the number belongs to'
+      : 'This carrier is not one this service can dial on';
+  }
+  if (source === 'manual') return null;
+  return 'This carrier has no tenant carrier accounts: add the number without a credential';
+}
 
 /**
  * Strips `pool_eligible` from a phone row before it reaches the wire (contract
@@ -67,11 +97,10 @@ export async function superAdminPhoneRoutes(
 
   /**
    * GET /super-admin/telephony-providers
-   * List all telephony providers. Optional ?status=active filter. Each carries
-   * `takes_tenant_credentials`: whether it takes tenants' own accounts (its catalogue
-   * entry's account modes, CR1). Today such a carrier has no service account, so its numbers
-   * come from a credential's sync and cannot be added by hand (`POST /phone-numbers` below
-   * refuses them), and the console leaves it out of "Add number".
+   * List all telephony providers. Optional ?status=active filter. Each carries what its
+   * catalogue entry declares (contract `TelephonyProvider`): `service_account`,
+   * `tenant_accounts` (and its older name `takes_tenant_credentials`), `number_source` and
+   * `supports_inbound`, so "Add number" offers exactly what `POST /phone-numbers` accepts.
    */
   app.get('/telephony-providers', async (request: FastifyRequest, reply: FastifyReply) => {
     const query = request.query as Record<string, string>;
@@ -79,6 +108,10 @@ export async function superAdminPhoneRoutes(
     const providers = (await telephonyProviderRepository.findAll(status)).map((p) => ({
       ...p,
       takes_tenant_credentials: carrierTakesTenantAccounts(p.name),
+      service_account: carrierHasServiceAccount(p.name),
+      tenant_accounts: carrierTakesTenantAccounts(p.name),
+      number_source: carrierNumberSource(p.name),
+      supports_inbound: carrierSupportsInbound(p.name),
     }));
     return reply.send({ providers });
   });
@@ -101,16 +134,10 @@ export async function superAdminPhoneRoutes(
     if (provider.status === 'inactive') {
       return reply.code(400).send({ error: 'Bad Request', message: 'Telephony provider is not active' });
     }
-    // A number added here names no credential, so it is on the service's own account: a
-    // carrier without one gets its numbers from a credential's number sync, which pins each
-    // to the credential. A number added by hand there could serve no campaign and no call.
-    // (A carrier the catalogue does not know is let through, as before; its row cannot dial.)
-    if (carrierTakesTenantAccounts(provider.name) && !carrierHasServiceAccount(provider.name)) {
-      return reply.code(400).send({
-        error: 'Bad Request',
-        message: 'Numbers on this carrier come from the tenant’s carrier account: sync them from its credential instead',
-      });
-    }
+    // The account mode (CR1, CR6), from the catalogue, never the carrier's name.
+    const { telephony_credential_id: credentialId = null, ...fields } = input;
+    const modeRefusal = numberModeRefusal(provider.name, credentialId);
+    if (modeRefusal) return reply.code(400).send({ error: 'Bad Request', message: modeRefusal });
 
     // Check phone number uniqueness
     const existing = await phoneNumberRepository.findByPhoneNumber(input.phone_number);
@@ -118,13 +145,39 @@ export async function superAdminPhoneRoutes(
       return reply.code(409).send({ error: 'Conflict', message: `Phone number ${input.phone_number} already exists` });
     }
 
-    const phoneNumber = await phoneNumberRepository.create({
-      ...input,
-      created_by: request.superAdmin!.id,
-    });
+    let phoneNumber: PhoneNumberRecord;
+    let tenantId: string | null = null;
+    if (credentialId === null) {
+      phoneNumber = await phoneNumberRepository.create({ ...fields, created_by: request.superAdmin!.id });
+    } else {
+      // The credential is locked, judged and the number assigned to its tenant in one
+      // transaction (`createPinned`): a disable or revoke cannot land between the check and
+      // the write.
+      const created = await phoneNumberRepository.createPinned({ ...fields, created_by: request.superAdmin!.id }, credentialId);
+      if (!created.ok) {
+        switch (created.reason) {
+          case 'credential_not_found':
+            return reply.code(404).send({
+              error: 'Not Found', code: 'telephony_credential_not_found',
+              message: 'telephony_credential_id does not name a carrier account on this carrier.',
+            });
+          case 'credential_not_active':
+            return reply.code(409).send({
+              error: 'Conflict', code: 'telephony_credential_not_active',
+              message: `The carrier account is ${created.status}, so a number cannot be added to it. Enable it first.`,
+            });
+          case 'duplicate':
+            return reply.code(409).send({ error: 'Conflict', message: `Phone number ${input.phone_number} already exists` });
+        }
+      }
+      phoneNumber = created.phoneNumber;
+      tenantId = created.tenantId;
+      // A new number can be a caller ID for the credential's campaigns at once.
+      invalidateDialableCallerIds();
+    }
 
     log.info(
-      { phoneNumberId: phoneNumber.id, phone: input.phone_number },
+      { phoneNumberId: phoneNumber.id, phone: input.phone_number, telephonyCredentialId: credentialId },
       'Phone number created',
     );
     void recordSuperAdminAudit({
@@ -133,7 +186,10 @@ export async function superAdminPhoneRoutes(
       action: 'create_phone_number',
       resource_type: 'phone_number',
       resource_id: phoneNumber.id,
-      details: { phone_number: input.phone_number, provider_id: input.provider_id },
+      details: {
+        phone_number: input.phone_number, provider_id: input.provider_id, telephony_credential_id: credentialId,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
+      },
     });
 
     return reply.code(201).send({ phone_number: toWirePhoneNumber(phoneNumber) });
@@ -349,10 +405,10 @@ export async function superAdminPhoneRoutes(
     if (phoneNumber.status !== 'active') {
       return reply.code(400).send({ error: 'Bad Request', message: 'Phone number is not active' });
     }
-    // A number synced from a tenant's carrier account belongs to that tenant: assigning
-    // it to another would let that tenant's calls present a number billed to, and dialled
-    // on, someone else's account. The repository's insert enforces it
-    // (`PhoneNumberOtherTenantError`), for every caller.
+    // A number pinned to a tenant's carrier account (synced, or added by hand onto it, CR7)
+    // belongs to that tenant: assigning it to another would let that tenant's calls present a
+    // number billed to, and dialled on, someone else's account. The repository's insert
+    // enforces it on the credential (`PhoneNumberOtherTenantError`), for every caller.
     try {
       const assignment = await tenantPhoneAssignmentRepository.assign(
         tenant_id,
@@ -376,7 +432,7 @@ export async function superAdminPhoneRoutes(
       if (err instanceof PhoneNumberOtherTenantError) {
         return reply.code(409).send({
           error: 'Conflict',
-          message: 'This number is synced from another tenant’s carrier account and can only be assigned to that tenant',
+          message: 'This number is on another tenant’s own carrier account and can only be assigned to that tenant',
         });
       }
       // Handle unique constraint violation (already assigned)

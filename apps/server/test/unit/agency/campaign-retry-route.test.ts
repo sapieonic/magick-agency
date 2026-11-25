@@ -58,6 +58,11 @@ const { campaigns, announcementRepo, preflight } = vi.hoisted(() => ({
   announcementRepo: { findActiveByIdScoped: vi.fn() },
   preflight: { preflightAnalysisProfile: vi.fn().mockResolvedValue(null) },
 }));
+// CR9: a service-account campaign's caller IDs are read against the numbers pinned to a
+// tenant credential (`campaign-carrier.ts`); none are here.
+vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
+  phoneNumberRepository: { findPinnedAmong: vi.fn().mockResolvedValue([]) },
+}));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyCampaignRepository: campaigns,
 }));
@@ -80,7 +85,7 @@ const HEADERS = { 'x-mgkvc-tenant': 't1', 'x-mgkvc-account': 'a1' };
 
 const PARENT = {
   id: 'camp-parent', tenant_id: 't1', account_id: 'a1', name: 'Q3 Winback',
-  caller_ids: ['+14155550100'], telephony_provider: 'vobiz', sip_connection_id: null,
+  caller_ids: ['+14155550100'], telephony_provider: 'voicelink', telephony_credential_id: null, sip_connection_id: null,
   calling_window_start: '09:00:00', calling_window_end: '20:00:00',
   calling_days: [1, 2, 3, 4, 5], default_timezone: 'UTC',
   wrapup_seconds: 30, wrapup_auto_return: true, allow_wrapup_redial: true,
@@ -288,7 +293,7 @@ describe('config is inherited from the parent, then patched', () => {
     const [{ config }] = campaigns.retryFromCampaign.mock.calls[0]!;
     expect(config).toMatchObject({
       caller_ids: PARENT.caller_ids,
-      telephony_provider: 'vobiz',
+      telephony_provider: 'voicelink',
       calling_window_start: '09:00:00',
       calling_days: [1, 2, 3, 4, 5],
       wrapup_seconds: 30,

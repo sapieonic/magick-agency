@@ -96,10 +96,16 @@ describe('super-admin telephony credential routes', () => {
     expect(body.providers).toEqual([
       expect.objectContaining({
         provider: 'plivo',
+        // Plivo lists an account's numbers (Sync), and takes inbound calls (CR6, CR11).
+        number_source: 'sync',
+        supports_inbound: true,
         fields: [expect.objectContaining({ key: 'auth_id', secret: false }), expect.objectContaining({ key: 'auth_token', secret: true })],
       }),
       expect.objectContaining({
         provider: 'voicelink', display_name: 'VoiceLink',
+        // VoiceLink numbers are added by hand, and it takes no inbound calls (CR6, CR11).
+        number_source: 'manual',
+        supports_inbound: false,
         fields: [expect.objectContaining({ key: 'username', secret: false }), expect.objectContaining({ key: 'password', secret: true })],
       }),
     ]);
@@ -159,6 +165,7 @@ describe('super-admin telephony credential routes', () => {
     inbound_unconfigured: 503,
     phone_number_not_found: 404, phone_number_not_linkable: 409, phone_number_not_linked: 409,
     carrier_number_missing: 409, carrier_refused: 422, account_ref_reserved: 409,
+    inbound_not_supported: 409,
   };
 
   it('has an expected status for every code of the contract, and no other', () => {

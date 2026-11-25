@@ -49,6 +49,11 @@ const { campaigns, announcementRepo } = vi.hoisted(() => ({
   campaigns: { create: vi.fn(), update: vi.fn(), findById: vi.fn() },
   announcementRepo: { findActiveByIdScoped: vi.fn() },
 }));
+// CR9: a service-account campaign's caller IDs are read against the numbers pinned to a
+// tenant credential (`campaign-carrier.ts`); none are here.
+vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
+  phoneNumberRepository: { findPinnedAmong: vi.fn().mockResolvedValue([]) },
+}));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyCampaignRepository: campaigns,
 }));

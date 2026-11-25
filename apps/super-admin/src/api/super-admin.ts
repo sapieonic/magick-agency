@@ -26,6 +26,7 @@ import type {
   DeleteFlagOverrideBody,
   BulkFlagOverrideResult,
   PhoneNumber,
+  TelephonyProvider as ContractTelephonyProvider,
   TenantPhoneAssignment,
   PhoneNumberDetailResponse,
   CreatePhoneNumberBody,
@@ -389,23 +390,16 @@ export async function listAuditLog(
 
 // ── Telephony providers (read-only) ──────────────────────
 
+/** The capability fields of a provider row (contract `TelephonyProvider`): optional, an older server omits them. */
+type TelephonyProviderCapabilities = 'takes_tenant_credentials' | 'service_account' | 'tenant_accounts' | 'number_source' | 'supports_inbound';
+
 /**
  * A telephony provider (no `live_transfer_enabled`: no AI escalation). Only the read survives:
- * the baseline seeds one `voicelink` row and the add-number form picks its id.
+ * the migrations seed the rows and the add-number form picks its id. The contract's shape, its
+ * capability fields optional (an older server omits them).
  */
-export interface TelephonyProvider {
-  id: string;
-  name: string;
-  display_name: string;
-  status: 'active' | 'inactive';
-  /**
-   * Dialled on tenants' own carrier accounts: its numbers come from a credential's
-   * "Sync numbers" and cannot be added by hand. Optional: an older server omits it.
-   */
-  takes_tenant_credentials?: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type TelephonyProvider = Omit<ContractTelephonyProvider, TelephonyProviderCapabilities>
+  & Partial<Pick<ContractTelephonyProvider, TelephonyProviderCapabilities>>;
 
 export async function listTelephonyProviders(): Promise<TelephonyProvider[]> {
   const res = await saFetch<{ providers: TelephonyProvider[] }>(`${SA_BASE}/telephony-providers`);

@@ -7,12 +7,16 @@
  * (`telephony/carrier-catalog.ts`, CR1), never by its name:
  *
  *  - the carrier must be an active `telephony_providers` row;
- *  - a null credential is the service's own account: refused on a carrier without one;
- *  - a set credential needs a carrier that takes tenant accounts, and must be of THIS
- *    tenant on THAT carrier and `active` to be pinned;
- *  - on a tenant-account carrier every caller ID must be an active number synced from
- *    that credential and available to the campaign's account. A service-account
- *    campaign's caller IDs stay shape-checked only (`callerIdsIssue`).
+ *  - the account mode (CR1, CR8): a null credential is the service's own account, refused
+ *    on a carrier without one; a set credential needs a carrier that takes tenant
+ *    accounts, and must be of THIS tenant on THAT carrier and `active` to be pinned. A
+ *    carrier may offer both; moving between the two on one carrier is a change of carrier
+ *    account like any other (every caller ID judged);
+ *  - on a tenant account every caller ID must be an active number pinned to that
+ *    credential (synced, or added by hand, CR6) and available to the campaign's account;
+ *  - on the service's own account no caller ID may be a number pinned to ANY credential
+ *    (CR9): it would dial a tenant's own number on the service's account. Beyond that its
+ *    caller IDs are shape-checked only (`callerIdsIssue`).
  *
  * The composite foreign key on `agency_campaigns` already makes Postgres refuse a
  * credential of another tenant or carrier; this module turns those cases into answers
@@ -20,10 +24,11 @@
  *
  * Messages are British English and name no carrier brand (they can reach the console).
  */
+import { phoneNumberRepository } from '@magick-agency/db/repositories/phone-number.repository';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import { telephonyProviderRepository } from '../db/repositories/telephony-provider.repository.js';
-import { carrierHasServiceAccount, carrierTakesTenantAccounts } from '../telephony/carrier-catalog.js';
+import { carrierAccountModeAllowed, carrierHasServiceAccount, carrierTakesTenantAccounts } from '../telephony/carrier-catalog.js';
 import { UUID_RE } from '../utils/uuid.js';
 import { AGENCY_CAMPAIGN_COLUMN_DEFAULTS } from '@magick-agency/contracts/agency';
 
@@ -47,6 +52,28 @@ const notFound: CodedRefusal = {
   message: 'telephony_credential_id does not name a carrier account of this organisation on the chosen carrier.',
 };
 
+/** Up to five numbers, then how many more: what a caller-ID refusal names. */
+function listed(numbers: readonly string[]): string {
+  return `${numbers.slice(0, 5).join(', ')}${numbers.length > 5 ? ` and ${numbers.length - 5} more` : ''}`;
+}
+
+/**
+ * The account-mode refusal for a carrier and credential (CR1, CR8), or null when the carrier
+ * supports the mode. The detail names the field to change: the credential when the carrier
+ * supports the other mode, the carrier when it supports neither (one the catalogue does not
+ * know).
+ */
+function accountModeRefusal(provider: string, credentialId: string | null): CampaignCarrierRefusal | null {
+  if (carrierAccountModeAllowed(provider, credentialId)) return null;
+  if (credentialId === null && carrierTakesTenantAccounts(provider)) {
+    return { kind: 'validation', details: { telephony_credential_id: 'is required: this carrier dials on the organisation’s own carrier account' } };
+  }
+  if (credentialId !== null && carrierHasServiceAccount(provider)) {
+    return { kind: 'validation', details: { telephony_credential_id: 'must be null: this carrier dials on the service’s own account' } };
+  }
+  return { kind: 'validation', details: { telephony_provider: 'must name a carrier this service can dial on' } };
+}
+
 /**
  * Check the carrier a campaign write leaves it on.
  *
@@ -58,12 +85,15 @@ const notFound: CodedRefusal = {
  *  - the credential's existence, tenant and status, when the body names the provider or
  *    the credential (pinning is the moment that must see an active credential; a caller-ID
  *    edit on a campaign whose credential was later disabled is not refused for it);
- *  - the caller IDs against the credential's numbers, whenever any of the three changes.
- *    When the write leaves the campaign on the carrier account it is `stored` on, only
- *    the caller IDs it ADDS are judged: a number already in the pool that a sync or a
- *    super-admin has since retired may stay (the dial skips it, `usableCallerIds` and
- *    PL13), so a rename or a calling-hours fix is never refused over a number the
- *    supervisor can no longer see. `stored` is null on a create.
+ *  - the account mode, whenever any of the three changes;
+ *  - the caller IDs, whenever any of the three changes: on a credential against its
+ *    numbers, on the service's own account against the pinned numbers (CR9). When the
+ *    write leaves the campaign on the carrier account it is `stored` on (same carrier,
+ *    same credential or both null), only the caller IDs it ADDS are judged: a number
+ *    already in the pool that a sync or a super-admin has since retired may stay (the
+ *    dial skips it, `usableCallerIds` and PL13), so a rename or a calling-hours fix is
+ *    never refused over a number the supervisor can no longer see. `stored` is null on a
+ *    create.
  *
  * Returns null when the write may go ahead.
  */
@@ -76,9 +106,6 @@ export async function campaignCarrierRefusal(
   if (!changed.provider && !changed.credential && !changed.callerIds) return null;
   const provider = effective.telephony_provider;
   const credentialId = effective.telephony_credential_id ?? null;
-  // Only the caller IDs change, on a campaign that dials on the service's own account:
-  // they are shape-checked (`callerIdsIssue`) and there is nothing else to judge.
-  if (!changed.provider && !changed.credential && credentialId === null) return null;
 
   if (typeof provider !== 'string' || provider.trim() === '') {
     return { kind: 'validation', details: { telephony_provider: 'must name a carrier' } };
@@ -93,29 +120,19 @@ export async function campaignCarrierRefusal(
     }
   }
 
-  // The account mode (CR1). A null credential is the service's own account; its caller IDs
-  // stay shape-checked only (`callerIdsIssue`). A carrier the catalogue does not know takes
-  // no credential, as before.
-  if (credentialId === null) {
-    if (carrierTakesTenantAccounts(provider) && !carrierHasServiceAccount(provider)) {
-      return { kind: 'validation', details: { telephony_credential_id: 'is required: this carrier dials on the organisation’s own carrier account' } };
-    }
-    return null;
-  }
-  if (!carrierTakesTenantAccounts(provider)) {
-    return {
-      kind: 'validation',
-      details: { telephony_credential_id: 'must be null: this carrier dials on the service’s own account' },
-    };
-  }
-  if (changed.provider || changed.credential) {
+  // The account mode (CR1, CR8): a null credential needs the carrier's service account, a set
+  // one its tenant accounts. A carrier the catalogue does not know allows neither.
+  const modeRefusal = accountModeRefusal(provider, credentialId);
+  if (modeRefusal) return modeRefusal;
+  if (credentialId !== null && (changed.provider || changed.credential)) {
     const credential = await telephonyCredentialRepository.findById(credentialId);
     if (!credential || credential.tenant_id !== scope.tenantId || credential.provider !== provider) return notFound;
     if (credential.status !== 'active') return notActive(credential.status);
   }
 
   // Same carrier account as stored: the numbers already in the pool were judged when they
-  // were added and are filtered at the dial; only the new ones are judged now.
+  // were added and are filtered at the dial; only the new ones are judged now. Moving between
+  // the service's account and a credential on one carrier is NOT the same account (CR8).
   const sameAccount = stored !== null
     && stored.telephony_provider === provider
     && (stored.telephony_credential_id ?? null) === credentialId;
@@ -123,6 +140,20 @@ export async function campaignCarrierRefusal(
     ? effective.caller_ids.filter((id) => !stored.caller_ids.includes(id))
     : effective.caller_ids;
   if (judged.length === 0) return null;
+
+  // The service's own account (CR9): a number pinned to any credential is a tenant's own
+  // number, billed to and dialled on that tenant's carrier account, never the service's.
+  if (credentialId === null) {
+    const pinned = await phoneNumberRepository.findPinnedAmong(judged);
+    if (pinned.length === 0) return null;
+    return {
+      kind: 'validation',
+      details: {
+        caller_ids: `a campaign on the service’s own carrier account cannot use a number of an organisation’s own carrier account; not: ${listed(pinned)}`,
+      },
+    };
+  }
+
   const allowed = new Set(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
     scope.tenantId, scope.accountId, credentialId, judged,
   ));
@@ -131,7 +162,7 @@ export async function campaignCarrierRefusal(
     return {
       kind: 'validation',
       details: {
-        caller_ids: `every caller ID must be an active number on the chosen carrier account and available to this account; not: ${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? ` and ${foreign.length - 5} more` : ''}`,
+        caller_ids: `every caller ID must be an active number on the chosen carrier account and available to this account; not: ${listed(foreign)}`,
       },
     };
   }

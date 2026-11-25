@@ -188,6 +188,7 @@ describe('package surface', () => {
       'carrier_number_missing',
       'carrier_refused',
       'account_ref_reserved',
+      'inbound_not_supported',
     ]);
     expect(new Set(TELEPHONY_CREDENTIAL_ERROR_CODES).size).toBe(TELEPHONY_CREDENTIAL_ERROR_CODES.length);
   });

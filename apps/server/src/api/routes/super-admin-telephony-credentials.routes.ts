@@ -14,6 +14,8 @@ import type { ServiceResult, TelephonyCredentialService } from '../../telephony/
 import type { TelephonyInboundService } from '../../telephony/credentials/inbound-service.js';
 import { registerSuperAdminInboundRoutes } from './super-admin-telephony-credentials/inbound.js';
 import { credentialSpecs } from '../../telephony/credentials/credential-specs.js';
+import { carrierNumberSource } from '../../telephony/carrier-number-source.js';
+import { carrierSupportsInbound } from '../../telephony/carrier-catalog.js';
 import { safeIssues } from '../../telephony/credentials/safe-issues.js';
 import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.js';
 
@@ -64,6 +66,8 @@ const STATUS: Record<TelephonyCredentialErrorCode, number> = {
   carrier_number_missing: 409,
   carrier_refused: 422,
   account_ref_reserved: 409,
+  // The carrier takes no inbound calls here (CR11): nothing an operator can retry.
+  inbound_not_supported: 409,
 };
 
 const idParams = z.object({ id: z.string().uuid() });
@@ -127,10 +131,21 @@ export async function superAdminTelephonyCredentialRoutes(
 
   registerSuperAdminInboundRoutes(app, { inbound, sendFailure });
 
-  /** GET /super-admin/telephony-credential-providers — the carriers that accept tenant credentials, and their forms. */
+  /**
+   * GET /super-admin/telephony-credential-providers — the carriers that accept tenant credentials,
+   * their forms, and what the console may offer on their credentials: "Sync numbers" only where
+   * `number_source` is `sync`, the inbound controls only where `supports_inbound` (CR6, CR11).
+   */
   app.get('/telephony-credential-providers', async (_request, reply) => {
     const body: TelephonyCredentialProvidersResponse = {
-      providers: credentialSpecs().map((s) => ({ provider: s.provider, display_name: s.displayName, fields: s.fields })),
+      providers: credentialSpecs().map((s) => ({
+        provider: s.provider,
+        display_name: s.displayName,
+        fields: s.fields,
+        // A spec exists only for a carrier that takes tenant accounts, so this is never null.
+        number_source: carrierNumberSource(s.provider) ?? 'manual',
+        supports_inbound: carrierSupportsInbound(s.provider),
+      })),
       store_available: service().storeAvailable,
     };
     return reply.send(body);

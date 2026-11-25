@@ -61,6 +61,11 @@ const { campaigns, announcementRepo, callerIds } = vi.hoisted(() => ({
   announcementRepo: { findActiveByIdScoped: vi.fn() },
   callerIds: { mapForCampaign: vi.fn() },
 }));
+// CR9: a service-account campaign's caller IDs are read against the numbers pinned to a
+// tenant credential (`campaign-carrier.ts`); none are here.
+vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
+  phoneNumberRepository: { findPinnedAmong: vi.fn().mockResolvedValue([]) },
+}));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyCampaignRepository: campaigns,
   agencyAgentCallerIdRepository: callerIds,
@@ -92,7 +97,7 @@ const HEADERS = { 'x-mgkvc-tenant': 't1', 'x-mgkvc-account': 'a1' };
 /** Stored campaign. The window matters: PATCH validates the MERGED result. */
 const CAMPAIGN_ROW = {
   id: 'camp-1', tenant_id: 't1', account_id: 'a1', name: 'Q3 Renewals',
-  caller_ids: ['+14155550100'], abandon_announcement_id: null, status: 'draft',
+  caller_ids: ['+14155550100'], telephony_provider: 'voicelink', telephony_credential_id: null, abandon_announcement_id: null, status: 'draft',
   calling_window_start: '09:00:00', calling_window_end: '20:00:00',
   calling_days: [1, 2, 3, 4, 5], default_timezone: 'UTC',
 };

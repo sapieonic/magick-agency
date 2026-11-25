@@ -73,11 +73,23 @@ export interface TelephonyCredentialField {
   help?: string;
 }
 
+/**
+ * Where a tenant-account carrier's numbers come from (docs/carriers.md CR6): `sync`, its
+ * credential's "Sync numbers" reads them from the carrier account (the carrier lists them);
+ * `manual`, a super-admin adds each by hand, pinned to the credential
+ * (`POST /super-admin/phone-numbers` with `telephony_credential_id`).
+ */
+export type TelephonyNumberSource = 'sync' | 'manual';
+
 /** A carrier that accepts tenant credentials, and the fields its form needs. */
 export interface TelephonyCredentialProvider {
   provider: string;
   display_name: string;
   fields: TelephonyCredentialField[];
+  /** How its credentials' numbers reach the inventory: show "Sync numbers" only for `sync`. */
+  number_source: TelephonyNumberSource;
+  /** Whether its credentials take inbound calls: show the inbound controls only when true (CR11). */
+  supports_inbound: boolean;
 }
 
 export interface TelephonyCredentialProvidersResponse {
@@ -222,6 +234,9 @@ export interface TelephonyCredentialSyncNumbersResponse {
  *   released there); sync the credential's numbers.
  * - `carrier_refused` (422): the carrier answered the request with a refusal that is not
  *   about the credential (HTTP 400, 404 on an Application, ...); nothing was changed.
+ * - `inbound_not_supported` (409): the credential's (or the number's) carrier does not take
+ *   inbound calls here (`supports_inbound: false`, CR11); every inbound action is refused,
+ *   Link included, and nothing was changed.
  */
 export type TelephonyCredentialErrorCode =
   | 'credential_store_unavailable'
@@ -250,7 +265,8 @@ export type TelephonyCredentialErrorCode =
   | 'carrier_number_missing'
   | 'carrier_refused'
   /** The account ref is one this deployment reserves: the service's own account on that carrier (create, rotate). */
-  | 'account_ref_reserved';
+  | 'account_ref_reserved'
+  | 'inbound_not_supported';
 
 /** Runtime list of {@link TelephonyCredentialErrorCode}, in declaration order. */
 export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
@@ -280,6 +296,7 @@ export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
   'carrier_number_missing',
   'carrier_refused',
   'account_ref_reserved',
+  'inbound_not_supported',
 ] as const satisfies readonly TelephonyCredentialErrorCode[];
 
 const _allTelephonyCredentialErrorCodesListed: AllListed<
