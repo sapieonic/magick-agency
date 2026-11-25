@@ -26,8 +26,8 @@ runtime, voice engine, analysis), `docs/seams.md` (where files go, the seams), `
   `src/agency/listen/` (`docs/listening.md`, rulings LS1–LS22); its tap is the voice area's
   (`src/core/bridge/listen-tap.ts`, the seam member `openListenTap`).
 - **voice** (`src/core/`, `src/telephony/`): the WebRTC bridge (`src/core/webrtc-bridge-manager.ts`,
-  `src/core/bridge/`), carrier modules (VoiceLink; Plivo on tenants' own accounts, B18–B22) and
-  the credential store, concurrency guards, audio.
+  `src/core/bridge/`), carrier modules (VoiceLink on the service's account or a tenant's own; Plivo on tenants' own
+  accounts; B18–B22, `docs/carriers.md`) and the credential store, concurrency guards, audio.
 - **analysis**: post-call transcription and analysis worker, retention. Every AI request goes
   through the client factory in `src/ai/` (`openai_compatible`, `azure_openai`, `gemini`).
 
