@@ -64,14 +64,14 @@ import {
   RELAY_DWELL_SAMPLE_EVERY, trackCarrierDialRefusal, trackRelayDwell, trackWebsocketSendBackpressure,
 } from '@magick-agency/observability/metrics/voice';
 import {
-  CarrierDialNotSentError, carrierAuthRejectionReason, DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isCarrierDialAborted, isDialOutcomeUnknown,
+  CarrierDialNotSentError, carrierAuthRejectionReason, isCarrierDialAborted, isDialOutcomeUnknown,
 } from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
 } from '../utils/ws-backpressure.js';
 import { buildCarrierUrls, type CarrierUrls } from './bridge/carrier-urls.js';
 import {
-  carrierUnplacedRefusal, CREDENTIAL_UNAVAILABLE, isCredentialUnavailable, unplacedRefusalError, type UnplacedRefusal,
+  carrierInitFailureErrorCode, carrierUnplacedRefusal, CREDENTIAL_UNAVAILABLE, isCredentialUnavailable, unplacedRefusalError, type UnplacedRefusal,
 } from './bridge/dial-refusals.js';
 
 /**
@@ -956,13 +956,15 @@ export class WebRtcBridgeManager {
       // agent and the slots are released and the media token is cleared (a late carrier
       // connect is refused and closed, which hangs it up). Its own error code, and the
       // adapter's error as `cause`, let the caller defer the contact's redial
-      // (`carrier-errors.ts`).
+      // (`carrier-errors.ts`). So does a dial the carrier took the login for and then
+      // refused with 401 (`CARRIER_API_REFUSED`, `carrierInitFailureErrorCode`): a carrier
+      // refusal like any other here, told apart by the refusal breaker (its API streak).
       const outcomeUnknown = isDialOutcomeUnknown(err);
       log.error({ err, callId: record.id, outcomeUnknown }, 'WebRTC outbound initiation failed');
       await this.endCall(record.id, {
         status: 'failed',
         outcome: 'telephony_init_failed',
-        errorCode: outcomeUnknown ? DIAL_OUTCOME_UNKNOWN_ERROR_CODE : 'TELEPHONY_INIT_FAILED',
+        errorCode: carrierInitFailureErrorCode(err),
         errorMessage: err instanceof Error ? err.message : String(err),
         hangupProvider: false,
       });

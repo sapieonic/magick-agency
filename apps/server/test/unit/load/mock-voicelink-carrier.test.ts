@@ -155,6 +155,22 @@ describe(`mock VoiceLink carrier (seed ${LOAD_SEED})`, () => {
     expect((await loginAs('tenant-a', 'pass-a')).status).toBe(200);
   });
 
+  it('withdraws an account`s API access: its logins work, every add_lead it sends is 401, until it is given back', async () => {
+    carrier.reset();
+    carrier.addAccount('tenant-a', 'pass-a');
+    carrier.withdrawApiAccess('tenant-a', true);
+    const a = await login('tenant-a', 'pass-a');
+    expect(a).toBeTruthy();
+    expect((await addLead(a)).status).toBe(401);
+    // A fresh login is accepted and still refused at the API.
+    expect((await addLead(await login('tenant-a', 'pass-a'))).status).toBe(401);
+    // Another account is untouched.
+    expect((await addLead(await login())).status).toBe(200);
+    expect(carrier.calls.size).toBe(1);
+    carrier.withdrawApiAccess('tenant-a', false);
+    expect((await addLead(a)).status).toBe(200);
+  });
+
   it('applies faults in order, each for exactly its count, then answers normally', async () => {
     const token = await login();
     carrier.injectFault('add_lead', { kind: 'status', status: 503 }, 2);

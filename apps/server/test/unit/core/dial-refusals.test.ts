@@ -4,12 +4,18 @@ import { describe, it, expect } from 'vitest';
 import {
   CAPACITY_REFUSAL_CODES,
   CARRIER_ACCOUNT_PAUSES,
+  CARRIER_API_REFUSED_ERROR_CODE,
+  carrierInitFailureErrorCode,
+  carrierUnplacedRefusal,
   classifyDialRefusal,
   dialNotSentReason,
   isCredentialUnavailable,
 } from '../../../src/core/bridge/dial-refusals.js';
 import { WebRtcCallError, type WebRtcRejectReason } from '../../../src/core/bridge/bridge-types.js';
 import {
+  CarrierApiRefusedError,
+  CarrierRequestTimeoutError,
+  DIAL_OUTCOME_UNKNOWN_ERROR_CODE,
   CarrierDialNotSentError,
   CarrierDialOutcomeUnknownError,
   CarrierDialRefusedError,
@@ -63,6 +69,26 @@ describe('classifyDialRefusal', () => {
     expect(classifyDialRefusal(null)).toEqual({ kind: 'other' });
     // The code without the adapter's error behind it says nothing about why.
     expect(classifyDialRefusal(rejection('carrier_dial_not_sent'))).toEqual({ kind: 'other' });
+  });
+});
+
+describe('a dial refused after the carrier took the login (CR4: CarrierApiRefusedError)', () => {
+  const apiRefused = () => new CarrierApiRefusedError('voicelink', 401, 'VoiceLink /v1/add_lead error 401: {}');
+
+  it('is a carrier refusal with an `ended` (not unplaced: no credential mark, no carrier_auth pause), classified apart', () => {
+    expect(carrierUnplacedRefusal(apiRefused())).toBeNull();
+    expect(classifyDialRefusal(rejection('telephony_init_failed', apiRefused()))).toEqual({ kind: 'carrier_api_refused' });
+    // Read through the bridge's wrapping only: a bare adapter error is not a bridge rejection.
+    expect(classifyDialRefusal(apiRefused())).toEqual({ kind: 'other' });
+  });
+
+  it('ends the call with its own error code; unknown outcome and every other refusal keep theirs', () => {
+    expect(CARRIER_API_REFUSED_ERROR_CODE).toBe('CARRIER_API_REFUSED');
+    expect(carrierInitFailureErrorCode(apiRefused())).toBe('CARRIER_API_REFUSED');
+    expect(carrierInitFailureErrorCode(Object.assign(new Error('wrapped'), { cause: apiRefused() }))).toBe('CARRIER_API_REFUSED');
+    expect(carrierInitFailureErrorCode(new CarrierRequestTimeoutError('VoiceLink /v1/add_lead', 1, true))).toBe(DIAL_OUTCOME_UNKNOWN_ERROR_CODE);
+    expect(carrierInitFailureErrorCode(new CarrierDialRefusedError('voicelink', 403, 'x'))).toBe('TELEPHONY_INIT_FAILED');
+    expect(carrierInitFailureErrorCode(new Error('VoiceLink /v1/add_lead error 401'))).toBe('TELEPHONY_INIT_FAILED');
   });
 });
 

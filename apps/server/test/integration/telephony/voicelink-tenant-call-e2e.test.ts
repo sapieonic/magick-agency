@@ -22,7 +22,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  *      own login, each from its own DID; neither login ever carries the other's dial;
  *  (e) the service's own username is refused as a tenant credential (CR3);
  *  (f) the account ref is the username lower-cased, so the same login typed in another case is
- *      the same account (`duplicate_account`), and the login sends the username as typed.
+ *      the same account (`duplicate_account`), and the login sends the username as typed;
+ *  (g) an account that logs in but cannot dial (API access withdrawn: every `add_lead` 401, a
+ *      fresh login accepted each time, CR4): each dial ends `CARRIER_API_REFUSED`, nothing pauses
+ *      before the breaker's API threshold, then the campaign is paused `carrier_refusing_calls`,
+ *      audited with that cause; the credential stays `active`.
  */
 
 const { env } = vi.hoisted(() => {
@@ -45,6 +49,8 @@ const { env } = vi.hoisted(() => {
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
 import { auditLogger } from '../../../src/audit/audit-logger.js';
 import { campaignCredentialStartRefusal } from '../../../src/agency/campaign-carrier.js';
+import { CARRIER_API_REFUSAL_BREAKER_THRESHOLD } from '../../../src/agency/carrier-refusal-breaker.js';
+import { insertAgencyContact } from '../agency/agency-factories.js';
 import { signRecordingUrl } from '../../../src/utils/recording-url.js';
 import { resolveClientRecordingUrl } from '../../../src/utils/recording-url-resolver.js';
 import { bits, carrierScripts, isLoudPcm16, type LeadRequest } from '../../mocks/voicelink/index.js';
@@ -283,6 +289,56 @@ describe('a call on the tenant`s own VoiceLink login, through the real server', 
     const count = await getTestPool().query<{ n: string }>(`SELECT count(*)::text AS n FROM telephony_credentials WHERE provider = 'voicelink'`);
     expect(count.rows[0]!.n).toBe('1');
   }, 30_000);
+
+  it('(g) an account that logs in but whose every add_lead is 401 is paused `carrier_refusing_calls` after the API threshold, never `carrier_auth`; the credential stays active', async () => {
+    const r = rig!;
+    const audit = vi.spyOn(auditLogger, 'log');
+    r.carrier.withdrawApiAccess(TENANT_USER, true);
+    const { campaignId } = await voicelinkCampaign(r, { destination: '+919812350000' });
+    // More contacts than the threshold, so the campaign has a dial for every refusal it counts.
+    for (let i = 1; i <= CARRIER_API_REFUSAL_BREAKER_THRESHOLD + 2; i++) {
+      await insertAgencyContact(campaignId, {
+        tenant_id: TENANT, account_id: ACCOUNT, phone_e164: `+91981235${String(i).padStart(4, '0')}`, source_row_number: i + 1,
+      });
+    }
+    const refusedCalls = async () => Number((await getTestPool().query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM agency_calls WHERE telephony_credential_id = $1 AND error_code = 'CARRIER_API_REFUSED'`,
+      [r.credentialId])).rows[0]!.n);
+    const pauses = () => audit.mock.calls.filter(([e]) => e.eventType === 'agency_campaign.auto_paused');
+
+    stations.push(await joinAgent(r, campaignId));
+    // Every refusal before the threshold leaves the campaign running.
+    await waitFor('refusals short of the threshold', async () => (await refusedCalls()) >= CARRIER_API_REFUSAL_BREAKER_THRESHOLD - 1, 45_000,
+      async () => `${await refusedCalls()} refused, campaign ${JSON.stringify(await campaignRow(campaignId))}`);
+    const paused = await waitFor('campaign paused', async () => {
+      const row = await campaignRow(campaignId);
+      return row.status === 'paused' ? row : null;
+    }, 45_000, async () => `${await refusedCalls()} refused`);
+    expect(paused).toEqual({ status: 'paused', pause_reason: 'carrier_refusing_calls' });
+    expect(await refusedCalls()).toBeGreaterThanOrEqual(CARRIER_API_REFUSAL_BREAKER_THRESHOLD);
+    await vi.waitFor(() => expect(pauses()).toHaveLength(1));
+    expect(pauses()[0]![0]).toMatchObject({
+      actor: 'system:carrier-refusals',
+      eventData: expect.objectContaining({
+        campaign_id: campaignId, reason: 'carrier_refusing_calls', cause: 'carrier_api_refused', telephony_credential_id: r.credentialId,
+      }),
+    });
+
+    // Every login was accepted (the credential is good) and every add_lead was refused.
+    const logins = r.carrier.requestsTo('login');
+    expect(logins.length).toBeGreaterThan(0);
+    expect(logins.every((l) => l.account === TENANT_USER && l.status === 200)).toBe(true);
+    expect(r.carrier.requestsTo('add_lead').every((l) => l.status === 401)).toBe(true);
+    // No verdict on the credential: still active, no carrier_refused audit, start not refused.
+    expect(await r.credentials.get(r.credentialId)).toMatchObject({ status: 'active', last_error: null });
+    expect(audit.mock.calls.some(([e]) => e.eventType === 'telephony_credential.carrier_refused')).toBe(false);
+    expect(await campaignCredentialStartRefusal({ telephony_credential_id: r.credentialId })).toBeNull();
+    // What a supervisor is told of a refused call: vendor-free, no raw carrier text.
+    const { rows } = await getTestPool().query<{ error_message: string }>(
+      `SELECT error_message FROM agency_calls WHERE error_code = 'CARRIER_API_REFUSED' LIMIT 1`);
+    expect(rows[0]!.error_message).toMatch(/401/);
+    r.carrier.withdrawApiAccess(TENANT_USER, false);
+  }, 120_000);
 
   it('(e) the service`s own VoiceLink username is refused as a tenant credential, before any login', async () => {
     const r = rig!;

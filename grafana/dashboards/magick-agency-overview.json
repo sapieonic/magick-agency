@@ -3829,7 +3829,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Dials a carrier adapter gave up on after its own pre-send checks, by provider and kind (Plivo today). `auth_rejected`: the carrier refused the tenant's credential (401); every dial on it fails until a super-admin rotates or re-verifies it. `rate_limited`: the account's calls-per-second gate gave no slot in time, or the carrier answered 429; nothing was placed. `outcome_unknown`: a timeout, or a 2xx with no readable request id; the call may be placed, so the contact waits before its next dial. `refused`: any other non-2xx (403 is a destination outside the account's geo permissions). Empty is healthy.",
+      "description": "Dials a carrier adapter gave up on after its own pre-send checks, by provider and kind (Plivo, and VoiceLink tenant accounts for `api_refused`). `auth_rejected`: the carrier refused the tenant's credential (401); every dial on it fails until a super-admin rotates or re-verifies it. `rate_limited`: the account's calls-per-second gate gave no slot in time, or the carrier answered 429; nothing was placed. `outcome_unknown`: a timeout, or a 2xx with no readable request id; the call may be placed, so the contact waits before its next dial. `refused`: any other non-2xx (403 is a destination outside the account's geo permissions). `api_refused`: the carrier took a fresh login, then refused the dial request with 401 (a tenant account whose API access was withdrawn; rule agy-carrier-api-refused). Empty is healthy.",
       "fieldConfig": {
         "defaults": {
           "color": {

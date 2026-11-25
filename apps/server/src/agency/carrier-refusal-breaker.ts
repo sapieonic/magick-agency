@@ -44,27 +44,74 @@ const log = createChildLogger({ component: 'agency-carrier-refusal-breaker' });
  * counts the refusals of its own agents' dials into the shared key and cannot know of another
  * worker's, so every placed call clears it (one `DEL`, off the dial path): skipping it there
  * would let refusals on one worker survive calls placed on another.
+ *
+ * ── The API streak: an account that logs in but cannot dial (CR4) ────────────
+ *
+ * A tenant VoiceLink account's login is the only verdict on its credential, so an `add_lead`
+ * still 401 after a successful fresh re-login marks nothing and pauses nothing on its own
+ * (another process's login may have retired the token). An account whose API access was
+ * withdrawn fails EVERY dial that way, though, so the breaker keeps a second streak per
+ * campaign for it ({@link RefusalStreak} `api`, the bridge's `carrier_api_refused`), with a
+ * higher threshold ({@link CARRIER_API_REFUSAL_BREAKER_THRESHOLD}): a token race explains one
+ * or two in a row, never ten with no call placed between. It trips the same pause
+ * (`carrier_refusing_calls`, its audit row's `cause` naming the API streak).
+ *
+ * Two counters, not one weighted one: each refusal counts in exactly one streak
+ * ({@link refusalStreakOf}), so PL11 keeps its count and its threshold exactly, and neither kind
+ * is ever counted twice. A streak that mixes the two kinds trips when either count reaches its
+ * own threshold (a weighted sum would trip a mix sooner, but would change PL11's rule for every
+ * carrier for a case one carrier's accounts can hit). Both streaks share everything else: the
+ * TTL, the Redis fallback, and the clear: a placed call or a trip clears both (one `DEL` of
+ * both keys).
  */
 export const CARRIER_REFUSAL_BREAKER_THRESHOLD = 5;
+
+/**
+ * Dials in a row refused `carrier_api_refused` (the carrier took the login and refused the dial
+ * request with 401) with no call placed between, before the campaign is paused. Higher than
+ * {@link CARRIER_REFUSAL_BREAKER_THRESHOLD}: a single such refusal can be a token another
+ * process's login retired. A constant, not configurable, as PL11's is.
+ */
+export const CARRIER_API_REFUSAL_BREAKER_THRESHOLD = 10;
+
+/**
+ * Which streak a refusal counts in: `account` (PL11: a 4xx refusal, a dial not sent for the
+ * carrier's configuration) or `api` (the carrier refused the dial request after taking the
+ * login, CR4).
+ */
+export type RefusalStreak = 'account' | 'api';
+
+const STREAKS: readonly RefusalStreak[] = ['account', 'api'];
 
 /** How long a refusal streak is remembered with no further refusal. */
 export const CARRIER_REFUSAL_BREAKER_TTL_SECONDS = 15 * 60;
 
 /**
- * Whether a dial's rejection counts toward the breaker (see the module note), read off the
- * bridge's rejection by `classifyDialRefusal`.
+ * The streak a dial's rejection counts in (see the module note), or null when it counts in
+ * neither; read off the bridge's rejection by `classifyDialRefusal`. One streak at most, so no
+ * refusal is counted twice.
  */
-export function countsTowardBreaker(err: unknown): boolean {
+export function refusalStreakOf(err: unknown): RefusalStreak | null {
   const refusal = classifyDialRefusal(err);
+  if (refusal.kind === 'carrier_api_refused') return 'api';
   if (refusal.kind === 'carrier_refused') {
-    return !refusal.outcomeUnknown && refusal.httpStatus !== null && refusal.httpStatus >= 400 && refusal.httpStatus < 500;
+    return !refusal.outcomeUnknown && refusal.httpStatus !== null && refusal.httpStatus >= 400 && refusal.httpStatus < 500
+      ? 'account' : null;
   }
-  if (refusal.kind === 'not_sent') return refusal.reason === 'configuration';
-  return false;
+  if (refusal.kind === 'not_sent') return refusal.reason === 'configuration' ? 'account' : null;
+  return null;
+}
+
+/** Whether a dial's rejection counts toward PL11's streak (`account`, {@link refusalStreakOf}). */
+export function countsTowardBreaker(err: unknown): boolean {
+  return refusalStreakOf(err) === 'account';
 }
 
 export interface CarrierRefusalBreakerOptions {
+  /** PL11's threshold (the `account` streak). */
   threshold?: number;
+  /** The `api` streak's threshold. */
+  apiThreshold?: number;
   ttlSeconds?: number;
   now?: () => number;
   /**
@@ -77,7 +124,7 @@ export interface CarrierRefusalBreakerOptions {
 }
 
 export class CarrierRefusalBreaker {
-  /** campaignId → the in-process count, used while Redis errors. */
+  /** `streak:campaignId` → the in-process count, used while Redis errors. */
   private readonly local = new Map<string, { count: number; expiresAt: number }>();
   /** campaignId → refusals noted here (a counter only ever raised), for {@link clearedAt}. */
   private readonly refusalsNoted = new Map<string, number>();
@@ -94,19 +141,25 @@ export class CarrierRefusalBreaker {
     private readonly opts: CarrierRefusalBreakerOptions = {},
   ) {}
 
-  private get threshold(): number { return this.opts.threshold ?? CARRIER_REFUSAL_BREAKER_THRESHOLD; }
+  private threshold(streak: RefusalStreak): number {
+    return streak === 'api'
+      ? this.opts.apiThreshold ?? CARRIER_API_REFUSAL_BREAKER_THRESHOLD
+      : this.opts.threshold ?? CARRIER_REFUSAL_BREAKER_THRESHOLD;
+  }
   private get ttlSeconds(): number { return this.opts.ttlSeconds ?? CARRIER_REFUSAL_BREAKER_TTL_SECONDS; }
   private now(): number { return this.opts.now ? this.opts.now() : Date.now(); }
 
-  private key(campaignId: string): string {
-    return `${this.keyPrefix}agency:carrier-refusals:${campaignId}`;
+  /** PL11's key is unchanged (`agency:carrier-refusals:`), so a streak a running server left survives a deploy. */
+  private key(campaignId: string, streak: RefusalStreak): string {
+    return `${this.keyPrefix}agency:${streak === 'api' ? 'carrier-api-refusals' : 'carrier-refusals'}:${campaignId}`;
   }
 
   /**
-   * Count one refusal for the campaign. True when the streak has reached the threshold: the
-   * caller pauses the campaign (and the count is cleared here). Never throws.
+   * Count one refusal for the campaign in `streak` (PL11's `account` by default). True when
+   * that streak has reached its threshold: the caller pauses the campaign (and both streaks
+   * are cleared here). Never throws.
    */
-  async noteRefusal(campaignId: string): Promise<boolean> {
+  async noteRefusal(campaignId: string, streak: RefusalStreak = 'account'): Promise<boolean> {
     // Raised before anything is awaited, so a placed call's clear in flight is not taken as
     // having covered this refusal.
     const noted = (this.refusalsNoted.get(campaignId) ?? 0) + 1;
@@ -114,22 +167,22 @@ export class CarrierRefusalBreaker {
     let count: number;
     try {
       if (!this.redis) throw new Error('no Redis');
-      const key = this.key(campaignId);
+      const key = this.key(campaignId, streak);
       const result = await this.redis.multi().incr(key).expire(key, this.ttlSeconds).exec();
       const incr = result?.[0];
       if (!incr || incr[0] || typeof incr[1] !== 'number') throw incr?.[0] ?? new Error('INCR answered nothing');
       count = incr[1];
     } catch (err) {
-      if (this.redis) log.warn({ err, campaignId }, 'Carrier refusal count not written to Redis — counting in this process');
-      count = this.noteLocally(campaignId);
+      if (this.redis) log.warn({ err, campaignId, streak }, 'Carrier refusal count not written to Redis — counting in this process');
+      count = this.noteLocally(`${streak}:${campaignId}`);
     }
-    if (count < this.threshold) return false;
+    if (count < this.threshold(streak)) return false;
     await this.clearNoting(campaignId, noted);
     return true;
   }
 
   /**
-   * A call was placed on the campaign: the streak is broken. Never throws. As the sole
+   * A call was placed on the campaign: both streaks are broken. Never throws. As the sole
    * counter, nothing is sent while no refusal has been noted since the last clear.
    */
   async notePlaced(campaignId: string): Promise<void> {
@@ -143,20 +196,20 @@ export class CarrierRefusalBreaker {
     if (await this.clear(campaignId)) this.clearedAt.set(campaignId, noted);
   }
 
-  private noteLocally(campaignId: string): number {
+  private noteLocally(localKey: string): number {
     const now = this.now();
-    const current = this.local.get(campaignId);
+    const current = this.local.get(localKey);
     const count = current && current.expiresAt > now ? current.count + 1 : 1;
-    this.local.set(campaignId, { count, expiresAt: now + this.ttlSeconds * 1000 });
+    this.local.set(localKey, { count, expiresAt: now + this.ttlSeconds * 1000 });
     return count;
   }
 
-  /** True when the streak is cleared (nothing in Redis to clear, or the `DEL` answered). */
+  /** True when both streaks are cleared (nothing in Redis to clear, or the `DEL` answered). */
   private async clear(campaignId: string): Promise<boolean> {
-    this.local.delete(campaignId);
+    for (const streak of STREAKS) this.local.delete(`${streak}:${campaignId}`);
     if (!this.redis) return true;
     try {
-      await this.redis.del(this.key(campaignId));
+      await this.redis.del(...STREAKS.map((streak) => this.key(campaignId, streak)));
       return true;
     } catch (err) {
       log.warn({ err, campaignId }, 'Carrier refusal count not cleared in Redis — it lapses with its TTL');

@@ -21,6 +21,7 @@ const RAW: Array<[string, string]> = [
   ['CARRIER_DIAL_NOT_SENT', 'plivo dial not sent: PLIVO_WEBHOOK_BASE_URL is not set'],
   ['CARRIER_DIAL_INVALID_NUMBER', "plivo dial not sent: 'to' is not a phone number with its country code"],
   ['CARRIER_AUTH_REJECTED', 'plivo refused the credential (HTTP 401)'],
+  ['CARRIER_API_REFUSED', 'VoiceLink /v1/add_lead error 401: {"message":"Unauthenticated."}'],
   ['CARRIER_RATE_LIMITED', 'plivo refused the dial for its rate limit (HTTP 429)'],
   ['TELEPHONY_CREDENTIAL_UNAVAILABLE', 'Telephony credential cred-1 could not be resolved: disabled'],
   ['TELEPHONY_ERROR', 'Call Rejected'],

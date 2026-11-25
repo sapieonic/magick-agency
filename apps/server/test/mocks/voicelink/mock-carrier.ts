@@ -143,6 +143,8 @@ export class MockVoicelinkCarrier {
   private readonly accounts = new Map<string, string>();
   /** username → the status its next logins are refused with, and how many remain. */
   private readonly loginRefusals = new Map<string, { status: number; remaining: number }>();
+  /** Accounts whose logins succeed while every authenticated route answers 401 ({@link withdrawApiAccess}). */
+  private readonly apiWithdrawn = new Set<string>();
   /** Whether a login retires the account's earlier tokens ({@link retireTokensOnLogin}). */
   private retireOnLogin = false;
   private tokenSeq = 0;
@@ -173,6 +175,16 @@ export class MockVoicelinkCarrier {
   refuseLogins(username: string, status: number | null, times = Infinity): void {
     if (status === null) this.loginRefusals.delete(username);
     else this.loginRefusals.set(username, { status, remaining: times });
+  }
+
+  /**
+   * Withdraw `username`'s API access (`on`), or give it back: its logins still succeed and issue
+   * tokens, but every authenticated request (`add_lead`, `cdr`) made with one answers 401, fresh
+   * token or not. An account that logs in but cannot dial (docs/carriers.md CR4).
+   */
+  withdrawApiAccess(username: string, on: boolean): void {
+    if (on) this.apiWithdrawn.add(username);
+    else this.apiWithdrawn.delete(username);
   }
 
   /** The requests on `route` made as `account`. */
@@ -388,7 +400,8 @@ export class MockVoicelinkCarrier {
 
   private bearerOk(record: RecordedRequest): boolean {
     const m = /^Bearer (.+)$/.exec(record.authorization ?? '');
-    return Boolean(m && this.validTokens.has(m[1]!));
+    const owner = m ? this.validTokens.get(m[1]!) : undefined;
+    return owner !== undefined && !this.apiWithdrawn.has(owner);
   }
 
   private handleLogin(body: unknown, noToken: boolean, send: (s: number, p: unknown) => void): void {

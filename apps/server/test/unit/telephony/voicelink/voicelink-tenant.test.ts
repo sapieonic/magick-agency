@@ -4,7 +4,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * VoiceLink on a tenant's own account (docs/carriers.md CR2, CR4), against the mock carrier over
  * real sockets: the tenant factory builds its adapter from env plus the credential's login only;
  * a tenant adapter's refusals are typed for the dial path (a refused login is
- * `CarrierAuthRejectedError`, a 401 after a successful re-login an ordinary failed dial, a 4xx
+ * `CarrierAuthRejectedError`, a 401 after a successful re-login a `CarrierApiRefusedError` (no
+ * verdict on the credential; the breaker's API streak, `carrier_dial_refusals_total{kind="api_refused"}`), a 4xx
  * `CarrierDialRefusedError` the PL11 breaker counts), a late 401 on an old token reuses the
  * newer login, while a service adapter's errors are what they always were; the `dial` and
  * `call_control` adapters of one credential share one login, and a rotation brings a new one;
@@ -14,6 +15,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 vi.mock('@magick-agency/observability', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
   createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+}));
+const refusals = vi.hoisted(() => ({ track: vi.fn() }));
+vi.mock('@magick-agency/observability/metrics/voice', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@magick-agency/observability/metrics/voice')>()),
+  trackCarrierDialRefusal: refusals.track,
 }));
 
 import { randomUUID } from 'node:crypto';
@@ -35,6 +41,7 @@ import {
 import type { ResolvedCredential, ResolvePurpose } from '../../../../src/telephony/credentials/credential-service.js';
 import { Secret } from '../../../../src/telephony/credentials/secret.js';
 import {
+  CarrierApiRefusedError,
   CarrierAuthRejectedError,
   CarrierDialNotSentError,
   CarrierDialOutcomeUnknownError,
@@ -47,7 +54,7 @@ import {
 } from '../../../../src/telephony/carrier-errors.js';
 import { WebRtcCallError } from '../../../../src/core/bridge/bridge-types.js';
 import { carrierUnplacedRefusal, classifyDialRefusal } from '../../../../src/core/bridge/dial-refusals.js';
-import { countsTowardBreaker } from '../../../../src/agency/carrier-refusal-breaker.js';
+import { countsTowardBreaker, refusalStreakOf } from '../../../../src/agency/carrier-refusal-breaker.js';
 import { MockVoicelinkCarrier } from '../../../mocks/voicelink/index.js';
 
 const TENANT_USER = 'tenant-vl-user';
@@ -121,6 +128,7 @@ beforeEach(() => {
   resetVoicelinkTenantLoginsForTests();
 });
 afterEach(() => {
+  refusals.track.mockClear();
   carrier.reset();
   carrier.revokeTokens();
   carrier.refuseLogins(TENANT_USER, null);
@@ -187,26 +195,57 @@ describe('a tenant adapter`s refusals are typed for the dial path (CR4); a servi
     expect((err as Error).message).toBe('VoiceLink login failed: HTTP 500');
   });
 
-  it('an add_lead still 401 after a successful re-login is an ordinary failed dial on either account: no credential verdict, no breaker count', async () => {
+  it('an add_lead still 401 after a successful re-login: tenant → CarrierApiRefusedError (no credential verdict, the API streak, counted `api_refused`); service → a plain Error', async () => {
     carrier.injectFault('add_lead', { kind: 'status', status: 401 }, 2);
     const tenantErr = await dialError(tenantAdapter());
     // The re-login was accepted, so the credential is good: the only verdict on it is the login.
     expect(carrier.requestsTo('login').map((r) => r.status)).toEqual([200, 200]);
     expect(carrier.requestsTo('add_lead')).toHaveLength(2);
+    expect(tenantErr).toBeInstanceOf(CarrierApiRefusedError);
+    expect(tenantErr).toMatchObject({ provider: 'voicelink', httpStatus: 401, carrierApiRefused: true });
     expect(tenantErr).not.toBeInstanceOf(CarrierAuthRejectedError);
+    expect(tenantErr).not.toBeInstanceOf(CarrierDialRefusedError);
     expect(isCarrierAuthRejected(tenantErr)).toBe(false);
     expect((tenantErr as Error).message).toMatch(/^VoiceLink \/v1\/add_lead error 401/);
+    expect(JSON.stringify(tenantErr)).not.toContain(TENANT_PASSWORD.trim());
     // Not unplaced (no `carrier_auth` pause, the credential not marked `invalid`): the bridge
-    // ends it `telephony_init_failed` with no status, which the PL11 breaker does not count.
+    // ends it `telephony_init_failed`, classified `carrier_api_refused`, which PL11's streak does
+    // not count and the API streak does.
     expect(carrierUnplacedRefusal(tenantErr)).toBeNull();
-    expect(classifyDialRefusal(asBridgeRefusal(tenantErr))).toEqual({ kind: 'carrier_refused', outcomeUnknown: false, httpStatus: null });
+    expect(classifyDialRefusal(asBridgeRefusal(tenantErr))).toEqual({ kind: 'carrier_api_refused' });
     expect(countsTowardBreaker(asBridgeRefusal(tenantErr))).toBe(false);
+    expect(refusalStreakOf(asBridgeRefusal(tenantErr))).toBe('api');
+    expect(refusals.track.mock.calls).toEqual([['voicelink', 'api_refused']]);
 
     carrier.reset();
+    refusals.track.mockClear();
     carrier.injectFault('add_lead', { kind: 'status', status: 401 }, 2);
     const serviceErr = await dialError(serviceAdapter());
+    expect(serviceErr).not.toBeInstanceOf(CarrierApiRefusedError);
     expect(isCarrierAuthRejected(serviceErr)).toBe(false);
     expect((serviceErr as Error).message).toMatch(/^VoiceLink \/v1\/add_lead error 401/);
+    expect(refusalStreakOf(asBridgeRefusal(serviceErr))).toBeNull();
+    expect(refusals.track).not.toHaveBeenCalled();
+  });
+
+  it('an account whose login works but whose API access was withdrawn: every dial is CarrierApiRefusedError, each counted once', async () => {
+    carrier.withdrawApiAccess(TENANT_USER, true);
+    try {
+      const adapter = tenantAdapter();
+      for (let i = 0; i < 3; i++) expect(await dialError(adapter)).toBeInstanceOf(CarrierApiRefusedError);
+      // Each dial: add_lead 401 on the cached token, a fresh login (accepted), add_lead 401 again.
+      expect(carrier.requestsTo('login').every((r) => r.status === 200)).toBe(true);
+      expect(carrier.requestsTo('add_lead').map((r) => r.status)).toEqual([401, 401, 401, 401, 401, 401]);
+      expect(refusals.track.mock.calls).toEqual(Array.from({ length: 3 }, () => ['voicelink', 'api_refused']));
+    } finally {
+      carrier.withdrawApiAccess(TENANT_USER, false);
+    }
+  });
+
+  it('a 4xx other than 401 and 429 is not counted `api_refused` (the bridge classes it; PL11 counts it)', async () => {
+    carrier.injectFault('add_lead', { kind: 'status', status: 403 });
+    expect(await dialError(tenantAdapter())).toBeInstanceOf(CarrierDialRefusedError);
+    expect(refusals.track).not.toHaveBeenCalled();
   });
 
   it('two dials refused on one old token: the late one retries on the newer login, it does not log in again (CR4)', async () => {

@@ -1,4 +1,5 @@
 import { createChildLogger } from '@magick-agency/observability';
+import { trackCarrierDialRefusal } from '@magick-agency/observability/metrics/voice';
 import type {
   TelephonyProvider,
   OutboundCallRequest,
@@ -12,6 +13,7 @@ import type { VoicelinkConfig, VoicelinkAddLeadResponse, VoicelinkCdrResponse, V
 import { VoicelinkTokenManager, type VoicelinkAccountMode } from './voicelink-token-manager.js';
 import { parseVoicelinkWebhook } from './voicelink.webhook.js';
 import {
+  CarrierApiRefusedError,
   CarrierDialNotSentError,
   CarrierDialOutcomeUnknownError,
   CarrierDialRefusedError,
@@ -100,7 +102,8 @@ export class VoicelinkAdapter implements TelephonyProvider {
    * login from env, its errors exactly as they always were. `tenant`: a tenant's own login from
    * a credential (CR2), whose refusals are typed for the dial path (CR4): a refused login is
    * `CarrierAuthRejectedError` (the only verdict on the credential); an `add_lead` still
-   * 401 after a successful re-login is a plain failed dial (`refusal`); a 429 is
+   * 401 after a successful re-login is {@link CarrierApiRefusedError} (`refusal`: no verdict on
+   * the credential, counted by a breaker streak of its own); a 429 is
    * {@link CarrierRateLimitedError}; any other non-2xx is {@link CarrierDialRefusedError} with its
    * status, so the refusal breaker counts a 4xx (PL11) and never a 5xx.
    */
@@ -331,13 +334,21 @@ export class VoicelinkAdapter implements TelephonyProvider {
    * earlier tokens on a new login, two processes on one credential (media workers, each with
    * its own login) can retire each other's token between a login and its retry; condemning
    * the credential for that would mark a healthy one `invalid` and pause its campaigns. So it
-   * is a plain `Error`, exactly as on the service's account: an ordinary failed dial
-   * (`telephony_init_failed` with no status), which pauses nothing, marks nothing and which
-   * the refusal breaker does not count (PL11 counts only a refusal carrying a 4xx status).
+   * marks nothing and pauses nothing at once: a failed dial (`telephony_init_failed`) that PL11
+   * does not count. But an account whose login works while its API refuses every dial (API
+   * access withdrawn) fails every dial this way, so a tenant's is a {@link CarrierApiRefusedError}
+   * (the bridge's `CARRIER_API_REFUSED`), counted in `carrier_dial_refusals_total`
+   * (`api_refused`) and by the breaker's API streak, which pauses the campaign only after
+   * several in a row with no call placed between (`agency/carrier-refusal-breaker.ts`). On the
+   * service's account it is a plain `Error`, as always.
    */
   private refusal(path: string, status: number, detail: string): Error {
     const message = `VoiceLink ${path} error ${status}: ${detail}`;
-    if (this.accountMode !== 'tenant' || status === 401) return new Error(message);
+    if (this.accountMode !== 'tenant') return new Error(message);
+    if (status === 401) {
+      trackCarrierDialRefusal('voicelink', 'api_refused');
+      return new CarrierApiRefusedError('voicelink', status, `VoiceLink ${path} error ${status}: ${detail.slice(0, 300)}`);
+    }
     if (status === 429) return new CarrierRateLimitedError('voicelink', 'carrier', 0);
     return new CarrierDialRefusedError('voicelink', status, `VoiceLink ${path} error ${status}: ${detail.slice(0, 300)}`);
   }
