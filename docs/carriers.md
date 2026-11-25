@@ -138,6 +138,10 @@ against a catalogue double, so it does not wait for step 2's flag.
   a service-account campaign (the move's own check is under lock). Closing it means locking the
   numbers in the campaign write. It is the same gap as the older-campaigns question above.
 - **CR11:** is 409 the right status for `inbound_not_supported`?
+- **CR4, an account that logs in but cannot dial:** since the login is the only verdict on a tenant
+  credential, an account whose login works while every `add_lead` is refused 401 (API access
+  withdrawn) fails each dial quietly: no pause, no mark, nothing counted by PL11, warnings in the
+  log only. A metric with an alert, or a breaker with a higher threshold for this case?
 - **CR4:** does VoiceLink cancel an account's earlier token when it logs in again? The shared login
   is a precaution; the mock does not cancel, so it is not proven necessary.
 
