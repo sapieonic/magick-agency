@@ -1,6 +1,6 @@
 /**
- * An agent marks a customer Do not call from the station; the number is on the supervisor's Do
- * Not Call list.
+ * An agent marks a customer Do not call from the station (confirming it when asked); the number
+ * is on the supervisor's Do Not Call list.
  */
 import { test, expect, scoped, signIn } from '../src/fixtures/test.js';
 import { phoneWithPersona } from '../src/fixtures/console-api.js';
@@ -20,7 +20,8 @@ test('an agent files Do not call and the number lands on the Do Not Call list', 
   await station.expectOnCallWith('Esha Gupta');
   await station.endCall();
   await station.expectWrapUp();
-  await station.fileOutcome('Do not call', 'break');
+  // Do not call cannot be undone from the station: it asks first.
+  await station.fileOutcome('Do not call', 'break', { confirm: 'Yes, stop calls' });
 
   const sup = await newUserPage(world.supervisor);
   await expect(async () => {

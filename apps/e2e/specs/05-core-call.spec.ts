@@ -27,7 +27,8 @@ test('an answered call reaches the agent, carries audio both ways and is filed',
   // the agent's browser receives the customer's audio on the station socket.
   await expect.poll(async () => (await sim.calls(phone))[0]?.state).toBe('answered');
   await expect.poll(async () => (await sim.calls(phone))[0]?.nonSilentFramesFromServer ?? 0, { timeout: 20_000 }).toBeGreaterThan(10);
-  await expect.poll(() => station.audioFramesReceived, { timeout: 20_000 }).toBeGreaterThan(25);
+  // Frames with sound, not just frames: silence or garbage relayed to the browser fails here.
+  await expect.poll(() => station.audioFramesWithSound, { timeout: 20_000 }).toBeGreaterThan(25);
   // The add_lead named the campaign's caller ID and the contact's number.
   const lead = (await sim.carrierRequests()).find((r) => r.route === 'add_lead' && r.body?.['customer_number'] === phone);
   expect(lead?.body?.['did_number']).toBe(world.callerIds[0]!.replace('+', ''));

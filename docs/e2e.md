@@ -50,8 +50,10 @@ server 3031, console 5185, super-admin 5186, simulator 3041 (each movable with
   already has (`src/env.ts` sets the whole environment; the developer's `apps/server/.env` is
   never read) or, for the three hosts fixed in its code (Plivo's API, Mailjet, the recording
   host), by `src/server-preload.mjs`, which wraps `fetch` in the server process only. The preload
-  also refuses every request to a host that is not loopback, so a run can never reach a real
-  vendor.
+  also refuses every request to a host that is not loopback, on `fetch` and on `node:http` /
+  `node:https` (which the AWS SDK and `firebase-admin` use), so a missed setting fails loudly
+  instead of reaching a real vendor. A raw socket is not covered; nothing in the server opens one
+  to a vendor.
 - **The console is not modified.** It signs in with the Firebase JS SDK as in production;
   Playwright routes the SDK's two Google hosts to the fake (`fixtures/test.ts`). The server runs
   with `FIREBASE_AUTH_EMULATOR_HOST`, which puts `firebase-admin` in emulator mode: it accepts the
@@ -80,9 +82,11 @@ knows every outcome from the CSV it loads:
 
 `phoneWithPersona('01')` (fixtures) makes a unique number with that ending. A spec can also
 override one number (`sim.setPersona(number, 'busy', { ringMs })`) or hang up for the customer
-(`sim.hangup(number)`). The simulator records each call: its state, who ended it, and how many
-frames the agent's side sent and how many carried sound (Chromium's fake microphone beeps), so a
-spec checks that audio really flowed both ways.
+(`sim.hangup(number)`). After every test, every customer still on a call hangs up, so no call
+outlives the test that placed it. The simulator records each call: its state, who ended it, and
+how many frames the agent's side sent and how many carried sound (Chromium's fake microphone
+beeps); `Station` counts the frames with sound the agent's browser received from the customer.
+So a spec checks that audio really flowed both ways.
 
 The control API is `http://127.0.0.1:3041/_sim/*` (`src/sim/index.ts`); specs use it through
 `src/fixtures/sim-client.ts`.
@@ -101,6 +105,15 @@ the UI instead.
 Specs are independent and run one at a time (`workers: 1`): one server, one station per agent and
 wall-clock dialler timers. Any spec runs alone.
 
+`/super-admin/login` allows 5 sign-ins a minute per IP, and every request of a run comes from
+127.0.0.1, so `src/run.ts` signs in once and hands the token to Playwright (and writes it in
+`.run/stack.json` for specs run against `pnpm e2e:stack`); the seed signs in only when neither is
+there.
+
+A run holds a Postgres advisory lock on its database's name until it ends, so a second run on the
+same database refuses to start rather than drop it under the first. It refuses to flush Redis
+db 15 while another client is on it; the integration runs stop at db 14 (`tooling/test-env.ts`).
+
 ## 4. What the golden set covers
 
 | Spec | Checks |
@@ -109,15 +122,15 @@ wall-clock dialler timers. Any spec runs alone.
 | `02-tenant-onboarding` | the super-admin adds a tenant in their console; its owner receives the invitation, sets a password on the join page and lands in the organisation |
 | `03-invite-agent` | a supervisor invites an agent from Team; the agent joins from the mail; Team shows them joined |
 | `04-new-campaign-wizard` | New campaign's four steps in the UI (CSV through the simulated S3), Start, the contacts listed, and the staffed agent's first call |
-| `05-core-call` | dial, answer, the call put through with the customer's card, audio both ways, the caller ID and number on the carrier request, the agent hangs up and files an outcome, the Call log row |
+| `05-core-call` | dial, answer, the call put through with the customer's card, audio with sound both ways, the caller ID and number on the carrier request, the agent hangs up and files an outcome, the Call log row |
 | `06-customer-hangs-up` | the customer hangs up first (persona and on cue): the station goes to wrap-up by itself |
-| `07-unanswered-calls` | busy, no answer and failed calls never reach the agent and are logged with what happened |
+| `07-unanswered-calls` | busy, no answer and failed calls are logged with what happened; the station stays waiting throughout |
 | `08-pause-resume` | a paused campaign dials nothing with an agent waiting; Resume dials |
-| `09-do-not-call` | an agent files Do not call (with its confirmation); the number is on the Do Not Call list |
+| `09-do-not-call` | an agent files Do not call, and its confirmation is asked and answered; the number is on the Do Not Call list |
 | `10-soft-phone` | a manual call from the soft phone, answered, ended, filed and in My calls |
-| `11-customer-history` | the called number in the agent's and the supervisor's customer history, with campaign and outcome |
+| `11-customer-history` | the called number in the agent's customer history and, from the top-bar search, the supervisor's, with campaign and outcome |
 | `12-access` | an agent is kept to their screens (UI and API); a supervisor cannot open another organisation (UI and API) |
-| `13-live-floor` | the supervisor's Live floor follows the agent: on a call, choosing an outcome, on break |
+| `13-live-floor` | the supervisor's Live floor follows the agent: ready while the customer rings, on a call, choosing an outcome, on break |
 | `14-two-agents` | two agents get different customers at the same time, each with their own audio |
 
 **Not covered yet** (the simulator has the pieces for some): inbound calls and Plivo (the preload

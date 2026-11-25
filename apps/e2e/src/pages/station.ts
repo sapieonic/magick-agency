@@ -3,17 +3,22 @@
  * what happened.
  */
 import { expect, type Page } from '@playwright/test';
+import { hasSound } from '../sim/audio.js';
 
 export class Station {
-  /** Binary frames (call audio) the station socket delivered to this browser. */
+  /** Binary frames (call audio, A-law) the station socket delivered to this browser. */
   audioFramesReceived = 0;
+  /** Of those, the frames that carried sound (the simulated customer's tone). */
+  audioFramesWithSound = 0;
 
   /** Create it before the station opens (before signing in) so its socket is watched. */
   constructor(readonly page: Page) {
     page.on('websocket', (ws) => {
       if (!ws.url().includes('/proxy/agency/station/')) return;
       ws.on('framereceived', (f) => {
-        if (typeof f.payload !== 'string') this.audioFramesReceived += 1;
+        if (typeof f.payload === 'string') return;
+        this.audioFramesReceived += 1;
+        if (hasSound(f.payload)) this.audioFramesWithSound += 1;
       });
     });
   }
@@ -61,12 +66,19 @@ export class Station {
     await expect(this.page.getByText('What happened?')).toBeVisible({ timeout });
   }
 
-  /** Pick an outcome by its label and save, then either take the next call or go on a break. */
-  async fileOutcome(label: string, then: 'next' | 'break' = 'next'): Promise<void> {
+  /**
+   * Pick an outcome by its label and save, then either take the next call or go on a break.
+   * `confirm` is the button of the question an outcome that cannot be undone asks first (Do not
+   * call: "Yes, stop calls"): the question must appear, and it is answered yes.
+   */
+  async fileOutcome(label: string, then: 'next' | 'break' = 'next', opts: { confirm?: string } = {}): Promise<void> {
     await this.page.getByRole('button', { name: label, exact: true }).click();
-    // Outcomes that cannot be undone (Do not call) ask first.
-    const confirm = this.page.getByRole('dialog').getByRole('button', { name: /^Yes/ });
-    if (await confirm.isVisible({ timeout: 1_500 }).catch(() => false)) await confirm.click();
+    if (opts.confirm) {
+      const yes = this.page.getByRole('dialog').getByRole('button', { name: opts.confirm, exact: true });
+      await expect(yes).toBeVisible();
+      await yes.click();
+      await expect(yes).toBeHidden();
+    }
     if (then === 'next') {
       await this.page.getByRole('button', { name: /^Save & next call/ }).click();
     } else {

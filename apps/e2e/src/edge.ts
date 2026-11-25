@@ -40,7 +40,17 @@ export interface EdgeSite {
 }
 
 function serveStatic(root: string, pathname: string, res: http.ServerResponse): void {
-  const safe = normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '');
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    // A malformed escape (`/%E0%A4%A`): answered, never thrown out of the request listener, which
+    // would take the whole orchestrator (simulator included) down with it.
+    res.writeHead(400, { 'content-type': 'text/plain' });
+    res.end('edge: bad path');
+    return;
+  }
+  const safe = normalize(decoded).replace(/^(\.\.[/\\])+/, '');
   let file = join(root, safe);
   if (!file.startsWith(root) || !existsSync(file) || statSync(file).isDirectory()) file = join(root, 'index.html');
   res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });

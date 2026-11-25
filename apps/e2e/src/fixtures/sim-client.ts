@@ -22,12 +22,21 @@ export const sim = {
   /** Register a console sign-in (email + password) with the fake Firebase. */
   registerUser: (email: string, password: string, displayName?: string) =>
     call<{ localId: string }>('POST', '/_sim/firebase/users', { email, password, displayName }),
-  /** An ID token for `email`, for API calls made as that console user. */
-  idToken: async (email: string, password?: string) => (await call<{ idToken: string }>('POST', '/_sim/firebase/token', { email, password })).idToken,
+  /**
+   * An ID token for `email`, for API calls made as that console user. Without `password` the
+   * user must be registered already (their password is not touched).
+   */
+  idToken: async (email: string, password?: string) => {
+    const { idToken, error } = await call<{ idToken?: string; error?: string }>('POST', '/_sim/firebase/token', { email, password });
+    if (!idToken) throw new Error(`sim: no ID token for ${email}: ${error ?? 'unknown'}`);
+    return idToken;
+  },
   calls: async (number?: string) =>
     (await call<{ calls: SimCall[] }>('GET', `/_sim/calls${number ? `?number=${encodeURIComponent(number)}` : ''}`)).calls,
   /** The customer hangs up the live call to `number`. */
   hangup: async (number: string) => (await call<{ ok: boolean }>('POST', `/_sim/calls/${encodeURIComponent(number)}/hangup`)).ok,
+  /** Every customer still on a call hangs up (the suite does this after each test). */
+  hangupAll: async () => (await call<{ hungUp: number }>('POST', '/_sim/calls/hangup-all')).hungUp,
   setPersona: (number: string, persona: PersonaName, opts: { ringMs?: number; talkMs?: number } = {}) =>
     call<{ ok: true }>('POST', '/_sim/personas', { number, persona, ...opts }),
   clearPersonas: () => call<{ ok: true }>('DELETE', '/_sim/personas'),

@@ -18,10 +18,15 @@ test('two agents each get their own call at the same time', async ({ world, supe
   await Promise.all(stations.map((s) => s.startWork()));
   for (const s of stations) await expect(s.page.getByText('On call', { exact: true })).toBeVisible({ timeout: 60_000 });
 
-  // Each station shows a different customer.
-  const names = await Promise.all(stations.map(async (s) =>
-    (await s.page.getByText('Hari Prasad').first().isVisible()) ? 'Hari Prasad' : 'Indu Verma'));
-  expect(new Set(names).size).toBe(2);
+  // Each station shows exactly one of the two customers, and not the same one.
+  const customers = ['Hari Prasad', 'Indu Verma'];
+  const shown = await Promise.all(stations.map(async (s) => {
+    const visible: string[] = [];
+    for (const name of customers) if (await s.page.getByText(name).first().isVisible()) visible.push(name);
+    return visible;
+  }));
+  expect(shown.map((v) => v.length)).toEqual([1, 1]);
+  expect(shown[0]![0]).not.toBe(shown[1]![0]);
 
   // Both calls are live at the carrier with the agents' audio on each.
   for (const phone of phones) {

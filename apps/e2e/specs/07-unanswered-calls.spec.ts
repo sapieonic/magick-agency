@@ -1,6 +1,7 @@
 /**
  * Calls the customer never answers never reach an agent: busy, no answer and a carrier failure
- * are each filed with what happened, and the agent stays waiting.
+ * are each filed with what happened, and the agent's station stays waiting the whole time
+ * (sampled while the calls ring, not only once they are over).
  */
 import { test, expect, signIn } from '../src/fixtures/test.js';
 import { phoneWithPersona } from '../src/fixtures/console-api.js';
@@ -25,12 +26,22 @@ test('busy, no answer and failed calls are logged and never reach the agent', as
   await signIn(page, world.agents[0]);
   await new Station(page).startWork();
 
-  for (const [phone, persona] of [[busy, 'busy'], [noAnswer, 'no_answer'], [failed, 'failed']] as const) {
-    await expect.poll(async () => (await sim.calls(phone))[0]?.state, { timeout: 60_000 }).toBe('ended');
-    expect((await sim.calls(phone))[0]?.persona).toBe(persona);
+  const onCall = page.getByText('On call', { exact: true });
+  const waiting = page.getByRole('button', { name: /^Start work|^Start calls again/ });
+  const deadline = Date.now() + 90_000;
+  let samples = 0;
+  for (;;) {
+    // Every sample: no call put through, and the agent still at work (not knocked back to the
+    // start screen).
+    expect(await onCall.isVisible(), 'a call the customer never answered reached the agent').toBe(false);
+    expect(await waiting.isVisible(), 'the agent left work').toBe(false);
+    samples += 1;
+    const states = await Promise.all([busy, noAnswer, failed].map(async (p) => (await sim.calls(p))[0]?.state));
+    if (states.every((s) => s === 'ended')) break;
+    expect(Date.now(), `calls still not over: ${states.join(', ')}`).toBeLessThan(deadline);
+    await page.waitForTimeout(250);
   }
-  // None of them was put through.
-  await expect(page.getByText('On call', { exact: true })).toBeHidden();
+  expect(samples).toBeGreaterThan(3);
 
   const log = new CampaignPages(await newUserPage(world.supervisor), world, campaign.id);
   await log.expectCallLogRow(busy, 'Busy');

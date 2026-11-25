@@ -13,7 +13,7 @@
  * persona's own talk time runs out. Then the terminal webhooks carry the real talk time.
  */
 import { MockVoicelinkCarrier, CarrierCall, type LeadRequest } from '../../../server/test/mocks/voicelink/index.js';
-import { decodeAlaw } from '../../../server/src/utils/audio.js';
+import { hasSound } from './audio.js';
 import { RECORDING_HOST } from '../env.js';
 
 export type PersonaName = 'answer' | 'busy' | 'no_answer' | 'failed' | 'answer_then_hangup' | 'silent';
@@ -74,14 +74,6 @@ export function personaFor(number: string, overrides: Map<string, Persona>): Per
   return { name: PERSONA_BY_SUFFIX[key.slice(-2)] ?? 'answer' };
 }
 
-/** A frame "has sound" above a low floor (the fake microphone beeps; the comfort noise floor is near 0). */
-function isNonSilent(alaw: Buffer): boolean {
-  const pcm = decodeAlaw(alaw);
-  let sum = 0;
-  for (const v of pcm) sum += v * v;
-  return pcm.length > 0 && Math.sqrt(sum / pcm.length) > 200;
-}
-
 export class VoicelinkSim {
   readonly carrier: MockVoicelinkCarrier;
   readonly overrides = new Map<string, Persona>();
@@ -126,6 +118,19 @@ export class VoicelinkSim {
   callsTo(number: string): SimCall[] {
     const key = normaliseNumber(number);
     return this.calls.filter((c) => c.number === key);
+  }
+
+  /**
+   * Every customer still on a call hangs up, and this waits (up to `timeoutMs`) until each call
+   * has sent its terminal webhooks. Run after every test, so no call outlives the test that
+   * placed it. The number of calls that were live.
+   */
+  async hangupAll(timeoutMs = 10_000): Promise<number> {
+    const n = this.live.size;
+    for (const l of this.live.values()) l.hangup();
+    const deadline = Date.now() + timeoutMs;
+    while (this.live.size > 0 && Date.now() < deadline) await sleep(100);
+    return n;
   }
 
   /** The customer hangs up the newest live call to `number`. False when there is none. */
@@ -205,18 +210,23 @@ export class VoicelinkSim {
     const loud = persona.name !== 'silent';
     // Stream in 1 s chunks of 20 ms frames so a hangup is noticed promptly.
     const t0 = Date.now();
+    // Frames are judged once each, as they arrive: a long call never re-decodes its history.
+    let judged = 0;
+    const countReceived = () => {
+      const received = call.mediaReceived;
+      for (; judged < received.length; judged++) if (hasSound(received[judged]!)) sim.nonSilentFramesFromServer += 1;
+      sim.framesFromServer = received.length;
+    };
     while (!stopStreaming && call.ws && call.ws.readyState === 1 && Date.now() - t0 < ceiling) {
       const pattern = Array.from({ length: 50 }, (_, i) => loud && i % 10 < 7);
       await call.run({ name: 'talk', steps: [{ do: 'media', pattern, frameMs: 20 }] });
       sim.framesToServer = call.mediaSentPattern.length;
-      sim.framesFromServer = call.mediaReceived.length;
-      sim.nonSilentFramesFromServer = call.mediaReceived.filter(isNonSilent).length;
+      countReceived();
     }
     if (!customerHungUp && Date.now() - t0 >= ceiling) customerHungUp = true;
     const serverClosed = !call.ws || call.ws.readyState !== 1;
     sim.endedBy = serverClosed && !customerHungUp ? 'agent' : 'customer';
-    sim.framesFromServer = call.mediaReceived.length;
-    sim.nonSilentFramesFromServer = call.mediaReceived.filter(isNonSilent).length;
+    countReceived();
 
     const durationSec = Math.max(1, Math.round((Date.now() - (sim.answeredAt ?? Date.now())) / 1000));
     const recordingUrl = `https://${RECORDING_HOST}/client_e2e/${call.callId}.wav`;

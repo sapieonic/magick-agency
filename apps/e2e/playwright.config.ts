@@ -18,6 +18,8 @@ export default defineConfig({
   timeout: 180_000,
   expect: { timeout: 20_000 },
   retries: process.env['CI'] ? 1 : 0,
+  // A stray test.only must not turn a workflow run green on one spec.
+  forbidOnly: !!process.env['CI'],
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }], ['json', { outputFile: 'test-results/results.json' }]],
   outputDir: 'test-results',
   use: {

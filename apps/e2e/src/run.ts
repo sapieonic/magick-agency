@@ -15,13 +15,16 @@
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+import type { Readable } from 'node:stream';
 import { startEdge, CONSOLE_API, SUPER_ADMIN_API } from './edge.js';
 import {
   E2E_ROOT, REPO_ROOT, RUN_DIR, SERVER_DIR, SUPER_ADMIN, FIREBASE_PROJECT_ID, VOICELINK,
   assertSafeTargets, databaseUrl, ports, serverEnv, uiBuildEnv, urls,
 } from './env.js';
-import { ensureInfra, freshDatabase, portOpen } from './infra.js';
+import { ensureInfra, freshDatabase, portOpen, takeRunLock, type Infra, type RunLock } from './infra.js';
 import { Simulator } from './sim/index.js';
+import { superAdminLogin } from './fixtures/world.js';
 
 const log = (m: string) => console.log(`[e2e] ${m}`);
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -56,7 +59,17 @@ function createSuperAdmin(): void {
   });
 }
 
-function startServer(simOrigin: string, voicelinkBaseUrl: string): ChildProcess {
+/**
+ * The server logs through pino-pretty with colours forced on outside production; the log file
+ * (a CI artifact) is read in a browser or an editor, so the colour codes are dropped from it.
+ */
+const ANSI = /\x1b\[[0-9;]*m/g;
+function pipeLines(from: Readable | null, to: NodeJS.WritableStream): void {
+  if (!from) return;
+  createInterface({ input: from, crlfDelay: Infinity }).on('line', (line) => to.write(`${line.replace(ANSI, '')}\n`));
+}
+
+function startServer(voicelinkBaseUrl: string): ChildProcess {
   const logFile = join(RUN_DIR, 'server.log');
   log(`server: starting on ${urls.server} (log: ${logFile})`);
   const out = createWriteStream(logFile);
@@ -69,15 +82,13 @@ function startServer(simOrigin: string, voicelinkBaseUrl: string): ChildProcess 
       env: {
         PATH: process.env['PATH'] ?? '',
         HOME: process.env['HOME'] ?? '',
-        ...serverEnv(),
-        VOICELINK_BASE_URL: voicelinkBaseUrl,
-        E2E_SIM_ORIGIN: simOrigin,
+        ...serverEnv(voicelinkBaseUrl),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
-  child.stdout?.pipe(out);
-  child.stderr?.pipe(out);
+  pipeLines(child.stdout, out);
+  pipeLines(child.stderr, out);
   return child;
 }
 
@@ -106,22 +117,43 @@ async function main(): Promise<number> {
   assertSafeTargets();
   mkdirSync(RUN_DIR, { recursive: true });
   for (const [name, port] of Object.entries(ports)) {
-    if (await portOpen(port)) throw new Error(`port ${port} (${name}) is in use: is another e2e stack running? (E2E_${name.toUpperCase()}_PORT moves it)`);
+    if (await portOpen(port)) throw new Error(`port ${port} (${name}) is in use: is another e2e stack running? (E2E_${name.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}_PORT moves it)`);
   }
 
-  const infra = await ensureInfra(log);
+  let infra: Infra | null = null;
+  let lock: RunLock | null = null;
   let sim: Simulator | null = null;
   let server: ChildProcess | null = null;
+  let playwright: ChildProcess | null = null;
   let stopEdge: (() => Promise<void>) | null = null;
-  const teardown = async () => {
+  let tornDown: Promise<void> | null = null;
+  const teardown = () => (tornDown ??= (async () => {
     log('teardown');
-    if (stopEdge) await stopEdge();
+    if (playwright && playwright.exitCode === null) playwright.kill('SIGTERM');
+    if (stopEdge) await stopEdge().catch(() => undefined);
     await stopChild(server);
-    if (sim) await sim.stop();
-    await infra.stop();
+    if (sim) await sim.stop().catch(() => undefined);
+    if (lock) await lock.release();
+    if (infra) await infra.stop();
+  })());
+
+  // Ctrl-C or a kill of the orchestrator still stops the server (port 3031) and whatever infra
+  // this run started; otherwise the next run would refuse with "port in use".
+  let interrupted = false;
+  const onSignal = (signal: NodeJS.Signals) => {
+    if (interrupted) return;
+    interrupted = true;
+    log(`${signal}: stopping`);
+    void teardown().finally(() => process.exit(130));
   };
+  if (!stackOnly) {
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+  }
 
   try {
+    infra = await ensureInfra(log);
+    lock = await takeRunLock();
     await freshDatabase(log);
     if (!skipBuild || !existsSync(join(UI_OUT.console, 'index.html')) || !existsSync(join(UI_OUT.superAdmin, 'index.html'))) buildUis();
     createSuperAdmin();
@@ -130,7 +162,7 @@ async function main(): Promise<number> {
     await sim.start();
     log(`sim: ${sim.origin} (VoiceLink ${sim.voicelink.baseUrl})`);
 
-    server = startServer(sim.origin, `${sim.voicelink.baseUrl}`);
+    server = startServer(sim.voicelink.baseUrl);
     await waitReady(server);
     log('server: ready');
 
@@ -142,7 +174,9 @@ async function main(): Promise<number> {
       { host: '127.0.0.1', port: ports.server },
     );
     log(`edge: console ${urls.console}, super-admin ${urls.superAdmin}`);
-    writeFileSync(join(RUN_DIR, 'stack.json'), JSON.stringify({ urls, startedAt: new Date().toISOString() }, null, 2));
+    // One sign-in for the whole run (the route allows 5 a minute per IP): see fixtures/world.ts.
+    const superAdminToken = await superAdminLogin();
+    writeFileSync(join(RUN_DIR, 'stack.json'), JSON.stringify({ urls, superAdminToken, startedAt: new Date().toISOString() }, null, 2));
 
     if (stackOnly) {
       log('stack is up; Ctrl-C to stop. Run specs against it with E2E_STACK=up pnpm exec playwright test');
@@ -156,12 +190,12 @@ async function main(): Promise<number> {
 
     log(`playwright test ${playwrightArgs.join(' ')}`);
     const code = await new Promise<number>((resolve) => {
-      const pw = spawn('pnpm', ['exec', 'playwright', 'test', ...playwrightArgs], {
+      playwright = spawn('pnpm', ['exec', 'playwright', 'test', ...playwrightArgs], {
         cwd: E2E_ROOT,
-        env: { ...process.env, E2E_STACK: 'up' },
+        env: { ...process.env, E2E_STACK: 'up', E2E_SUPER_ADMIN_TOKEN: superAdminToken },
         stdio: 'inherit',
       });
-      pw.on('exit', (c) => resolve(c ?? 1));
+      playwright.on('exit', (c) => resolve(c ?? 1));
     });
     await teardown();
     return code;
@@ -172,4 +206,10 @@ async function main(): Promise<number> {
   }
 }
 
-main().then((code) => process.exit(code));
+main().then(
+  (code) => process.exit(code),
+  (err: unknown) => {
+    console.error(`[e2e] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  },
+);

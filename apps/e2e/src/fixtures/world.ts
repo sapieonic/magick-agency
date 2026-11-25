@@ -7,7 +7,9 @@
  * membership the super-admin created, exactly as a real first sign-in does.
  */
 import { randomBytes } from 'node:crypto';
-import { SUPER_ADMIN, urls } from '../env.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { RUN_DIR, SUPER_ADMIN, urls } from '../env.js';
 import { sim } from './sim-client.js';
 
 export interface WorldUser {
@@ -31,27 +33,42 @@ export interface World {
 }
 
 /**
- * One super-admin token per worker: `/super-admin/login` allows 5 a minute per IP (fixed in the
- * route), and every request of the run comes from 127.0.0.1. The token lasts 4 hours.
+ * One super-admin token for the whole run: `/super-admin/login` allows 5 a minute per IP (fixed
+ * in the route), every request of the run comes from 127.0.0.1, and Playwright starts a new
+ * worker after each failed test. So the orchestrator (`src/run.ts`) signs in once and hands the
+ * token over in E2E_SUPER_ADMIN_TOKEN (and in `.run/stack.json`, for specs run against
+ * `pnpm e2e:stack`). The token lasts 4 hours. Only when neither is there does a worker sign in.
  */
 let cachedToken: string | null = null;
+
+function handedOverToken(): string | null {
+  const fromEnv = process.env['E2E_SUPER_ADMIN_TOKEN'];
+  if (fromEnv) return fromEnv;
+  try {
+    const stack = JSON.parse(readFileSync(join(RUN_DIR, 'stack.json'), 'utf8')) as { superAdminToken?: string };
+    return stack.superAdminToken ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Sign in as the run's super-admin over REST (the orchestrator does this once per run). */
+export async function superAdminLogin(email = SUPER_ADMIN.email, password = SUPER_ADMIN.password): Promise<string> {
+  const r = await fetch(`${urls.server}/super-admin/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!r.ok) throw new Error(`super-admin login -> ${r.status}: ${await r.text()}`);
+  return ((await r.json()) as { token: string }).token;
+}
 
 export class SuperAdminApi {
   private token: string | null = cachedToken;
 
-  async login(email = SUPER_ADMIN.email, password = SUPER_ADMIN.password): Promise<void> {
-    if (cachedToken && email === SUPER_ADMIN.email) {
-      this.token = cachedToken;
-      return;
-    }
-    const r = await fetch(`${urls.server}/super-admin/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!r.ok) throw new Error(`super-admin login -> ${r.status}: ${await r.text()}`);
-    this.token = ((await r.json()) as { token: string }).token;
-    if (email === SUPER_ADMIN.email) cachedToken = this.token;
+  async login(): Promise<void> {
+    cachedToken ??= handedOverToken() ?? (await superAdminLogin());
+    this.token = cachedToken;
   }
 
   async req<T>(method: string, path: string, body?: unknown): Promise<T> {

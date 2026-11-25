@@ -85,6 +85,7 @@ export const RECORDING_HOST = 'recording.e2e.invalid';
 /** Postgres ports other local stacks use; never touched (root CLAUDE.md). */
 const FOREIGN_PG_PORTS = new Set([5432, 5433, 5434]);
 const FOREIGN_REDIS_PORTS = new Set([6379, 6380, 6381]);
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 
 /**
  * A run drops and recreates its database and flushes its Redis db: refuse anything that is not
@@ -96,12 +97,21 @@ export function assertSafeTargets(): void {
   if (!/^magick_agency_e2e[a-z0-9_]*$/.test(PG.database)) {
     throw new Error(`e2e refuses database "${PG.database}": its name must start with magick_agency_e2e`);
   }
-  // 0 is dev; 1-8 belong to the integration workers of this worktree and the next.
-  if (REDIS.db <= 8) throw new Error(`e2e refuses Redis db ${REDIS.db}: 0 is dev and 1-8 are the integration runs'`);
+  // Redis has 0-15: 0 is dev, 1-14 the integration runs' (tooling/test-env.ts stops them at
+  // 14), 15 this run's.
+  if (REDIS.db !== 15) throw new Error(`e2e refuses Redis db ${REDIS.db}: 0 is dev and 1-14 are the integration runs'; e2e uses 15`);
+  // The project's own infra on this machine only: never a shared or remote server.
+  for (const [what, host] of [['Postgres', PG.host], ['Redis', REDIS.host]] as const) {
+    if (!LOOPBACK_HOSTS.has(host)) throw new Error(`e2e refuses ${what} host "${host}": only this machine's (127.0.0.1, localhost, ::1)`);
+  }
 }
 
-/** The server's whole environment for an e2e run. Nothing is inherited from a developer's `.env`. */
-export function serverEnv(): Record<string, string> {
+/**
+ * The server's whole environment for an e2e run. Nothing is inherited from a developer's `.env`.
+ * `voicelinkBaseUrl` is the simulated carrier's REST base (`Simulator.voicelink.baseUrl`): the
+ * server's own VoiceLink mock, on a port the system picks when the simulator starts.
+ */
+export function serverEnv(voicelinkBaseUrl: string): Record<string, string> {
   const sim = urls.sim;
   return {
     NODE_ENV: 'development',
@@ -124,9 +134,12 @@ export function serverEnv(): Record<string, string> {
     FIREBASE_PROJECT_ID,
     FIREBASE_AUTH_EMULATOR_HOST: `127.0.0.1:${ports.sim}`,
 
-    // VoiceLink: the simulator's REST API; the public base is rewritten to loopback by it.
+    // The simulator, for `server-preload.mjs`'s redirects.
+    E2E_SIM_ORIGIN: sim,
+
+    // VoiceLink: the simulated carrier's REST API; it rewrites the public base below to loopback.
     TELEPHONY_ENABLED_PROVIDERS: 'voicelink',
-    VOICELINK_BASE_URL: `${sim}/api`,
+    VOICELINK_BASE_URL: voicelinkBaseUrl,
     VOICELINK_USERNAME: VOICELINK.username,
     VOICELINK_PASSWORD: VOICELINK.password,
     VOICELINK_WEBHOOK_BASE_URL: `https://${PUBLIC_HOST}/api/v1/webhooks/voicelink`,

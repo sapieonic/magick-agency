@@ -125,12 +125,20 @@ export class Simulator {
     }
     if (path === '/_sim/firebase/token' && method === 'POST') {
       const b = bodyJson();
-      const user = this.firebase.upsertUser(String(b['email']), String(b['password'] ?? 'unused-password'));
+      // With a password, the user is registered (or their password set) first; without one, the
+      // user must already be registered, and their password is left as it is.
+      const user = b['password'] !== undefined
+        ? this.firebase.upsertUser(String(b['email']), String(b['password']))
+        : this.firebase.userByEmail(String(b['email']));
+      if (!user) return json(404, { error: `no fake Firebase user ${String(b['email'])}` });
       return json(200, { idToken: this.firebase.idToken(user) });
     }
     if (path === '/_sim/calls' && method === 'GET') {
       const number = url.searchParams.get('number');
       return json(200, { calls: number ? this.voicelink.callsTo(number) : this.voicelink.calls });
+    }
+    if (path === '/_sim/calls/hangup-all' && method === 'POST') {
+      return json(200, { hungUp: await this.voicelink.hangupAll() });
     }
     const hangup = /^\/_sim\/calls\/([^/]+)\/hangup$/.exec(path);
     if (hangup && method === 'POST') {

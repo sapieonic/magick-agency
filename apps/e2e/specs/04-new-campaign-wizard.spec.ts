@@ -54,4 +54,8 @@ test('a supervisor builds and starts a campaign in New campaign, and it dials', 
   await station.startWork();
   await station.expectOnCallWith('Anil Kumar');
   await expect.poll(async () => (await sim.calls(phones[0]))[0]?.state).toBe('answered');
+
+  await station.endCall();
+  await station.expectWrapUp();
+  await station.fileOutcome('Voicemail', 'break');
 });

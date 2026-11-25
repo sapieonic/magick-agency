@@ -4,11 +4,13 @@
  *    in against the fake, unchanged);
  *  - `world`: a fresh tenant seeded for this test (`world.ts`);
  *  - `supervisorApi`: the console API as the world's supervisor (`console-api.ts`);
- *  - `newUserPage(user)`: a page in a context of its own, signed in as `user`.
+ *  - `newUserPage(user)`: a page in a context of its own, signed in as `user`;
+ *  - after each test, every simulated customer still on a call hangs up.
  */
 import { test as base, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { urls } from '../env.js';
 import { ConsoleApi } from './console-api.js';
+import { sim } from './sim-client.js';
 import { seedWorld, type World, type WorldUser } from './world.js';
 
 export async function routeIdentity(context: BrowserContext): Promise<void> {
@@ -40,12 +42,20 @@ async function contextFor(browser: Browser): Promise<BrowserContext> {
 }
 
 interface Fixtures {
+  /** After each test: every simulated customer still on a call hangs up (automatic). */
+  endLiveCalls: void;
   world: World;
   supervisorApi: ConsoleApi;
   newUserPage: (user: WorldUser) => Promise<Page>;
 }
 
 export const test = base.extend<Fixtures>({
+  // Set up first, so torn down last (after the test's browser contexts close): no call a test
+  // left open runs on into the next one.
+  endLiveCalls: [async ({}, use) => {
+    await use();
+    await sim.hangupAll();
+  }, { auto: true }],
   context: async ({ context }, use) => {
     await routeIdentity(context);
     await use(context);

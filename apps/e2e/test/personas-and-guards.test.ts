@@ -49,6 +49,19 @@ describe('server preload', () => {
     expect(r.stdout).not.toContain('REACHED');
   });
 
+  it('refuses outside hosts on node:http and node:https too (the AWS SDK and firebase-admin use them)', () => {
+    const r = run([
+      `import https from 'node:https'; import { request } from 'node:https'; import { get } from 'node:http';`,
+      `for (const go of [() => https.request('https://s3.amazonaws.com/x'), () => request({ hostname: 'oauth2.googleapis.com', path: '/' }), () => get({ host: 'metadata.google.internal:80' })]) {`,
+      `  try { go(); console.log('REACHED'); } catch (e) { console.log(String(e.message)); }`,
+      `}`,
+    ].join('\n'));
+    expect(r.stdout).toContain('refused a request to s3.amazonaws.com');
+    expect(r.stdout).toContain('refused a request to oauth2.googleapis.com');
+    expect(r.stdout).toContain('refused a request to metadata.google.internal');
+    expect(r.stdout).not.toContain('REACHED');
+  });
+
   it('sends Mailjet, Plivo and the recording host to the simulator', async () => {
     const seen: string[] = [];
     const server = http.createServer((req, res) => { seen.push(req.url ?? ''); res.end('ok'); });
@@ -91,8 +104,17 @@ describe('target guards', () => {
   it('refuse the dev and integration Redis dbs and other stacks\' ports', async () => {
     process.env['E2E_REDIS_DB'] = '3';
     expect(await guard()).toThrow(/Redis db 3/);
+    process.env['E2E_REDIS_DB'] = '14';
+    expect(await guard()).toThrow(/Redis db 14/);
     process.env['E2E_REDIS_DB'] = '15';
     process.env['E2E_PG_PORT'] = '5432';
     expect(await guard()).toThrow(/5432/);
+  });
+  it('refuse a Postgres or Redis that is not on this machine', async () => {
+    process.env['E2E_PG_HOST'] = 'db.example.com';
+    expect(await guard()).toThrow(/Postgres host "db.example.com"/);
+    delete process.env['E2E_PG_HOST'];
+    process.env['E2E_REDIS_HOST'] = '10.0.0.7';
+    expect(await guard()).toThrow(/Redis host "10.0.0.7"/);
   });
 });

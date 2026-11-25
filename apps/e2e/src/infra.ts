@@ -4,7 +4,11 @@
  * In order of preference: the project's own infra already up on 5436 / 6383 (`pnpm infra:up`,
  * or CI's service containers); else `docker compose` with `docker/docker-compose.dev.yml`; else
  * local `postgres` / `redis-server` binaries started under `apps/e2e/.run/` on the same ports.
- * Only what this run started is stopped at the end.
+ * The local binaries this run started are stopped at the end; containers `docker compose`
+ * started stay up, as `pnpm infra:up` leaves them (`pnpm infra:down` stops them).
+ *
+ * A run takes a lock (`takeRunLock`) before it drops its database, so two runs on one database
+ * (two worktrees, two terminals) cannot wipe each other: the second refuses to start.
  */
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -96,15 +100,15 @@ async function startLocalPostgres(log: (m: string) => void): Promise<() => void>
   const asRoot = process.getuid?.() === 0;
   const run = (cmd: string, args: string[]) => {
     if (asRoot) {
-      execFileSync('chown', ['-R', 'postgres:postgres', RUN_DIR]);
+      execFileSync('chown', ['-R', 'postgres:postgres', dataDir]);
       execFileSync('su', ['postgres', '-c', [join(bin, cmd), ...args].map((a) => `'${a}'`).join(' ')], { stdio: 'inherit' });
     } else {
       execFileSync(join(bin, cmd), args, { stdio: 'inherit' });
     }
   };
+  mkdirSync(dataDir, { recursive: true });
   if (!existsSync(join(dataDir, 'PG_VERSION'))) {
     log(`infra: initdb ${dataDir}`);
-    mkdirSync(dataDir, { recursive: true });
     run('initdb', ['-D', dataDir, '-U', PG.user, '--auth=trust']);
   }
   log(`infra: starting local Postgres on ${PG.port}`);
@@ -119,6 +123,33 @@ async function startLocalRedis(log: (m: string) => void): Promise<() => void> {
   const child: ChildProcess = spawn('redis-server', ['--port', String(REDIS.port), '--save', '', '--appendonly', 'no'], { stdio: 'ignore' });
   child.on('error', (err) => log(`infra: redis-server failed: ${err.message}`));
   return () => { child.kill('SIGTERM'); };
+}
+
+export interface RunLock {
+  release(): Promise<void>;
+}
+
+/**
+ * A session-level advisory lock, keyed on the e2e database's name and held on the maintenance
+ * database (`postgres`, which a run never drops) until the run ends. A second run against the
+ * same database refuses instead of dropping it under the first (`DROP … WITH (FORCE)` would
+ * cut the live run's connections).
+ */
+export async function takeRunLock(): Promise<RunLock> {
+  const c = new pg.Client({ connectionString: databaseUrl('postgres') });
+  await c.connect();
+  const key = `magick-agency-e2e:${PG.database}`;
+  const { rows } = await c.query<{ ok: boolean }>('SELECT pg_try_advisory_lock(hashtext($1)) AS ok', [key]);
+  if (!rows[0]?.ok) {
+    await c.end();
+    throw new Error(`another e2e run is using ${PG.database} on ${PG.host}:${PG.port}: wait for it to finish (or give this one E2E_DB_NAME=${PG.database}_<x> and its own ports)`);
+  }
+  return {
+    async release() {
+      await c.query('SELECT pg_advisory_unlock(hashtext($1))', [key]).catch(() => undefined);
+      await c.end().catch(() => undefined);
+    },
+  };
 }
 
 /** Drop and recreate the e2e database, migrate it, and empty the e2e Redis db. */
@@ -145,6 +176,16 @@ export async function freshDatabase(log: (m: string) => void): Promise<void> {
   }
   const redis = new Redis({ host: REDIS.host, port: REDIS.port, db: REDIS.db, lazyConnect: true, maxRetriesPerRequest: 2 });
   await redis.connect();
+  // Never flush a db another client is on (an integration worker configured onto it, a second
+  // run): refuse, naming them.
+  const me = Number(await redis.client('ID'));
+  const others = String(await redis.client('LIST'))
+    .split('\n')
+    .filter((line) => new RegExp(`\\bdb=${REDIS.db}\\b`).test(line) && !new RegExp(`^id=${me}\\b`).test(line));
+  if (others.length > 0) {
+    await redis.quit();
+    throw new Error(`e2e refuses to flush Redis db ${REDIS.db}: ${others.length} other client(s) are on it (${others.map((l) => /addr=(\S+)/.exec(l)?.[1]).join(', ')})`);
+  }
   await redis.flushdb();
   await redis.quit();
 }

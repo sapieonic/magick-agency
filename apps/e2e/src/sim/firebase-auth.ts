@@ -32,6 +32,11 @@ export class FakeFirebaseAuth {
     this.refreshTokens.clear();
   }
 
+  /** A registered user by email (case-insensitive), or null. */
+  userByEmail(email: string): FakeUser | null {
+    return this.byEmail.get(email.trim().toLowerCase()) ?? null;
+  }
+
   /** Register (or re-password) an account, as if the user had signed up. */
   upsertUser(email: string, password: string, displayName?: string): FakeUser {
     const key = email.trim().toLowerCase();
