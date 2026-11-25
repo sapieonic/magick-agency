@@ -683,9 +683,11 @@ carrier_account_unavailable` and pauses nothing. A revoke is refused while a cam
 finished (draft, running, paused or stopping) is pinned to the credential; the refusal names up to
 five of them (tenant / account, status).
 
-`carrier_dial_refusals_total{provider="plivo",kind}` counts create-calls that placed no known call
-(`auth_rejected`, `rate_limited`, `outcome_unknown`, `refused`, and `not_sent` for a dial refused
-before anything was sent: no webhook base, a malformed number or caller ID, the API unreachable).
+`carrier_dial_refusals_total{provider,kind}` counts dials on a tenant's carrier account (Plivo,
+VoiceLink) that placed no known call (`auth_rejected`, `rate_limited`, `outcome_unknown`, `refused`,
+`api_refused` for a VoiceLink account that took a fresh login and refused the dial itself with 401,
+CR4, and `not_sent` for a dial refused before anything was sent: no webhook base, a malformed
+number or caller ID, the API unreachable).
 A steady `rate_limited` means the dial rate is above `PLIVO_CALLS_PER_SECOND`; dials then wait and
 retry on the next pacing tick. A steady `not_sent` is configuration or network: read the
 `Plivo dial not sent` log lines.
@@ -1274,6 +1276,23 @@ can wait; nothing is broken. Otherwise file it with the campaign and account ids
 show. A burst of withheld slots with live calls on the campaign is the share rule working, not
 this alert.
 
+### `agy-carrier-api-refused`
+
+**Means:** 5+ dials in 15 minutes on a tenant's own VoiceLink account were refused with 401 right
+after a successful login (`carrier_dial_refusals_total{kind="api_refused"}`, `docs/carriers.md`
+CR4): the login works, but the account may not place calls through the API (access withdrawn, the
+API user disabled for dialling). The credential is not marked invalid, since the login is the only
+verdict on it. Each campaign on it is paused `carrier_refusing_calls` after 10 such refusals in a
+row; the audit row says `cause: carrier_api_refused`.
+
+**Check:** the `VoiceLink add_lead refused after a fresh login` warnings for the provider, and which
+credentials and campaigns they name; whether the same account's login works in VoiceLink's own
+console.
+
+**Do:** the fix is at the carrier: the tenant (through support) restores the account's API access.
+Then supervisors resume the paused campaigns. A super-admin's Verify on the credential only checks
+the login, so it will still say the credential works.
+
 ### `agy-credential-keyring-missing-keys`
 
 This one pages. **Means:** `telephony_credential_missing_key_ids` is above 0: stored tenant
@@ -1849,3 +1868,24 @@ Set once in the repository settings, not in code:
   merge, tag that squash commit (where every `package.json` says 0.1.0) `<component>-v0.1.0` for
   each of the eight components and push the tags. release-please then reads history back to the
   tag instead of to `bootstrap-sha`.
+
+## CR9 caller-ID clean-up (one-off)
+
+Service-account campaigns saved before CR9 (`docs/carriers.md`), or written while a number was
+being moved onto a tenant's account (CR6), may hold a number pinned to a tenant's carrier account as
+a caller ID and dial it on the service's account. `scripts/cleanup-service-campaign-pinned-caller-ids.ts`
+takes those caller IDs off campaigns that are not finished, one campaign per transaction, audited
+`agency_campaign.config_changed` (`actor: system:cr9-cleanup`). A running server sees the change
+within 2 s.
+
+On a deployment, dry run first; it changes nothing and lists every campaign it would change:
+
+```bash
+docker compose -f docker/docker-compose.prod.yml exec server node dist/cleanup-service-campaign-pinned-caller-ids.js
+```
+
+Read each campaign listed, then run it again with `--apply`. A campaign it would leave with no caller
+ID is listed as SKIPPED: give it service numbers in its Settings, or re-run with
+`--apply --allow-empty` (never applied to a running campaign). A second `--apply` changes nothing.
+Exit 1 means a campaign failed (read its line); 2 is a usage error.
+
