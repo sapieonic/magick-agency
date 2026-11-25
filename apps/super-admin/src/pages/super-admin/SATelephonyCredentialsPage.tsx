@@ -43,6 +43,11 @@ import styles from './SATelephonyCredentialsPage.module.css';
  * The secret is write-only: the forms send it, nothing ever shows it again — the
  * table shows a four-character hint. Every save is verified with the carrier first,
  * so a credential here is one the carrier accepted at the time.
+ *
+ * What a row offers follows its carrier's capabilities (docs/carriers.md CR6, CR11): "Sync
+ * numbers" only where the carrier lists an account's numbers (`number_source: 'sync'`; where
+ * they are added by hand the row says so), and the inbound section only where the carrier
+ * takes inbound calls (`supports_inbound`).
  */
 
 type FieldValues = Record<string, string>;
@@ -154,6 +159,8 @@ export default function SATelephonyCredentialsPage() {
   useEffect(() => { void load(); }, [load]);
 
   const providerOf = (name: string) => providers.find((p) => p.provider === name);
+  /** Whether the credential's carrier takes inbound calls (CR11); false for a carrier the list does not name. */
+  const takesInbound = (cred: TelephonyCredential) => providerOf(cred.provider)?.supports_inbound === true;
 
   const stats = useMemo(() => {
     const out = { active: 0, attention: 0 };
@@ -332,7 +339,7 @@ export default function SATelephonyCredentialsPage() {
       {credentials.length === 0 ? (
         <EmptyState
           title="No telephony credentials"
-          description={filterTenant ? 'This tenant dials on the service’s own carrier account.' : 'Add a tenant’s own carrier account. Sync its numbers, then the tenant’s campaigns and soft phone can dial on it.'}
+          description={filterTenant ? 'This tenant dials on the service’s own carrier account.' : 'Add a tenant’s own carrier account. Sync its numbers, or add them by hand on Phone numbers where the carrier cannot list them, then the tenant’s campaigns and soft phone can dial on it.'}
         />
       ) : (
         <div className={styles.tableWrap}>
@@ -391,7 +398,7 @@ export default function SATelephonyCredentialsPage() {
                             <button className="btn-secondary" disabled={busyWith(c.id)} onClick={() => void runAction(c, 'verify')}>
                               <ShieldCheck size={14} /> {busyWith(c.id, 'verify') ? 'Verifying…' : 'Verify now'}
                             </button>
-                            {c.status === 'active' && (
+                            {c.status === 'active' && providerOf(c.provider)?.number_source === 'sync' && (
                               <button className="btn-secondary" disabled={busyWith(c.id)} onClick={() => void runSync(c)}>
                                 <PhoneIncoming size={14} /> {busyWith(c.id, 'sync') ? 'Syncing…' : 'Sync numbers'}
                               </button>
@@ -416,8 +423,13 @@ export default function SATelephonyCredentialsPage() {
                             </button>
                           </div>
                         )}
+                        {c.status !== 'revoked' && providerOf(c.provider)?.number_source === 'manual' && (
+                          <p className={styles.muted} data-testid="numbers-by-hand">
+                            Numbers on this carrier are added by hand: Phone numbers, Add number, then pick this account.
+                          </p>
+                        )}
                         {sync?.id === c.id && <SyncSummary outcome={sync} />}
-                        {c.status !== 'revoked' && <CredentialInboundSection credential={c} />}
+                        {c.status !== 'revoked' && takesInbound(c) && <CredentialInboundSection credential={c} />}
                       </td>
                     </tr>
                   )}
@@ -552,11 +564,14 @@ export default function SATelephonyCredentialsPage() {
         title={confirm?.action === 'revoke' ? 'Revoke credential?' : 'Disable credential?'}
         message={
           confirm?.action === 'revoke'
-            ? `“${confirm.cred.label}” stops dialling for good, and its secret is destroyed two hours after its last call ends, once the carrier’s late callbacks are in. Earlier recordings on it can no longer be played. Campaigns still dialling on it must be moved first, and inbound calls disabled.`
+            ? `“${confirm.cred.label}” stops dialling for good, and its secret is destroyed two hours after its last call ends, once the carrier’s late callbacks are in. Earlier recordings on it can no longer be played. Campaigns still dialling on it must be moved first${takesInbound(confirm.cred) ? ', and inbound calls disabled' : ''}.`
             : `“${confirm?.cred.label ?? ''}” stops placing new calls. Calls already in progress finish normally. `
               + 'Running campaigns on it pause automatically, and stay paused after you enable it again '
-              + 'until a supervisor resumes each one. Numbers linked to inbound calls stay linked and on their routes: '
-              + 'their callers hear the closed message until you enable the credential again.'
+              + 'until a supervisor resumes each one.'
+              + (confirm && takesInbound(confirm.cred)
+                ? ' Numbers linked to inbound calls stay linked and on their routes: '
+                  + 'their callers hear the closed message until you enable the credential again.'
+                : '')
         }
         confirmLabel={confirm?.action === 'revoke' ? 'Revoke' : 'Disable'}
         danger

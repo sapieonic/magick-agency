@@ -7,9 +7,11 @@ import {
   retirePhoneNumber,
   reactivatePhoneNumber,
   deletePhoneNumber,
+  listTelephonyCredentials,
 } from '../../api/super-admin';
 import type { TelephonyProvider } from '../../api/super-admin';
 import type { PhoneNumber } from '@magick-agency/contracts/api/platform/super-admin';
+import type { TelephonyCredential } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
@@ -20,6 +22,8 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { StatCard } from '../../components/common';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { operatorCarrierName } from '../../utils/carrierName';
+import { carrierModes } from '../../utils/carrierModes';
+import { useSuperAdminTenants } from '../../hooks/useSuperAdminTenants';
 import { PhoneNumberCreateModal } from './phone-numbers/PhoneNumberCreateModal';
 import { PhoneNumberEditModal } from './phone-numbers/PhoneNumberEditModal';
 import { usePhoneNumberBulk } from './phone-numbers/usePhoneNumberBulk';
@@ -66,6 +70,13 @@ export default function SAPhoneNumbersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  // Tenants' own carrier accounts, revoked ones included: they name the account a pinned
+  // number is on, and the Add number form offers the active ones. Best effort: null when
+  // unreadable (rows then say only that the number is on a tenant's own account).
+  const [credentials, setCredentials] = useState<TelephonyCredential[] | null>(null);
+  const { tenants } = useSuperAdminTenants();
+  const tenantName = useMemo(() => new Map(tenants.map(t => [t.id, t.name])), [tenants]);
+  const credentialById = useMemo(() => new Map((credentials ?? []).map(c => [c.id, c])), [credentials]);
 
   // Filters
   const [filterProvider, setFilterProvider] = useState('');
@@ -157,8 +168,32 @@ export default function SAPhoneNumbersPage() {
     }
   }, []);
 
+  const loadCredentials = useCallback(async () => {
+    try {
+      setCredentials(await listTelephonyCredentials({ include_revoked: true }));
+    } catch {
+      setCredentials(null);
+    }
+  }, []);
+
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
+  useEffect(() => { void loadCredentials(); }, [loadCredentials]);
+
+  /** Whether the number's carrier takes inbound calls on a tenant's account (CR11); false until the catalogue is in. */
+  const supportsInbound = (pn: PhoneNumber) => {
+    const provider = providers.find(p => p.id === pn.provider_id);
+    return provider !== undefined && carrierModes(provider).inbound;
+  };
+
+  /** Which carrier account the number is on: the service's own, or a tenant's, by its label (CR6, CR7). */
+  const accountOf = (pn: PhoneNumber): string => {
+    if (!pn.telephony_credential_id) return 'Service account';
+    const credential = credentialById.get(pn.telephony_credential_id);
+    if (!credential) return 'A tenant’s own account';
+    const tenant = tenantName.get(credential.tenant_id);
+    return `${credential.label}${tenant ? ` (${tenant})` : ''}${credential.status === 'active' ? '' : `, ${saStatusLabel(credential.status).toLowerCase()}`}`;
+  };
 
   useEffect(() => {
     if (filterStatus !== 'deleted') return;
@@ -242,7 +277,7 @@ export default function SAPhoneNumbersPage() {
         subtitle="Number inventory — provider, capabilities, concurrency and tenant assignments"
         badge={phoneNumbers.length}
         actions={
-          <button className="btn-primary" onClick={() => setShowCreate(true)}>
+          <button className="btn-primary" onClick={() => { setShowCreate(true); void loadCredentials(); }}>
             <Plus size={16} /> Add number
           </button>
         }
@@ -377,6 +412,9 @@ export default function SAPhoneNumbersPage() {
                     <span className={styles.providerBadge}>
                       {operatorCarrierName(pn.provider_name, pn.provider_display_name)}
                     </span>
+                    {pn.telephony_credential_id && (
+                      <div className={styles.regionText} data-testid="number-account">{accountOf(pn)}</div>
+                    )}
                   </td>
                   <td>
                     {pn.capabilities.map(c => (
@@ -408,6 +446,10 @@ export default function SAPhoneNumbersPage() {
                           <dd className={styles.mono}>{pn.id}</dd>
                         </div>
                         <div className={styles.detailItem}>
+                          <dt>Carrier account</dt>
+                          <dd data-testid="number-account-detail">{accountOf(pn)}</dd>
+                        </div>
+                        <div className={styles.detailItem}>
                           <dt>Notes</dt>
                           <dd>{pn.notes || 'None'}</dd>
                         </div>
@@ -436,7 +478,7 @@ export default function SAPhoneNumbersPage() {
                         )}
                       </div>
 
-                      {pn.telephony_credential_id && pn.status !== 'deleted' && (
+                      {pn.telephony_credential_id && pn.status !== 'deleted' && supportsInbound(pn) && (
                         <PhoneNumberInboundPanel phoneNumberId={pn.id} provider={pn.provider_name} onChanged={() => { void refreshRows(); }} />
                       )}
 
@@ -500,8 +542,11 @@ export default function SAPhoneNumbersPage() {
       <PhoneNumberCreateModal
         open={showCreate}
         providers={providers}
+        credentials={credentials}
+        tenantName={tenantName}
         onClose={() => setShowCreate(false)}
         onCreated={() => { setShowCreate(false); load(); }}
+        onAccountsStale={() => { void loadCredentials(); }}
       />
 
       <PhoneNumberEditModal

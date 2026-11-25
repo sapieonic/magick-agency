@@ -12,8 +12,9 @@ import { CARRIER_REFUSAL, refusalCopy } from '../../../utils/operatorCopy';
 import styles from '../SAPhoneNumbersPage.module.css';
 
 /**
- * A synced number's inbound link (docs/inbound.md §8.1, IB6): Link puts it on its credential's
- * carrier Application (the app it was on is kept), Unlink puts it back. Only super-admins do this,
+ * A number's inbound link (docs/inbound.md §8.1, IB6), shown only for a number on a tenant's own
+ * carrier account whose carrier takes inbound calls (`supports_inbound`, docs/carriers.md CR11):
+ * Link puts it on its credential's carrier Application (the app it was on is kept), Unlink puts it back. Only super-admins do this,
  * one number at a time, never on sync. An account's inbound route can answer a number only
  * while it is linked; until one does, its callers hear the closed message, and the Missed rows of
  * callers who match no contact belong to no account, so no console screen shows them: this panel
@@ -21,7 +22,7 @@ import styles from '../SAPhoneNumbersPage.module.css';
  */
 
 const BLOCKER: Record<PhoneNumberInboundBlocker, string> = {
-  not_synced: 'Only a number synced from a tenant’s own carrier account can take inbound calls.',
+  not_synced: 'Only a number on a tenant’s own carrier account can take inbound calls.',
   not_active: 'The number is not active.',
   not_assigned: 'The number is not assigned to its carrier account’s tenant.',
   credential_not_active: 'Its carrier credential is not active.',

@@ -129,6 +129,8 @@ describe('CredentialInboundSection', () => {
   it.each([
     ['inbound_unconfigured', /no public callback address/],
     ['carrier_unreachable', /could not be reached\. Nothing was changed/],
+    // docs/carriers.md CR11: a carrier without inbound (a stale page can still ask).
+    ['inbound_not_supported', /^This carrier does not take inbound calls here, so inbound cannot be set up on it\. Nothing was changed\.$/],
     ['something_else', /server says no/],
   ])('a refusal %s is said in words an operator can act on', async (code, text) => {
     mocks.enableCredentialInbound.mockRejectedValue(refusal(code));

@@ -52,7 +52,7 @@ export const TELEPHONY_PROVIDER_VENDOR_NAMES: Record<string, string> = {
   generic_sip: 'Generic SIP',
 };
 
-// There is no BYOC marker copy: BYOC is not supported.
+// A tenant's own carrier account is named by alias plus its label, never a vendor (the console's `carrierName`).
 
 /** Normalise an API slug or vendor display name into a map key. */
 export function normalizeTelephonyProviderKey(provider: string): string {

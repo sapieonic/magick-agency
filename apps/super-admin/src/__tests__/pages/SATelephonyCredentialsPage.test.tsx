@@ -39,19 +39,31 @@ function makeCred(over: Partial<TelephonyCredential> = {}): TelephonyCredential 
   };
 }
 
+/** Numbers synced from the account, inbound taken (docs/carriers.md CR6, CR11). */
+const PLIVO = {
+  provider: 'plivo', display_name: 'Plivo', number_source: 'sync' as const, supports_inbound: true,
+  fields: [
+    { key: 'auth_id', label: 'Auth ID', secret: false },
+    { key: 'auth_token', label: 'Auth Token', secret: true },
+  ],
+};
+/** Numbers added by hand, no inbound (CR2, CR6, CR11). */
+const VOICELINK = {
+  provider: 'voicelink', display_name: 'VoiceLink', number_source: 'manual' as const, supports_inbound: false,
+  fields: [
+    { key: 'username', label: 'Username', secret: false, help: 'The username the tenant signs in with.' },
+    { key: 'password', label: 'Password', secret: true },
+  ],
+};
+const VL_CRED = { id: 'cred-vl', provider: 'voicelink', label: 'Acme direct', account_ref: 'acme-direct', public_config: { username: 'acme-direct' } };
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.listTenants.mockResolvedValue({ tenants: [TENANT] });
   mocks.listTelephonyCredentials.mockResolvedValue([makeCred()]);
   mocks.listTelephonyCredentialProviders.mockResolvedValue({
     store_available: true,
-    providers: [{
-      provider: 'plivo', display_name: 'Plivo',
-      fields: [
-        { key: 'auth_id', label: 'Auth ID', secret: false },
-        { key: 'auth_token', label: 'Auth Token', secret: true },
-      ],
-    }],
+    providers: [PLIVO, VOICELINK],
   });
   mocks.getTelephonyCredential.mockResolvedValue({ credential: makeCred(), usage: { campaigns: 1, in_flight_calls: 0 } });
   mocks.createTelephonyCredential.mockResolvedValue(makeCred({ id: 'cred-2' }));
@@ -267,6 +279,69 @@ describe('Sync numbers', () => {
   });
 });
 
+describe('what a row offers follows its carrier (docs/carriers.md CR6, CR11)', () => {
+  it('a carrier whose numbers are added by hand: no Sync numbers, says where numbers come from, no inbound section', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([makeCred(VL_CRED)]);
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme direct'));
+    expect(await screen.findByRole('button', { name: /verify now/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /sync numbers/i })).toBeNull();
+    expect(screen.getByTestId('numbers-by-hand').textContent)
+      .toBe('Numbers on this carrier are added by hand: Phone numbers, Add number, then pick this account.');
+    // CR11: no inbound on this carrier, so the section is not drawn and its state is never asked for.
+    expect(screen.queryByText(/Enable inbound/)).toBeNull();
+    expect(mocks.getCredentialInbound).not.toHaveBeenCalled();
+    // PL16: the alias, then the vendor.
+    expect(screen.getByText('Swar (VoiceLink)')).toBeTruthy();
+  });
+
+  it('a carrier whose numbers sync: Sync numbers and the inbound section, and no by-hand note', async () => {
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    expect(await screen.findByRole('button', { name: /sync numbers/i })).toBeTruthy();
+    expect(screen.queryByTestId('numbers-by-hand')).toBeNull();
+    await waitFor(() => expect(mocks.getCredentialInbound).toHaveBeenCalledWith('cred-1'));
+  });
+
+  it('the confirmations speak of inbound only on a carrier that takes it', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([makeCred(VL_CRED)]);
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme direct'));
+    fireEvent.click(await screen.findByRole('button', { name: /^disable$/i }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toMatch(/until a supervisor resumes each one\./);
+    expect(dialog.textContent).not.toMatch(/inbound/i);
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^revoke$/i }));
+    expect((await screen.findByRole('dialog')).textContent).toMatch(/must be moved first\.Cancel/);
+  });
+
+  it('the create form renders the carrier’s own fields: VoiceLink’s username as text, its password as a password', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([]);
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /add credential/i }));
+    const picker = screen.getByLabelText('Tenant');
+    fireEvent.focus(picker);
+    fireEvent.change(picker, { target: { value: 'Acme' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Acme/ }));
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'voicelink' } });
+    expect(screen.queryByLabelText('Auth ID')).toBeNull();
+    expect(screen.getByText('The username the tenant signs in with.')).toBeTruthy();
+    const username = screen.getByLabelText('Username') as HTMLInputElement;
+    const password = screen.getByLabelText('Password') as HTMLInputElement;
+    expect(username.type).toBe('text');
+    expect(password.type).toBe('password');
+    fireEvent.change(screen.getByLabelText('Label'), { target: { value: 'Acme direct' } });
+    fireEvent.change(username, { target: { value: 'acme-direct' } });
+    fireEvent.change(password, { target: { value: 'pw-123456' } });
+    fireEvent.click(screen.getByRole('button', { name: /verify and save/i }));
+    await waitFor(() => expect(mocks.createTelephonyCredential).toHaveBeenCalledWith({
+      tenant_id: TENANT.id, provider: 'voicelink', label: 'Acme direct',
+      fields: { username: 'acme-direct', password: 'pw-123456' },
+    }));
+  });
+});
+
 describe('what the page says while an action runs, and before one', () => {
   it('Verify says it is verifying and never relabels Sync numbers "Syncing…"', async () => {
     let answer!: (v: TelephonyCredential) => void;
@@ -313,7 +388,7 @@ describe('what the page says while an action runs, and before one', () => {
   it('the empty state no longer says the dial path has not shipped', async () => {
     mocks.listTelephonyCredentials.mockResolvedValue([]);
     render(<SATelephonyCredentialsPage />);
-    expect(await screen.findByText(/Sync its numbers, then the tenant’s campaigns and soft phone can dial on it\./)).toBeTruthy();
+    expect(await screen.findByText(/Sync its numbers, or add them by hand on Phone numbers where the carrier cannot list them, then the tenant’s campaigns and soft phone can dial on it\./)).toBeTruthy();
     expect(screen.queryByText(/dial path ships/)).toBeNull();
   });
 

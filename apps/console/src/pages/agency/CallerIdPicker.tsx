@@ -43,8 +43,8 @@ export interface CallerIdPickerProps {
  *
  * Filtered to the campaign's carrier account because a caller ID is dialled on the
  * account it belongs to: the server refuses a tenant-account campaign whose caller IDs
- * are not that account's synced numbers, and a service-account campaign dialling a
- * tenant's number would place the call on the wrong account.
+ * are not that account's numbers, and a service-account campaign any number pinned to a
+ * tenant's own account, even on the same carrier (docs/carriers.md CR9).
  *
  * When the carrier changes (the page's carrier choice), selected numbers that are not on
  * the new carrier account are dropped, once the account's numbers are known: they would
@@ -174,7 +174,7 @@ export function CallerIdPicker({
           {otherCount > 0 && (
             <>
               {' '}
-              This account has {otherCount} number{otherCount === 1 ? '' : 's'} on other carriers —
+              This account has {otherCount} number{otherCount === 1 ? '' : 's'} on other carrier accounts —
               those cannot be used with {name}.
             </>
           )}{' '}
@@ -191,7 +191,7 @@ export function CallerIdPicker({
   */
   const excluded = otherCount > 0 ? (
     <p className={styles.excluded}>
-      {`${otherCount} number${otherCount === 1 ? '' : 's'} on other carriers ${otherCount === 1 ? 'is' : 'are'} not shown — this campaign dials through ${name} only.`}
+      {`${otherCount} number${otherCount === 1 ? '' : 's'} on other carrier accounts ${otherCount === 1 ? 'is' : 'are'} not shown — this campaign dials through ${name} only.`}
     </p>
   ) : null;
 

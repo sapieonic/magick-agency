@@ -18,12 +18,42 @@ import { CARRIER_ACCOUNT_PAUSE_REASONS } from '@magick-agency/contracts/agency';
 const CRED_A = '11111111-1111-4111-8111-111111111111';
 const SERVICE: AgencyCarrier = { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' };
 const OWN_A: AgencyCarrier = { telephony_provider: 'plivo', telephony_credential_id: CRED_A, label: 'Acme main', status: 'active' };
+const CRED_VL = '44444444-4444-4444-8444-444444444444';
+/** The tenant's own account on the service's carrier (docs/carriers.md CR6, CR10). */
+const OWN_VL: AgencyCarrier = { telephony_provider: 'voicelink', telephony_credential_id: CRED_VL, label: 'Acme direct', status: 'active' };
 
 describe('carrierName', () => {
   it('names the service’s account by alias and a tenant’s by alias and label, never the identifier', () => {
     expect(carrierName(SERVICE)).toBe('Swar');
     expect(carrierName(OWN_A)).toBe('Pravah (Acme main)');
     expect(carrierName({ ...OWN_A, label: null })).toBe('Pravah (your own account)');
+  });
+});
+
+describe('one carrier offered twice: the service’s account and a tenant’s own (CR10)', () => {
+  it('names the two apart, by alias alone and by alias and label, with no vendor name', () => {
+    const options = carrierOptions([SERVICE, OWN_A, OWN_VL], SERVICE_CARRIER);
+    expect(options.map((o) => o.name)).toEqual(['Swar', 'Pravah (Acme main)', 'Swar (Acme direct)']);
+    expect(new Set(options.map((o) => o.key)).size).toBe(3);
+    expect(new Set(options.map((o) => o.name)).size).toBe(3);
+    for (const o of options) expect(o.name).not.toMatch(/voicelink|plivo/i);
+  });
+
+  it('keeps each one’s numbers to itself: a pinned number is never the service’s (CR9)', () => {
+    const pinned = { provider_name: 'voicelink', telephony_credential_id: CRED_VL };
+    const service = { provider_name: 'voicelink', telephony_credential_id: null };
+    expect(numberOnCarrier(pinned, SERVICE_CARRIER)).toBe(false);
+    expect(numberOnCarrier(pinned, OWN_VL)).toBe(true);
+    expect(numberOnCarrier(service, OWN_VL)).toBe(false);
+    expect(numberOnCarrier(service, SERVICE_CARRIER)).toBe(true);
+  });
+
+  it('says a gone tenant account on the service’s carrier is no longer active, without a label', () => {
+    const options = carrierOptions([SERVICE], { telephony_provider: 'voicelink', telephony_credential_id: CRED_VL });
+    expect(options.map((o) => [o.name, o.unavailable])).toEqual([
+      ['Swar', false],
+      ['Swar (account no longer active)', true],
+    ]);
   });
 });
 
