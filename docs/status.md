@@ -57,7 +57,8 @@ A carrier declares which accounts a call may be placed on: the service's own (en
 | 3 Write rules | Done | Campaigns by account mode (CR8), no pinned caller ID on a service-account campaign (CR9), numbers added by hand pinned to a credential and assigned to its tenant (CR6, CR7), capability fields on the provider lists, inbound gated by capability (`inbound_not_supported`, CR11); readiness by account mode (a tenant VoiceLink account needs `VOICELINK_BASE_URL`) |
 | 4 Consoles | Done | Super-admin: Add number with the account picker, Move to a tenant's account, Sync and inbound by capability, a pinned number's account shown; console: carrier accounts named apart without vendor names, pinned VoiceLink recordings played from the carrier's URL after the server's access check (CR12) |
 | Review fixes | Done | An independent review found no critical defect; fixed with tests that fail without them: a 401 after a re-login no longer condemns a tenant credential (CR4), the username fits its column and is unique without case (CR2), existing service numbers can move to a tenant's account (CR6), tenant VoiceLink recordings redirect instead of being fetched through egress that cannot reach them (CR12), two conformance checks that guarded nothing |
-| 5 Ratify | Open | Manas: CR1–CR14 and the questions in `carriers.md` §6 |
+| Manas's answers | Done | CR2, CR4, CR9, CR11, CR13 decided 2026-11-25. Built for them: a concurrency cap per carrier account (migration 0077, a fourth admission scope, super-admin's Concurrent calls), an account that logs in but cannot dial gets its own refusal, a breaker at 10 and the alert `agy-carrier-api-refused`, and the one-off CR9 clean-up script |
+| 5 Ratify | Open | Manas: the rest of CR1–CR14 and the questions left in `carriers.md` §6 |
 
 ### Tidy-up 2026-10-16/17
 

@@ -309,6 +309,12 @@ each `invalidateAccountLimit` / `invalidateProviderLimits` also publishes `accou
 the pacing invalidation bus, so the pacing engine's cached limit is dropped at the same point as the
 guards'. The interface does not change; the agency stop unwraps it.
 
+The super-admin credential routes use the same seam for a credential's own cap (`docs/carriers.md`
+CR13): `PATCH /super-admin/telephony-credentials/:id/concurrency` writes the cap, then calls
+`invalidateCredentialLimit` (the guard's 5 s cap cache, and media workers through the IPC event
+`concurrency.invalidate_credential`); the credential list's `concurrent_calls_in_use` is read with
+`getCredentialCounts`.
+
 ### 3.4 Super-admin credential routes → carrier credential service
 
 The super-admin telephony-credential routes (`api/routes/super-admin-telephony-credentials.routes.ts`,

@@ -97,7 +97,7 @@ in `SERVICE_ADAPTERS`. `webhook-url-builder.ts` reads `descriptor.webhookBaseUrl
 | CR10 | `GET /proxy/agency/carriers` offers the service account of every active carrier that has one (its webhook base is required at load in production, so it is not checked again here), plus every `active` credential of the tenant on a carrier that takes tenant accounts and can dial from this server on a tenant account (`carrierDialReady(provider, 'tenant')`, PL12). The console names each by alias plus account label (PL10). The service account's label is the alias alone | default, pending Manas |
 | CR11 | Inbound stays Plivo-only (`inbound: true` only on Plivo). Every inbound action on a credential (enable, disable, health, re-point and Link) is refused 409 `inbound_not_supported` for a carrier without it; the reads of inbound state still answer. The super-admin console shows inbound controls and the "Sync numbers" button only where the carrier's capabilities allow them. The API now says so (`supports_inbound`, `number_source`) | **Decided** (Manas, 2026-11-25) |
 | CR12 | Recordings of a call pinned to a credential always go through the recording proxy, which first resolves the credential for `recording`, so revoking it ends playback and analysis on every carrier (B21). On a carrier whose recordings are public (`recordingsArePublic`: VoiceLink), the proxy then sends the viewer to the stored URL if its host is on `VOICELINK_RECORDING_ALLOWED_HOSTS`, and never fetches it, since our egress cannot reach VoiceLink's recording host while the viewer's browser can. That means a `302` (`no-store`) for an `<audio src>`, or `{ redirect_url }` for a request that asks for JSON (the console's own fetches). Any other host gets the proxy's usual refusal. Analysis fetches the file server-side, as for the service account. Service-account VoiceLink recordings still go to the client directly | default, pending Manas |
-| CR13 | Concurrency (B22): a VoiceLink call on a tenant account takes the same global, account and per-account provider slots as one on the service account. An account's VoiceLink allocation in `provider_breakdown` covers both its accounts. Allocation per credential is not built | default, pending Manas |
+| CR13 | Concurrency (B22): a VoiceLink call on a tenant account takes the same global, account and per-account provider slots as one on the service account. A tenant carrier credential may also carry its own cap, `max_concurrent_calls` (migration 0077; null is none): at most that many live calls on that carrier account at once, across all the tenant's accounts (a credential serves every account of its tenant, B20). It is in addition to the other scopes, never instead of them, and taken in the same admission (one Redis transaction in provider mode; after global and account on a legacy account). Calls on the service's account take no credential scope. A full cap refuses `carrier_account_concurrency_limit` (429), which every caller treats as `provider_concurrency_limit`: the contact goes back uncharged, nothing pauses, PL11 does not count it, the soft phone says all lines are busy, an inbound call hears busy. With Redis unavailable a capped call is refused. Lowering the cap ends no live call. Set by super-admins (create, or `PATCH …/:id/concurrency`), audited with the previous cap | **Decided** (Manas, 2026-11-25: a cap per credential) |
 | CR14 | Adding a carrier means: a folder `telephony/<carrier>/` with its capabilities (catalogue entry), carrier module, adapter(s), credential spec when it takes tenant accounts, callback routes, recording access per mode, and one line in each registry list. Any piece missing for a declared mode fails `test/unit/telephony/carrier-conformance.test.ts`. No code outside `telephony/` and the carrier's own routes branches on its name | default, pending Manas |
 
 ## 4. Conformance (the guard that makes a new carrier fall into place)
@@ -134,7 +134,7 @@ Answered:
 
 - **CR2:** every tenant's VoiceLink account is on our API host. Decided.
 - **CR11:** 409 is right for `inbound_not_supported`. Decided.
-- **CR13:** a credential gets a concurrency cap of its own. Being built (CR13 is rewritten when it lands).
+- **CR13:** a credential gets a concurrency cap of its own. Built (CR13).
 - **CR4, an account that logs in but cannot dial:** both an alert and a breaker. Built (CR4).
 - **CR9, older campaigns:** a one-off clean-up of service-account campaigns holding pinned caller IDs,
   not a dial-time filter. Built (CR9; the runbook is in `operations.md`).
@@ -151,4 +151,7 @@ Still open:
   the campaign write would close it.
 - **CR4:** does VoiceLink cancel an account's earlier token when it logs in again? The shared login and
   the stale-token check are precautions; the mock does not cancel, so they are not proven necessary.
+- **CR13, pacing:** pacing does not read a credential's cap, so while one binds its ticks keep dialling
+  into `carrier_account_concurrency_limit` refusals (back-pressure, uncharged). The per-account carrier
+  scope has the same known defect, pinned as `it.fails` in `concurrency-cap.test.ts`.
 - Ratifying the rest of CR1–CR14.
