@@ -93,10 +93,16 @@ describe('super-admin telephony credential routes', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.store_available).toBe(true);
-    expect(body.providers).toEqual([expect.objectContaining({
-      provider: 'plivo',
-      fields: [expect.objectContaining({ key: 'auth_id', secret: false }), expect.objectContaining({ key: 'auth_token', secret: true })],
-    })]);
+    expect(body.providers).toEqual([
+      expect.objectContaining({
+        provider: 'plivo',
+        fields: [expect.objectContaining({ key: 'auth_id', secret: false }), expect.objectContaining({ key: 'auth_token', secret: true })],
+      }),
+      expect.objectContaining({
+        provider: 'voicelink', display_name: 'VoiceLink',
+        fields: [expect.objectContaining({ key: 'username', secret: false }), expect.objectContaining({ key: 'password', secret: true })],
+      }),
+    ]);
   });
 
   it('creates (201), audits without the secret, and never echoes it', async () => {

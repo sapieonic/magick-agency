@@ -11,6 +11,7 @@ import type {
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import type { TelephonyConfig } from '../carrier-catalog.js';
 import { plivoSpec } from '../plivo/plivo.credential-spec.js';
+import { voicelinkSpec } from '../voicelink/voicelink.credential-spec.js';
 
 /** The carrier's verdict on a credential. */
 export type CredentialCheck =
@@ -22,6 +23,19 @@ export type CredentialCheck =
 
 /** `json` is read only by `listNumbers`; `check` needs the status alone. */
 export type FetchLike = (url: string, init: RequestInit) => Promise<Pick<Response, 'status'> & Partial<Pick<Response, 'json'>>>;
+
+/**
+ * What a spec's carrier calls (`check`, `listNumbers`) are handed besides the credential: the
+ * transport, and this deployment's carrier env. A carrier whose API host is operator config
+ * (VoiceLink, `VOICELINK_BASE_URL`) reads it from `telephony`, never from tenant data (CR2);
+ * one whose host is a constant in code (Plivo) ignores it.
+ */
+export interface CredentialCallContext {
+  /** The transport. Absent: the global `fetch`. */
+  fetch?: FetchLike;
+  /** `config.telephony`. Absent: a spec that needs it answers `unreachable`. */
+  telephony?: TelephonyConfig;
+}
 
 /** A voice number on the carrier account, normalised to E.164. */
 export interface CarrierNumber {
@@ -57,17 +71,17 @@ export interface CredentialSpec {
   /** The secret value the console's hint is cut from. */
   hintSource(secret: Record<string, string>): string;
   /**
-   * Ask the carrier whether the credential works. The host is fixed here, never taken
-   * from tenant data (SSRF), and redirects are refused so the credential cannot be
-   * forwarded to another host.
+   * Ask the carrier whether the credential works. The host is fixed in code or comes from
+   * operator config (`ctx.telephony`), never from tenant data (SSRF), and redirects are
+   * refused so the credential cannot be forwarded to another host.
    */
-  check(publicConfig: Record<string, string>, secret: Record<string, string>, fetchImpl?: FetchLike): Promise<CredentialCheck>;
+  check(publicConfig: Record<string, string>, secret: Record<string, string>, ctx?: CredentialCallContext): Promise<CredentialCheck>;
   /**
    * The numbers on the carrier account, all pages, for the number sync. Same rules as
    * `check`: fixed host, no redirects, a timeout per page, and a bound on the pages read.
    * Absent: the carrier's numbers are not synced.
    */
-  listNumbers?(publicConfig: Record<string, string>, secret: Record<string, string>, fetchImpl?: FetchLike): Promise<CredentialNumberList>;
+  listNumbers?(publicConfig: Record<string, string>, secret: Record<string, string>, ctx?: CredentialCallContext): Promise<CredentialNumberList>;
   /**
    * Account refs a tenant credential may not name, compared case-insensitively: the service's
    * own account on this carrier, read from env (CR3), so a tenant can never dial on it under a
@@ -87,7 +101,7 @@ export {
 } from '../plivo/plivo.credential-spec.js';
 export { plivoNumberToE164 } from '@magick-agency/domain/plivo-number';
 
-const SPECS: ReadonlyMap<string, CredentialSpec> = new Map([plivoSpec].map((s) => [s.provider, s]));
+const SPECS: ReadonlyMap<string, CredentialSpec> = new Map([plivoSpec, voicelinkSpec].map((s) => [s.provider, s]));
 
 export function findCredentialSpec(provider: string): CredentialSpec | undefined {
   return SPECS.get(provider);

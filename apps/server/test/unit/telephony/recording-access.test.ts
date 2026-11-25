@@ -64,10 +64,47 @@ describe('recording access: VoiceLink (the service account)', () => {
     expect(creds.resolve).not.toHaveBeenCalled();
   });
 
-  it('refuses a VoiceLink call pinned to a tenant credential (an invariant breach, not guessed at)', async () => {
-    const resolve = createRecordingAccessResolver({ voicelinkHosts: VL_HOSTS, credentials: () => source(cred()) });
-    const err = await refusal(resolve(voicelinkCall({ telephony_credential_id: 'cred-1' })));
-    expect(err.reason).toBe('credential_not_expected');
+});
+
+describe('recording access: VoiceLink (a tenant\'s own account, CR12)', () => {
+  const VL_PASSWORD = 'tenant vl password ';
+  const vlCred = (over: Partial<ResolvedCredential> = {}) => cred({
+    provider: 'voicelink', accountRef: 'tenant-vl', publicConfig: { username: 'tenant-vl' },
+    secret: new Secret({ password: VL_PASSWORD }), ...over,
+  });
+  const pinned = (over: Partial<RecordingCallRef> = {}) => voicelinkCall({ telephony_credential_id: 'cred-1', ...over });
+
+  it('resolves the pinned credential for recording first, then the configured hosts with nothing attached', async () => {
+    const creds = source(vlCred());
+    const resolve = createRecordingAccessResolver({ voicelinkHosts: VL_HOSTS, credentials: () => creds });
+    const access = await resolve(pinned());
+    expect(access).toEqual({ allowedHosts: VL_HOSTS, headers: {}, exactHosts: false });
+    expect(creds.resolve).toHaveBeenCalledWith('cred-1', 'recording');
+    // The credential is never sent with the fetch: VoiceLink serves recordings unauthenticated.
+    expect(JSON.stringify(access)).not.toContain(VL_PASSWORD.trim());
+    expect(JSON.stringify(access)).not.toContain('tenant-vl');
+  });
+
+  it('honours the configured hosts, whatever they are', async () => {
+    const resolve = createRecordingAccessResolver({ voicelinkHosts: ['rec.example', 'cdn.example'], credentials: () => source(vlCred()) });
+    expect((await resolve(pinned())).allowedHosts).toEqual(['rec.example', 'cdn.example']);
+  });
+
+  it('a revoked credential ends access (permanent credential_unavailable), with no fallback to the service hosts', async () => {
+    const resolve = createRecordingAccessResolver({
+      voicelinkHosts: VL_HOSTS, credentials: () => source(new CredentialUnavailableError('cred-1', 'status', 'revoked')),
+    });
+    const err = await refusal(resolve(pinned()));
+    expect(err).toMatchObject({ reason: 'credential_unavailable', credentialKind: 'status', provider: 'voicelink', credentialId: 'cred-1' });
+    expect(err.permanent).toBe(true);
+  });
+
+  it.each([
+    ['another tenant', { tenantId: 'ten-2' }],
+    ['another provider (a Plivo credential on a VoiceLink call)', { provider: 'plivo' }],
+  ])('refuses a credential of %s', async (_l, over) => {
+    const resolve = createRecordingAccessResolver({ voicelinkHosts: VL_HOSTS, credentials: () => source(vlCred(over)) });
+    expect((await refusal(resolve(pinned()))).reason).toBe('credential_mismatch');
   });
 });
 

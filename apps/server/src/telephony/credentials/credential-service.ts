@@ -20,7 +20,7 @@ import type {
   TelephonyCredentialNumberSync,
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { CredentialSealer, CredentialSealError, type SealContext } from './credential-sealer.js';
-import { accountRefReserved, findCredentialSpec, type CredentialSpec, type FetchLike } from './credential-specs.js';
+import { accountRefReserved, findCredentialSpec, type CredentialCallContext, type CredentialSpec, type FetchLike } from './credential-specs.js';
 import type { TelephonyConfig } from '../carrier-catalog.js';
 import { Secret, secretHint } from './secret.js';
 import { safeIssues } from './safe-issues.js';
@@ -182,11 +182,18 @@ export class TelephonyCredentialService {
     /** The phone inventory, for `syncNumbers`. */
     numbers?: NumberSyncRepo;
     /**
-     * This deployment's carrier env (`config.telephony`), for the account refs a spec reserves
-     * (`CredentialSpec.reservedAccountRefs`, CR3). Absent: none is reserved.
+     * This deployment's carrier env (`config.telephony`): the account refs a spec reserves
+     * (`CredentialSpec.reservedAccountRefs`, CR3), and the API host of a carrier whose host is
+     * operator config (VoiceLink's `check`, CR2). Absent: none is reserved, and such a carrier
+     * answers every check `unreachable`.
      */
     telephony?: TelephonyConfig;
   }) {}
+
+  /** What a spec's carrier calls are handed: the transport and this deployment's carrier env. */
+  private carrierContext(): CredentialCallContext {
+    return { fetch: this.deps.fetchImpl, telephony: this.deps.telephony };
+  }
 
   get storeAvailable(): boolean {
     return this.deps.sealer !== null;
@@ -218,7 +225,7 @@ export class TelephonyCredentialService {
     if (accountRefReserved(spec, spec.accountRef(pubParsed.data), this.deps.telephony)) return accountRefIsReserved();
     if (!(await this.deps.tenants.findById(input.tenantId))) return fail('tenant_not_found', 'Tenant not found');
 
-    const check = await spec.check(pubParsed.data, secParsed.data, this.deps.fetchImpl);
+    const check = await spec.check(pubParsed.data, secParsed.data, this.carrierContext());
     if (check.result === 'rejected') return fail('carrier_rejected', check.reason);
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
 
@@ -279,7 +286,7 @@ export class TelephonyCredentialService {
     // a credential naming what is now the service's own account takes no new secret.
     if (accountRefReserved(spec, current.account_ref, this.deps.telephony)) return accountRefIsReserved();
 
-    const check = await spec.check(current.public_config as Record<string, string>, secParsed.data, this.deps.fetchImpl);
+    const check = await spec.check(current.public_config as Record<string, string>, secParsed.data, this.carrierContext());
     if (check.result === 'rejected') return fail('carrier_rejected', check.reason);
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
 
@@ -316,7 +323,7 @@ export class TelephonyCredentialService {
     }
     const { row, secret } = opened;
     if (row.status === 'revoked') return fail('invalid_transition', 'A revoked credential cannot be verified');
-    const check = await spec.check(row.public_config as Record<string, string>, secret.reveal(), this.deps.fetchImpl);
+    const check = await spec.check(row.public_config as Record<string, string>, secret.reveal(), this.carrierContext());
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
     const secretVersion = row.secret_version;
     const written = check.result === 'rejected'
@@ -460,7 +467,7 @@ export class TelephonyCredentialService {
       }
       return this.unavailable(err);
     }
-    const list = await spec.listNumbers(opened.row.public_config as Record<string, string>, opened.secret.reveal(), this.deps.fetchImpl);
+    const list = await spec.listNumbers(opened.row.public_config as Record<string, string>, opened.secret.reveal(), this.carrierContext());
     if (list.result === 'rejected') return fail('carrier_rejected', list.reason);
     if (list.result === 'unreachable') return fail('carrier_unreachable', list.reason);
     if (list.result === 'too_many') return fail('too_many_numbers', list.reason);

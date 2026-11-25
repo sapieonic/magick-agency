@@ -271,7 +271,7 @@ describe('Plivo credential check', () => {
   it('asks only Plivo’s fixed host, with Basic auth and redirects refused', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fetchImpl: FetchLike = async (url, init) => { calls.push({ url, init }); return { status: 200 }; };
-    expect(await spec.check(pub, sec, fetchImpl)).toEqual({ result: 'ok' });
+    expect(await spec.check(pub, sec, { fetch: fetchImpl })).toEqual({ result: 'ok' });
     expect(PLIVO_API_BASE).toBe('https://api.plivo.com');
     expect(calls[0]!.url).toBe('https://api.plivo.com/v1/Account/MAABCDEFGHIJKLMNOPQR/');
     expect(calls[0]!.init.redirect).toBe('error');
@@ -283,16 +283,16 @@ describe('Plivo credential check', () => {
   it.each([
     [401, 'rejected'], [403, 'rejected'], [404, 'rejected'], [429, 'unreachable'], [500, 'unreachable'],
   ])('maps HTTP %i to %s', async (status, result) => {
-    expect((await spec.check(pub, sec, async () => ({ status }))).result).toBe(result);
+    expect((await spec.check(pub, sec, { fetch: async () => ({ status }) })).result).toBe(result);
   });
 
   it('maps a network failure or timeout to unreachable, without the error text', async () => {
     const boom: FetchLike = async () => { throw Object.assign(new Error(`failed ${sec.auth_token}`), { name: 'TypeError' }); };
-    const r = await spec.check(pub, sec, boom);
+    const r = await spec.check(pub, sec, { fetch: boom });
     expect(r.result).toBe('unreachable');
     expect(JSON.stringify(r)).not.toContain(sec.auth_token);
     const timeout: FetchLike = async () => { throw Object.assign(new Error('t'), { name: 'TimeoutError' }); };
-    expect(await spec.check(pub, sec, timeout)).toEqual({ result: 'unreachable', reason: 'Plivo did not answer in time' });
+    expect(await spec.check(pub, sec, { fetch: timeout })).toEqual({ result: 'unreachable', reason: 'Plivo did not answer in time' });
   });
 
   it('refuses unknown fields in either part', () => {

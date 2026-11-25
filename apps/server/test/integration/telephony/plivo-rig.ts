@@ -210,7 +210,7 @@ export interface Station {
 let agentSeq = 0;
 
 /** An agent joins `campaignId`, opens the real station socket and goes available. */
-export async function joinAgent(rig: PlivoRig, campaignId: string): Promise<Station> {
+export async function joinAgent(rig: Pick<PlivoRig, 'origin'>, campaignId: string): Promise<Station> {
   const runtime = getAgencyRuntime()!;
   agentSeq += 1;
   const join = await agencyAgentSessionRepository.joinOrRehydrate({

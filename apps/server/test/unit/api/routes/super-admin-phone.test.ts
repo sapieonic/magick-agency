@@ -305,7 +305,8 @@ describe('telephony-provider CRUD (writes removed; the list is kept)', () => {
     // Which carriers take tenant credentials (their numbers are synced, never added by
     // hand) comes from the credential specs, not the name.
     expect(all.json()).toEqual({ providers: [
-      { id: 'tp-1', name: 'voicelink', takes_tenant_credentials: false },
+      // VoiceLink takes both: the service's own account and tenants' (docs/carriers.md CR1).
+      { id: 'tp-1', name: 'voicelink', takes_tenant_credentials: true },
       { id: 'tp-2', name: 'plivo', takes_tenant_credentials: true },
     ] });
     expect(mocks.findAllProviders).toHaveBeenNthCalledWith(1, undefined);

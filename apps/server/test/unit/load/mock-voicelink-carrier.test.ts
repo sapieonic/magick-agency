@@ -32,11 +32,14 @@ const webhookPosts: Array<{ path: string; body: unknown }> = [];
 let carrier: MockVoicelinkCarrier;
 const rng = createRng(LOAD_SEED);
 
-async function login(): Promise<string> {
-  const res = await fetch(`${carrier.baseUrl}/v1/auth/login`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: carrier.username, password: carrier.password }),
+async function loginAs(username: string, password: string): Promise<Response> {
+  return fetch(`${carrier.baseUrl}/v1/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password }),
   });
+}
+
+async function login(username = carrier.username, password = carrier.password): Promise<string> {
+  const res = await loginAs(username, password);
   return ((await res.json()) as { data: { access_token: string } }).data.access_token;
 }
 
@@ -109,6 +112,47 @@ describe(`mock VoiceLink carrier (seed ${LOAD_SEED})`, () => {
     carrier.revokeTokens();
     expect((await addLead(token)).status).toBe(401);
     expect(carrier.requestsTo('add_lead').map((r) => r.status)).toEqual([401, 200, 422, 422, 401]);
+  });
+
+  it('holds several accounts: each token is bound to the account that logged in, every request names it', async () => {
+    carrier.reset();
+    carrier.addAccount('tenant-a', 'pass-a');
+    carrier.addAccount('tenant-b', 'pass-b');
+    expect((await loginAs('tenant-a', 'pass-b')).status).toBe(401);
+    const service = await login();
+    const a = await login('tenant-a', 'pass-a');
+    const b = await login('tenant-b', 'pass-b');
+    expect(new Set([service, a, b]).size).toBe(3);
+    expect((await addLead(a)).status).toBe(200);
+    expect((await addLead(b)).status).toBe(200);
+    expect((await addLead(service)).status).toBe(200);
+    expect(carrier.requestsTo('add_lead').map((r) => r.account)).toEqual(['tenant-a', 'tenant-b', carrier.username]);
+    expect(carrier.requestsTo('login').map((r) => [r.account, r.status])).toEqual([
+      ['tenant-a', 401], [carrier.username, 200], ['tenant-a', 200], ['tenant-b', 200],
+    ]);
+    expect(carrier.requestsAs('tenant-b', 'add_lead')).toHaveLength(1);
+    // Revoking one account's tokens leaves the others'.
+    carrier.revokeTokens('tenant-a');
+    expect((await addLead(a)).status).toBe(401);
+    expect(carrier.requestsTo('add_lead').at(-1)!.account).toBeNull();
+    expect((await addLead(b)).status).toBe(200);
+    expect((await addLead(service)).status).toBe(200);
+  });
+
+  it('scripts an account`s login refusals: the status, for the count given, then the login works', async () => {
+    carrier.reset();
+    carrier.addAccount('tenant-a', 'pass-a');
+    carrier.refuseLogins('tenant-a', 422, 2);
+    expect((await loginAs('tenant-a', 'pass-a')).status).toBe(422);
+    expect((await loginAs('tenant-a', 'pass-a')).status).toBe(422);
+    // Another account is untouched meanwhile; a wrong password is still a 401, not the scripted status.
+    expect((await loginAs(carrier.username, carrier.password)).status).toBe(200);
+    expect((await loginAs('tenant-a', 'pass-a')).status).toBe(200);
+    carrier.refuseLogins('tenant-a', 403);
+    expect((await loginAs('tenant-a', 'nope')).status).toBe(401);
+    expect((await loginAs('tenant-a', 'pass-a')).status).toBe(403);
+    carrier.refuseLogins('tenant-a', null);
+    expect((await loginAs('tenant-a', 'pass-a')).status).toBe(200);
   });
 
   it('applies faults in order, each for exactly its count, then answers normally', async () => {

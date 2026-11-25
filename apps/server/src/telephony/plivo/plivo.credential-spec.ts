@@ -43,7 +43,8 @@ export const plivoSpec: CredentialSpec = {
   accountRef: (p) => p['auth_id']!,
   hintSource: (s) => s['auth_token']!,
 
-  async check(publicConfig, secret, fetchImpl = fetch as FetchLike) {
+  async check(publicConfig, secret, ctx = {}) {
+    const fetchImpl = ctx.fetch ?? (fetch as FetchLike);
     const { authId, headers } = plivoAuth(publicConfig, secret);
     // The regex above already confines the id to [A-Z0-9]; encode anyway.
     const url = `${PLIVO_API_BASE}/v1/Account/${encodeURIComponent(authId)}/`;
@@ -80,7 +81,8 @@ export const plivoSpec: CredentialSpec = {
    * claimed by the main account's credential. A subaccount's (`SA…`) own numbers carry its
    * own id there and are kept.
    */
-  async listNumbers(publicConfig, secret, fetchImpl = fetch as FetchLike) {
+  async listNumbers(publicConfig, secret, ctx = {}) {
+    const fetchImpl = ctx.fetch ?? (fetch as FetchLike);
     const { authId, headers } = plivoAuth(publicConfig, secret);
     const base = `${PLIVO_API_BASE}/v1/Account/${encodeURIComponent(authId)}/Number/`;
     const numbers: CarrierNumber[] = [];

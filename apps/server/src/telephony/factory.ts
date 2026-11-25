@@ -2,12 +2,13 @@
 // service's own carrier account is built from env by `SERVICE_ADAPTERS` (VoiceLink); any name
 // with no entry there throws `Unknown telephony provider: <name>`. An adapter on a tenant's own
 // carrier account (BYOC, decision B18) is built by `TENANT_ADAPTERS` from a credential the
-// credential service resolves (Plivo). A carrier registers one line in the map of each mode its
+// credential service resolves (Plivo, VoiceLink). A carrier registers one line in the map of each mode its
 // catalogue entry declares (`carrier-catalog.ts`, CR14); the conformance test
 // (`test/unit/telephony/carrier-conformance.test.ts`) holds both maps equal to the catalogue.
 import type { TelephonyProvider } from './types.js';
 import type { AppConfig } from '../config/index.js';
 import { VoicelinkAdapter } from './voicelink/voicelink.adapter.js';
+import { createVoicelinkTenantAdapter } from './voicelink/voicelink-tenant.js';
 import { createPlivoAdapter } from './plivo/plivo.adapter.js';
 import { findCarrier } from './carrier-catalog.js';
 import {
@@ -90,13 +91,15 @@ export type ServiceAdapterFactory = (config: AppConfig) => TelephonyProvider;
 const SERVICE_ADAPTERS: ReadonlyMap<string, { settings: (config: AppConfig) => unknown; build: ServiceAdapterFactory }> = new Map([
   ['voicelink', {
     settings: (config: AppConfig) => config.telephony.voicelink,
-    build: (config: AppConfig) => new VoicelinkAdapter(config.telephony.voicelink),
+    build: (config: AppConfig) => new VoicelinkAdapter(config.telephony.voicelink, { accountMode: 'service' }),
   }],
 ]);
 
 /** Tenant-account adapters by provider name: one per carrier whose catalogue entry declares `accounts.tenant`. */
 const TENANT_ADAPTERS: ReadonlyMap<string, TenantAdapterFactory> = new Map<string, TenantAdapterFactory>([
   ['plivo', createPlivoAdapter],
+  // The tenant's own VoiceLink login (CR2, CR4); the API and webhook bases stay this deployment's.
+  ['voicelink', createVoicelinkTenantAdapter],
 ]);
 
 /** The providers with an adapter on the service's own account. The conformance test reads it. */

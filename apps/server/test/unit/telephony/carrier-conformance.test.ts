@@ -5,8 +5,8 @@
 // service and tenant adapter maps (`factory.ts`), the credential specs, and the recording
 // access entries per mode (`recording-access.ts`).
 //
-// The current modes are pinned too: docs/carriers.md step 1 changes no behaviour, so VoiceLink
-// is the service's account only and Plivo tenant accounts only.
+// The current modes are pinned too: VoiceLink takes both the service's account and tenants'
+// (docs/carriers.md step 2, CR2–CR5), Plivo tenant accounts only.
 import { describe, it, expect } from 'vitest';
 import type { AppConfig } from '../../../src/config/index.js';
 import {
@@ -118,6 +118,26 @@ describe('carrier conformance: every list equals the catalogue', () => {
     }
   });
 
+  it('a carrier with both modes reserves its service account`s ref, so no tenant credential can name it (CR3)', () => {
+    const both = names.filter((n) => findCarrier(n)!.accounts.service && findCarrier(n)!.accounts.tenant);
+    for (const name of both) {
+      const spec = findCredentialSpec(name)!;
+      expect(typeof spec.reservedAccountRefs, name).toBe('function');
+      // Whatever the service's account ref is under this env, it is among those reserved.
+      const reserved = spec.reservedAccountRefs!(CONFIG.telephony as TelephonyConfig);
+      expect(reserved.length, name).toBeGreaterThan(0);
+    }
+  });
+
+  it('a tenant adapter is built afresh from the credential, never the service account`s adapter', () => {
+    for (const name of tenantProviderNames().filter((n) => findCarrier(n)!.accounts.service)) {
+      const service = findServiceAdapterFactory(name)!(CONFIG);
+      const tenant = findTenantAdapterFactory(name)!(credentialFor(name), CONFIG);
+      expect(tenant, name).not.toBe(service);
+      expect(tenant.name, name).toBe(name);
+    }
+  });
+
   it('inbound is declared only on tenant accounts, by a carrier whose tenant adapter serves it', () => {
     for (const name of names.filter((n) => findCarrier(n)!.inbound)) {
       expect(carrierTakesTenantAccounts(name), name).toBe(true);
@@ -135,10 +155,10 @@ describe('carrier conformance: every list equals the catalogue', () => {
   });
 });
 
-describe('carrier conformance: the modes today (docs/carriers.md step 1: no behaviour change)', () => {
-  it('VoiceLink is the service’s account only, not inbound, its service recordings public', () => {
+describe('carrier conformance: the modes today', () => {
+  it('VoiceLink is the service’s account and tenants’ own (CR1), not inbound (CR11), its service recordings public', () => {
     expect(findCarrier('voicelink')).toMatchObject({
-      accounts: { service: true, tenant: false }, inbound: false, serviceRecordingsArePublic: true, cancelsRinging: false,
+      accounts: { service: true, tenant: true }, inbound: false, serviceRecordingsArePublic: true, cancelsRinging: false,
     });
   });
 
@@ -151,7 +171,7 @@ describe('carrier conformance: the modes today (docs/carriers.md step 1: no beha
 
 describe('carrier catalogue: the mode helpers', () => {
   it.each([
-    ['voicelink', { service: true, tenant: false, inbound: false }],
+    ['voicelink', { service: true, tenant: true, inbound: false }],
     ['plivo', { service: false, tenant: true, inbound: true }],
   ] as const)('%s reads its own entry', (name, want) => {
     expect(carrierHasServiceAccount(name)).toBe(want.service);
@@ -161,7 +181,7 @@ describe('carrier catalogue: the mode helpers', () => {
 
   it('a row’s account mode: a null credential needs a service account, a set one tenant accounts', () => {
     expect(carrierAccountModeAllowed('voicelink', null)).toBe(true);
-    expect(carrierAccountModeAllowed('voicelink', 'cred-1')).toBe(false);
+    expect(carrierAccountModeAllowed('voicelink', 'cred-1')).toBe(true);
     expect(carrierAccountModeAllowed('plivo', null)).toBe(false);
     expect(carrierAccountModeAllowed('plivo', 'cred-1')).toBe(true);
   });

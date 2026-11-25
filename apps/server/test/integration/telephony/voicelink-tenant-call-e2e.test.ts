@@ -1,0 +1,256 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * A campaign dialling on a tenant's OWN VoiceLink login, end to end (docs/carriers.md CR2–CR5,
+ * CR12): the pacing loop dials the campaign's pinned credential through the real bridge, the
+ * tenant factory and `VoicelinkAdapter`; the mock VoiceLink carrier (two accounts: the service's
+ * and the tenant's) takes the `add_lead`, dials our media socket, streams A-law and posts its
+ * status webhooks to the real routes. `voicelink-tenant-rig.ts` says what is real (everything in
+ * the call path).
+ *
+ *  (a) a full call: `add_lead` on the TENANT's login (never the service's), from the tenant's
+ *      DID, with the stream URL in it → pstn-stream → the customer heard by the agent → the
+ *      status webhooks → `completed`, the row keeping the credential; the recording URL is
+ *      persisted, offered to the client as the proxy path (never the raw URL, CR12), and served
+ *      through the proxy with nothing attached; once the credential is revoked it is not;
+ *  (b) a login the carrier refuses 401 pauses the campaign `carrier_auth`, audited, and marks
+ *      the credential `invalid`; no `add_lead` is sent and the contact is returned uncharged;
+ *  (c) a credential disabled while its campaign runs: the dial is refused before the carrier
+ *      and the campaign is paused `carrier_account_unavailable`, audited;
+ *  (d) a service-account VoiceLink campaign running beside the tenant's dials on the service's
+ *      own login, each from its own DID; neither login ever carries the other's dial;
+ *  (e) the service's own username is refused as a tenant credential (CR3).
+ */
+
+const { env } = vi.hoisted(() => {
+  const e = {
+    FF_AGENCY_DIALER: 'true',
+    VOICELINK_WEBHOOK_BASE_URL: 'https://agency.test/api/v1/webhooks/voicelink',
+    VOICELINK_USERNAME: 'mock-vl-user',
+    VOICELINK_PASSWORD: 'mock-vl-password',
+    VOICELINK_LOGIN_TIMEOUT_MS: '3000',
+    VOICELINK_ADD_LEAD_TIMEOUT_MS: '3000',
+    MAX_CONCURRENT_CALLS: '100000',
+    RATE_LIMIT_WEBHOOK_MAX: '1000000',
+    RATE_LIMIT_CARRIER_MEDIA_MAX: '1000000',
+    LOG_LEVEL: 'warn',
+  };
+  Object.assign(process.env, e);
+  return { env: e };
+});
+
+import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
+import { auditLogger } from '../../../src/audit/audit-logger.js';
+import { campaignCredentialStartRefusal } from '../../../src/agency/campaign-carrier.js';
+import { signRecordingUrl } from '../../../src/utils/recording-url.js';
+import { resolveClientRecordingUrl } from '../../../src/utils/recording-url-resolver.js';
+import { bits, carrierScripts, isLoudPcm16, type LeadRequest } from '../../mocks/voicelink/index.js';
+import { attemptOf, callRow, campaignRow, joinAgent, waitFor, type Station } from './plivo-rig.js';
+import {
+  ACCOUNT, ADMIN, SERVICE_DID, SERVICE_USER, TENANT, TENANT_DID, TENANT_PASSWORD, TENANT_USER,
+  VOICELINK_TENANT_E2E_ENV, closeVoicelinkTenantDb, initVoicelinkTenantDb, startVoicelinkTenantRig, voicelinkCampaign,
+  type VoicelinkTenantRig,
+} from './voicelink-tenant-rig.js';
+
+const TERMINAL = new Set(['completed', 'no_answer', 'busy', 'canceled', 'failed']);
+const REC_URL = 'https://recording.app.voicelink.co.in/client_77/2026-11-25/tenant-call.mp3';
+
+let rig: VoicelinkTenantRig | null = null;
+const stations: Station[] = [];
+
+beforeAll(() => {
+  expect(env).toEqual(VOICELINK_TENANT_E2E_ENV); // one source of truth for the env the rig expects
+  initVoicelinkTenantDb();
+});
+beforeEach(async () => { rig = await startVoicelinkTenantRig(); });
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  for (const s of stations.splice(0)) await s.close();
+  await rig?.carrier.settled();
+  await rig?.stop();
+  rig = null;
+  vi.restoreAllMocks();
+});
+afterAll(closeVoicelinkTenantDb);
+
+async function terminalRow(callId: string, extra: (row: NonNullable<Awaited<ReturnType<typeof callRow>>>) => boolean = () => true) {
+  return waitFor(`call ${callId} terminal`, async () => {
+    const row = await callRow(callId);
+    return row && TERMINAL.has(row.status) && row.ended_at && extra(row) ? row : null;
+  }, 20_000, async () => JSON.stringify(await callRow(callId)));
+}
+
+async function contactReturned(contactId: string) {
+  return waitFor('the contact returned', async () => {
+    const { rows } = await getTestPool().query<{ state: string; due: boolean; our_fault_attempts: number }>(
+      `SELECT state, next_attempt_at <= now() + interval '1 second' AS due, our_fault_attempts
+         FROM agency_contacts WHERE id = $1`, [contactId]);
+    return rows[0]!.state === 'pending' ? rows[0] : null;
+  });
+}
+
+describe('a call on the tenant`s own VoiceLink login, through the real server', () => {
+  it('(a) dials on the tenant login from its DID; full call; the credential stays on the row; the recording is proxied, never raw', async () => {
+    const r = rig!;
+    const pattern = Array.from({ length: 25 }, (_, i) => i % 3 !== 1);
+    r.carrier.setScript(() => carrierScripts.answered({ pattern, recordingUrl: REC_URL }).script);
+    const { campaignId } = await voicelinkCampaign(r);
+    const station = await joinAgent(r, campaignId);
+    stations.push(station);
+
+    const call = await waitFor('the lead reached the carrier', () => r.carrier.callOrder[0]);
+    const attempt = await waitFor('the attempt', async () => {
+      const a = await attemptOf(campaignId);
+      return a?.webrtc_call_id ? a : null;
+    });
+    expect(attempt.webrtc_call_id).toBe(call.callId);
+
+    // The dial: the tenant's login, the tenant's token, the tenant's DID, our stream URL.
+    const [login] = r.carrier.requestsTo('login');
+    expect(login).toMatchObject({ account: TENANT_USER, status: 200 });
+    expect(login!.body).toEqual({ username: TENANT_USER, password: TENANT_PASSWORD });
+    const [lead] = r.carrier.requestsTo('add_lead');
+    expect(lead).toMatchObject({ account: TENANT_USER, status: 200 });
+    expect(lead!.body).toMatchObject({ did_number: TENANT_DID.slice(1), customer_number: '9812345678', country_code: '91' });
+    expect((lead!.body as LeadRequest).websocket_url).toMatch(new RegExp(`^wss://agency\\.test/api/v1/webrtc-call/${call.callId}/pstn-stream\\?token=`));
+    expect(r.carrier.requestsAs(SERVICE_USER)).toEqual([]);
+
+    // The customer's audio reached the agent, in order.
+    await waitFor('the customer heard by the agent', () => station.media.length >= pattern.length, 20_000,
+      () => `${station.media.length} frames`);
+    expect(bits(station.media.slice(0, pattern.length).map(isLoudPcm16))).toBe(bits(pattern));
+    await r.carrier.settled();
+
+    const row = await terminalRow(call.callId, (x) => x.recording_url !== null);
+    expect(row).toMatchObject({
+      status: 'completed', provider: 'voicelink', telephony_credential_id: r.credentialId,
+      caller_id: TENANT_DID, recording_url: REC_URL,
+    });
+    expect(row.answered_at).not.toBeNull();
+    expect(call.webhookResults.every((w) => w.status === 200)).toBe(true);
+    await waitFor('attempt ended connected', async () => (await attemptOf(campaignId))?.outcome === 'connected');
+
+    // CR12: the client is handed the proxy path, never the carrier's URL, though VoiceLink's
+    // service-account recordings are public.
+    const proxyPath = `/api/v1/webrtc-recordings/${call.callId}`;
+    expect(resolveClientRecordingUrl({
+      recordingUrl: row.recording_url, provider: row.provider, telephonyCredentialId: row.telephony_credential_id, proxyPath,
+    })).toBe(proxyPath);
+    expect(resolveClientRecordingUrl({
+      recordingUrl: row.recording_url, provider: row.provider, telephonyCredentialId: null, proxyPath,
+    })).toBe(REC_URL);
+
+    // Served through the proxy, from the configured host, with nothing attached.
+    const upstream = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      void url; void init;
+      return new Response(Buffer.from('ID3 tenant recording'), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
+    });
+    vi.stubGlobal('fetch', upstream);
+    const signed = signRecordingUrl({ callId: call.callId, tenantId: TENANT, accountId: ACCOUNT }).path;
+    const played = await r.app.inject({ method: 'GET', url: signed });
+    expect(played.statusCode).toBe(200);
+    expect(played.body).toBe('ID3 tenant recording');
+    expect(upstream).toHaveBeenCalledTimes(1);
+    const [fetchedUrl, fetchInit] = upstream.mock.calls[0]!;
+    expect(String(fetchedUrl)).toBe(REC_URL);
+    expect(fetchInit?.headers).toEqual({});
+    expect(JSON.stringify(fetchInit)).not.toContain(TENANT_PASSWORD.trim());
+
+    // Revoking the credential ends playback (B21), with nothing fetched.
+    await getTestPool().query(`UPDATE agency_campaigns SET status = 'stopped' WHERE id = $1`, [campaignId]);
+    const revoked = await r.credentials.revoke(r.credentialId, ADMIN);
+    expect(revoked.ok).toBe(true);
+    const gone = await r.app.inject({ method: 'GET', url: signRecordingUrl({ callId: call.callId, tenantId: TENANT, accountId: ACCOUNT }).path });
+    expect(gone.statusCode).toBe(404);
+    expect(gone.json()).toMatchObject({ code: 'recording_unavailable' });
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(r.bridge.getActiveCount()).toBe(0);
+  }, 60_000);
+
+  // The audit calls below follow a row the test has waited for, and are waited for too (the
+  // writer audits once its own connection has read Postgres's reply; see plivo-call-e2e.test.ts).
+  it('(b) a login VoiceLink refuses 401 pauses the campaign `carrier_auth`, audited, and marks the credential invalid', async () => {
+    const r = rig!;
+    const audit = vi.spyOn(auditLogger, 'log');
+    r.carrier.refuseLogins(TENANT_USER, 401);
+    const { campaignId, contactId } = await voicelinkCampaign(r);
+    stations.push(await joinAgent(r, campaignId));
+    await waitFor('campaign paused', async () => (await campaignRow(campaignId)).status === 'paused');
+    expect(await campaignRow(campaignId)).toEqual({ status: 'paused', pause_reason: 'carrier_auth' });
+    expect(r.carrier.requestsTo('login').map((l) => [l.account, l.status])).toEqual([[TENANT_USER, 401]]);
+    expect(r.carrier.requestsTo('add_lead')).toEqual([]);
+    await vi.waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'agency_campaign.auto_paused',
+      eventData: expect.objectContaining({ campaign_id: campaignId, reason: 'carrier_auth', telephony_credential_id: r.credentialId }),
+    })));
+    expect(await contactReturned(contactId)).toEqual({ state: 'pending', due: true, our_fault_attempts: 0 });
+
+    const credential = await waitFor('the credential marked invalid', async () => {
+      const row = await r.credentials.get(r.credentialId);
+      return row?.status === 'invalid' ? row : null;
+    });
+    expect(credential).toMatchObject({ secret_version: 1, last_error: 'The carrier refused the credential on a dial (HTTP 401)' });
+    await vi.waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'telephony_credential.carrier_refused', actor: 'system:carrier-auth',
+      eventData: expect.objectContaining({ telephony_credential_id: r.credentialId, secret_version: 1, status: 'invalid' }),
+    })));
+    expect(JSON.stringify(audit.mock.calls)).not.toContain(TENANT_PASSWORD.trim());
+    expect(await campaignCredentialStartRefusal({ telephony_credential_id: r.credentialId }))
+      .toMatchObject({ code: 'telephony_credential_not_active' });
+    // Once VoiceLink takes the login again, a verify brings the credential back.
+    r.carrier.refuseLogins(TENANT_USER, null);
+    const verified = await r.credentials.verify(r.credentialId, ADMIN);
+    expect(verified.ok && verified.value).toMatchObject({ status: 'active', last_error: null });
+  }, 60_000);
+
+  it('(c) a credential disabled while its campaign runs pauses it `carrier_account_unavailable`; nothing reaches the carrier', async () => {
+    const r = rig!;
+    const audit = vi.spyOn(auditLogger, 'log');
+    const { campaignId, contactId } = await voicelinkCampaign(r);
+    expect((await r.credentials.disable(r.credentialId, ADMIN)).ok).toBe(true);
+    stations.push(await joinAgent(r, campaignId));
+    await waitFor('campaign paused', async () => (await campaignRow(campaignId)).status === 'paused');
+    expect(await campaignRow(campaignId)).toEqual({ status: 'paused', pause_reason: 'carrier_account_unavailable' });
+    expect(r.carrier.requests).toEqual([]);
+    await vi.waitFor(() => expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'agency_campaign.auto_paused',
+      eventData: expect.objectContaining({ campaign_id: campaignId, reason: 'carrier_account_unavailable', telephony_credential_id: r.credentialId }),
+    })));
+    expect(await contactReturned(contactId)).toEqual({ state: 'pending', due: true, our_fault_attempts: 0 });
+  }, 60_000);
+
+  it('(d) a service-account VoiceLink campaign beside it dials on the service login; each login carries only its own dial', async () => {
+    const r = rig!;
+    r.carrier.setScript(() => carrierScripts.noAnswer().script);
+    const tenant = await voicelinkCampaign(r, { destination: '+919812340001' });
+    const service = await voicelinkCampaign(r, { credentialId: null, destination: '+919812340002' });
+    stations.push(await joinAgent(r, tenant.campaignId), await joinAgent(r, service.campaignId));
+    await r.carrier.waitForCalls(2);
+    await r.carrier.settled();
+
+    const leads = r.carrier.requestsTo('add_lead');
+    expect(leads.map((l) => l.status)).toEqual([200, 200]);
+    const byDid = new Map(leads.map((l) => [(l.body as LeadRequest).did_number, l]));
+    expect(byDid.get(TENANT_DID.slice(1))).toMatchObject({ account: TENANT_USER, body: expect.objectContaining({ customer_number: '9812340001' }) });
+    expect(byDid.get(SERVICE_DID.slice(1))).toMatchObject({ account: SERVICE_USER, body: expect.objectContaining({ customer_number: '9812340002' }) });
+    expect(r.carrier.requestsTo('login').map((l) => l.account).sort()).toEqual([SERVICE_USER, TENANT_USER].sort());
+
+    const calls = await waitFor('both attempts placed', async () => {
+      const t = await attemptOf(tenant.campaignId);
+      const s = await attemptOf(service.campaignId);
+      return t?.webrtc_call_id && s?.webrtc_call_id ? { t: t.webrtc_call_id, s: s.webrtc_call_id } : null;
+    });
+    expect(await terminalRow(calls.t)).toMatchObject({ status: 'no_answer', telephony_credential_id: r.credentialId, caller_id: TENANT_DID });
+    expect(await terminalRow(calls.s)).toMatchObject({ status: 'no_answer', telephony_credential_id: null, caller_id: SERVICE_DID });
+  }, 60_000);
+
+  it('(e) the service`s own VoiceLink username is refused as a tenant credential, before any login', async () => {
+    const r = rig!;
+    const refused = await r.credentials.create({
+      tenantId: TENANT, provider: 'voicelink', label: 'Not ours', adminId: ADMIN,
+      fields: { username: SERVICE_USER.toUpperCase(), password: 'anything' },
+    });
+    expect(!refused.ok && refused.code).toBe('account_ref_reserved');
+    expect(r.carrier.requests).toEqual([]);
+  }, 30_000);
+});

@@ -164,6 +164,11 @@ const RECORDING_ACCESS: ReadonlyMap<string, CarrierRecordingAccess> = new Map<st
     // The service's own account: public carrier-hosted MP3s, nothing attached, the
     // configured allow-list (exact-or-subdomain, as before).
     service: async (_call, deps) => ({ allowedHosts: deps.voicelinkHosts, headers: {}, exactHosts: false }),
+    // A tenant's own account (CR12): the same configured hosts and nothing attached, since
+    // VoiceLink serves recordings unauthenticated. The wrapper has already opened the pinned
+    // credential for `recording`, so revoking it ends access here as on every carrier (B21);
+    // the credential itself is never sent.
+    tenant: async (_call, _credential, deps) => ({ allowedHosts: deps.voicelinkHosts, headers: {}, exactHosts: false }),
   }],
   ['plivo', {
     // A tenant's own Plivo account: HTTP Basic auth_id:auth_token, to Plivo's media hosts

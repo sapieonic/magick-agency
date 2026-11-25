@@ -7,9 +7,10 @@ export const voicelinkCapabilities: CarrierDescriptor = {
   name: 'voicelink',
   // No hangup endpoint for a leg still ringing: it rings on (SP3).
   cancelsRinging: false,
-  // The service's own account only, configured from env (B18). Tenant accounts are
-  // docs/carriers.md step 2 (CR2–CR5).
-  accounts: { service: true, tenant: false },
+  // The service's own account, configured from env (B18), and tenants' own VoiceLink logins
+  // (CR2–CR5): the credential spec, tenant adapter and recording entry are in this folder and
+  // in `recording-access.ts`.
+  accounts: { service: true, tenant: true },
   inbound: false,
   // Public https MP3s needing no auth, which the viewer's browser can reach where our egress
   // cannot (`utils/recording-url-resolver.ts`).

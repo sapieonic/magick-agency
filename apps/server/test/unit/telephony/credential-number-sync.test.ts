@@ -60,7 +60,7 @@ describe('plivoNumberToE164', () => {
 describe('the Plivo spec\'s listNumbers', () => {
   it('reads the account\'s numbers from the fixed host with Basic auth, no redirects and a timeout', async () => {
     const c = carrier([page([num('14155550100', { alias: '  Sales line ' }), num('+14155550101')])]);
-    const out = await spec.listNumbers!(pub, sec, c.fetchImpl);
+    const out = await spec.listNumbers!(pub, sec, { fetch: c.fetchImpl });
     expect(out).toEqual({
       result: 'ok', listed: 2, skipped: [],
       numbers: [{ phone_number: '+14155550100', label: 'Sales line' }, { phone_number: '+14155550101', label: null }],
@@ -79,7 +79,7 @@ describe('the Plivo spec\'s listNumbers', () => {
       num('14155550100'), num('14155550101', { voice_enabled: false }), num('14155550102', { voice_enabled: undefined }),
       num('0800'), num('x'.repeat(40)), null as unknown as Obj,
     ])]);
-    const out = await spec.listNumbers!(pub, sec, c.fetchImpl);
+    const out = await spec.listNumbers!(pub, sec, { fetch: c.fetchImpl });
     expect(out).toEqual({
       result: 'ok', listed: 6, numbers: [{ phone_number: '+14155550100', label: null }],
       skipped: [
@@ -101,7 +101,7 @@ describe('the Plivo spec\'s listNumbers', () => {
       num('14155550104', { sub_account: SUB, voice_enabled: false }),
       num('14155550105', { sub_account: { auth_id: SUB } }),
     ])]);
-    const out = await spec.listNumbers!(pub, sec, c.fetchImpl);
+    const out = await spec.listNumbers!(pub, sec, { fetch: c.fetchImpl });
     expect(out).toEqual({
       result: 'ok', listed: 6,
       numbers: [{ phone_number: '+14155550100', label: null }, { phone_number: '+14155550103', label: null }],
@@ -119,7 +119,7 @@ describe('the Plivo spec\'s listNumbers', () => {
       num('14155550102', { sub_account: `/v1/Account/MAZZZZZZZZZZZZZZZZZZ/Subaccount/${SUB}/` }),
       num('14155550103', { sub_account: 'SAOTHEROTHEROTHER000' }),
     ])]);
-    const out = await spec.listNumbers!({ auth_id: SUB }, sec, c.fetchImpl);
+    const out = await spec.listNumbers!({ auth_id: SUB }, sec, { fetch: c.fetchImpl });
     expect(out).toEqual({
       result: 'ok', listed: 3,
       numbers: [{ phone_number: '+14155550101', label: null }, { phone_number: '+14155550102', label: null }],
@@ -139,7 +139,7 @@ describe('the Plivo spec\'s listNumbers', () => {
     const c = carrier([
       page(full(0), 'https://evil.example/steal'), page(full(20), '/v1/Account/OTHER/Number/?offset=999'), page([num('14155559999')]),
     ]);
-    const out = await spec.listNumbers!(pub, sec, c.fetchImpl);
+    const out = await spec.listNumbers!(pub, sec, { fetch: c.fetchImpl });
     expect(out).toMatchObject({ result: 'ok', listed: 41 });
     expect(c.calls.map((x) => x.url)).toEqual([
       `${BASE}?limit=20&offset=0`, `${BASE}?limit=20&offset=20`, `${BASE}?limit=20&offset=40`,
@@ -148,13 +148,13 @@ describe('the Plivo spec\'s listNumbers', () => {
 
   it('stops on a full page whose meta.next is null', async () => {
     const c = carrier([page(full(0), null)]);
-    expect(await spec.listNumbers!(pub, sec, c.fetchImpl)).toMatchObject({ result: 'ok', listed: 20 });
+    expect(await spec.listNumbers!(pub, sec, { fetch: c.fetchImpl })).toMatchObject({ result: 'ok', listed: 20 });
     expect(c.calls).toHaveLength(1);
   });
 
   it(`reads at most ${PLIVO_NUMBERS_MAX_PAGES} pages, then refuses the incomplete list rather than returning it`, async () => {
     const c = carrier([page(full(0), '/next')]); // every page full, always another
-    const out = await spec.listNumbers!(pub, sec, c.fetchImpl);
+    const out = await spec.listNumbers!(pub, sec, { fetch: c.fetchImpl });
     expect(out.result).toBe('too_many');
     expect(c.calls).toHaveLength(PLIVO_NUMBERS_MAX_PAGES);
     expect(c.calls.at(-1)!.url).toBe(`${BASE}?limit=20&offset=${(PLIVO_NUMBERS_MAX_PAGES - 1) * PLIVO_NUMBERS_PAGE_SIZE}`);
@@ -166,19 +166,19 @@ describe('the Plivo spec\'s listNumbers', () => {
     [{ objects: 'nope' }, 'unreachable'], [null, 'unreachable'],
   ])('a carrier answer of %o is %s, and never echoes the token', async (answer, result) => {
     const c = carrier([answer]);
-    const out = await spec.listNumbers!(pub, sec, c.fetchImpl);
+    const out = await spec.listNumbers!(pub, sec, { fetch: c.fetchImpl });
     expect(out.result).toBe(result);
     expect(JSON.stringify(out)).not.toContain(TOKEN);
   });
 
   it('a failure on a later page discards the pages already read', async () => {
     const c = carrier([page(full(0), '/next'), { status: 503 }]);
-    expect(await spec.listNumbers!(pub, sec, c.fetchImpl)).toEqual({ result: 'unreachable', reason: 'Plivo answered HTTP 503' });
+    expect(await spec.listNumbers!(pub, sec, { fetch: c.fetchImpl })).toEqual({ result: 'unreachable', reason: 'Plivo answered HTTP 503' });
   });
 
   it('an unreadable body (a JSON parse error) is unreachable', async () => {
     const fetchImpl: FetchLike = async () => ({ status: 200, json: async () => { throw new SyntaxError('bad json'); } });
-    expect(await spec.listNumbers!(pub, sec, fetchImpl)).toEqual({ result: 'unreachable', reason: 'Plivo sent an unreadable number list' });
+    expect(await spec.listNumbers!(pub, sec, { fetch: fetchImpl })).toEqual({ result: 'unreachable', reason: 'Plivo sent an unreadable number list' });
   });
 });
 
