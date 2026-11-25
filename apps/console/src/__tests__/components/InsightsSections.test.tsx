@@ -701,7 +701,7 @@ describe('the lifecycle panel (Settings tab)', () => {
       transitions: [{ to_status: 'paused', at: '2026-11-04T09:00:00.000Z', actor: null, reason: 'carrier_refusing_calls' }],
     }} />);
     const items = Array.from(screen.getByTestId('insights-transitions').querySelectorAll('li')).map((li) => li.textContent);
-    expect(items[0]).toMatch(/automatically: the carrier refused several of this campaign’s calls in a row\. Contact support to have the carrier account’s destinations, balance and caller IDs checked, then resume\.$/);
+    expect(items[0]).toMatch(/automatically: the carrier refused several of this campaign’s calls in a row\. Contact support to have the carrier account’s destinations, balance, caller IDs and access checked, then resume\.$/);
   });
 });
 

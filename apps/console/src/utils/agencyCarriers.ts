@@ -201,7 +201,7 @@ export const CARRIER_PAUSE_COPY: Record<CarrierAccountPauseReason, CarrierPauseC
   carrier_refusing_calls: {
     by: 'The carrier',
     cause: 'the carrier refused several of this campaign’s calls in a row',
-    action: 'Contact support to have the carrier account’s destinations, balance and caller IDs checked, then resume.',
+    action: 'Contact support to have the carrier account’s destinations, balance, caller IDs and access checked, then resume.',
   },
 };
 
