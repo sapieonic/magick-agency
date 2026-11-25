@@ -318,14 +318,16 @@ describe('telephony-provider CRUD (writes removed; the list is kept)', () => {
   // The GET list is kept so the console can pick the seeded provider's id for
   // POST /phone-numbers.
   it('GET /telephony-providers lists the providers and forwards ?status', async () => {
+    // VoiceLink as the real catalogue declares it: both account modes (docs/carriers.md CR1).
+    carriers['voicelink'] = HYBRID;
     const app = await buildApp();
     mocks.findAllProviders.mockResolvedValue([{ id: 'tp-1', name: 'voicelink' }, { id: 'tp-2', name: 'plivo' }]);
     const all = await app.inject({ method: 'GET', url: '/super-admin/telephony-providers' });
     const active = await app.inject({ method: 'GET', url: '/super-admin/telephony-providers?status=active' });
 
     expect(all.statusCode).toBe(200);
-    // Which carriers take tenant credentials (their numbers are synced, never added by
-    // hand) comes from the credential specs, not the name.
+    // Each carrier's account modes, number source and inbound come from the catalogue and
+    // its credential spec, never from the name.
     expect(all.json()).toEqual({ providers: [
       // VoiceLink takes both: the service's own account and tenants' (docs/carriers.md CR1);
       // its tenant numbers are added by hand (CR6).
