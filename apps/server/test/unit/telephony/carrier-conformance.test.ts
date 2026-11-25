@@ -26,7 +26,7 @@ import {
   serviceProviderNames,
   tenantProviderNames,
 } from '../../../src/telephony/factory.js';
-import { credentialSpecs, findCredentialSpec } from '../../../src/telephony/credentials/credential-specs.js';
+import { accountRefReserved, credentialSpecs, findCredentialSpec } from '../../../src/telephony/credentials/credential-specs.js';
 import { recordingAccessModes, recordingAccessProviders } from '../../../src/telephony/recording-access.js';
 import type { ResolvedCredential } from '../../../src/telephony/credentials/credential-service.js';
 import type { InboundCarrierApi } from '../../../src/telephony/credentials/inbound-service.js';
@@ -42,10 +42,38 @@ const baseFor = (name: string) => `https://srv.test/api/v1/webhooks/${name}-from
 const CONFIG = {
   telephony: {
     requireVoicelink: false,
-    voicelink: { baseUrl: 'https://vl.test', username: 'u', password: 'p', webhookBaseUrl: baseFor('voicelink'), defaultCountryCode: '91' },
+    voicelink: {
+      baseUrl: 'https://vl.test', username: 'Service-VL-Login', password: 'service-vl-password',
+      webhookBaseUrl: baseFor('voicelink'), defaultCountryCode: '91',
+    },
     plivo: { webhookBaseUrl: baseFor('plivo') },
   },
 } as unknown as AppConfig;
+
+/**
+ * The service account's own account ref and secrets under {@link CONFIG}, per carrier that
+ * supports the service's account and tenant accounts both. A carrier added with both modes must
+ * be added here, or the tests below fail for it.
+ */
+const SERVICE_ACCOUNT: Record<string, { ref: string; secrets: string[] }> = {
+  voicelink: { ref: 'Service-VL-Login', secrets: ['Service-VL-Login', 'service-vl-password'] },
+};
+
+/** Every string reachable from `root` through own properties, Maps, Sets and arrays (cycles cut). */
+function reachableStrings(root: unknown): string[] {
+  const out: string[] = [];
+  const seen = new Set<unknown>();
+  const visit = (v: unknown): void => {
+    if (typeof v === 'string') { out.push(v); return; }
+    if (!v || typeof v !== 'object' || seen.has(v)) return;
+    seen.add(v);
+    if (v instanceof Map) { for (const [k, x] of v) { visit(k); visit(x); } return; }
+    if (v instanceof Set || Array.isArray(v)) { for (const x of v) visit(x); return; }
+    for (const key of Object.getOwnPropertyNames(v)) visit((v as Record<string, unknown>)[key]);
+  };
+  visit(root);
+  return out;
+}
 
 /** A credential for `provider` built from its spec's own fields, every value one plain token. */
 function credentialFor(provider: string): ResolvedCredential {
@@ -120,21 +148,35 @@ describe('carrier conformance: every list equals the catalogue', () => {
 
   it('a carrier with both modes reserves its service account`s ref, so no tenant credential can name it (CR3)', () => {
     const both = names.filter((n) => findCarrier(n)!.accounts.service && findCarrier(n)!.accounts.tenant);
+    expect(both.length).toBeGreaterThan(0);
     for (const name of both) {
       const spec = findCredentialSpec(name)!;
+      const own = SERVICE_ACCOUNT[name];
+      expect(own, `${name}: list its service account under SERVICE_ACCOUNT`).toBeDefined();
       expect(typeof spec.reservedAccountRefs, name).toBe('function');
-      // Whatever the service's account ref is under this env, it is among those reserved.
-      const reserved = spec.reservedAccountRefs!(CONFIG.telephony as TelephonyConfig);
-      expect(reserved.length, name).toBeGreaterThan(0);
+      const telephony = CONFIG.telephony as TelephonyConfig;
+      expect(spec.reservedAccountRefs!(telephony), name).toContain(own!.ref);
+      // And a tenant's form naming it, in any case, is refused as reserved.
+      const field = spec.fields.find((f) => !f.secret)!.key;
+      for (const typed of [own!.ref, own!.ref.toUpperCase(), ` ${own!.ref.toLowerCase()} `]) {
+        const parsed = spec.publicSchema.parse({ [field]: typed });
+        expect(accountRefReserved(spec, spec.accountRef(parsed), telephony), `${name}: ${typed}`).toBe(true);
+      }
     }
   });
 
-  it('a tenant adapter is built afresh from the credential, never the service account`s adapter', () => {
-    for (const name of tenantProviderNames().filter((n) => findCarrier(n)!.accounts.service)) {
-      const service = findServiceAdapterFactory(name)!(CONFIG);
-      const tenant = findTenantAdapterFactory(name)!(credentialFor(name), CONFIG);
-      expect(tenant, name).not.toBe(service);
-      expect(tenant.name, name).toBe(name);
+  it('a tenant adapter holds none of the service account`s login: it is built from the credential alone', () => {
+    const both = tenantProviderNames().filter((n) => findCarrier(n)!.accounts.service);
+    expect(both.length).toBeGreaterThan(0);
+    for (const name of both) {
+      const own = SERVICE_ACCOUNT[name]!;
+      // Positive control: the service adapter does carry them, so the search can see them.
+      const service = reachableStrings(findServiceAdapterFactory(name)!(CONFIG));
+      for (const secret of own.secrets) expect(service, `${name} service adapter`).toContain(secret);
+      const tenant = reachableStrings(findTenantAdapterFactory(name)!(credentialFor(name), CONFIG));
+      for (const secret of own.secrets) {
+        expect(tenant.some((v) => v.includes(secret)), `${name} tenant adapter holds the service's ${secret}`).toBe(false);
+      }
     }
   });
 
