@@ -28,11 +28,12 @@ import type { DialerAnalysisDelay } from '@magick-agency/contracts/api/agency/we
  *
  * ── The one provider that overrides `recordingPath` ─────────────────────────
  *
- * A direct-recording provider (VoiceLink) serves its recording as a public URL
- * on a host our own egress is firewalled from, so there the raw URL IS the
- * playable resource and pointing at any proxy path would 502.
- * `resolveClientRecordingUrl` makes that call from the one allowlist
- * (`isDirectRecordingProvider`), so the surfaces cannot drift. Consumers therefore
+ * A direct-recording carrier (VoiceLink, on the service's own account) serves its
+ * recording as a public URL on a host our own egress is firewalled from, so there the
+ * raw URL IS the playable resource and pointing at any proxy path would 502.
+ * `resolveClientRecordingUrl` makes that call from the one rule
+ * (`isDirectRecordingProvider`: the carrier catalogue, and no pinned credential), so
+ * the surfaces cannot drift. Consumers therefore
  * get either an absolute URL or a relative path and must not blindly prepend an
  * API base.
  *
@@ -70,6 +71,7 @@ export function formatWebRtcCallResponse(
     recording_url: resolveClientRecordingUrl({
       recordingUrl: record.recording_url,
       provider: record.provider,
+      telephonyCredentialId: record.telephony_credential_id,
       proxyPath: recordingPath,
     }),
     recording_duration_seconds: record.recording_duration_seconds,

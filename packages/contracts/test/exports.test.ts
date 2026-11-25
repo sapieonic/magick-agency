@@ -187,6 +187,7 @@ describe('package surface', () => {
       'phone_number_not_linked',
       'carrier_number_missing',
       'carrier_refused',
+      'account_ref_reserved',
     ]);
     expect(new Set(TELEPHONY_CREDENTIAL_ERROR_CODES).size).toBe(TELEPHONY_CREDENTIAL_ERROR_CODES.length);
   });

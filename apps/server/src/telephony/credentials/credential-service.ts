@@ -20,7 +20,8 @@ import type {
   TelephonyCredentialNumberSync,
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { CredentialSealer, CredentialSealError, type SealContext } from './credential-sealer.js';
-import { findCredentialSpec, type CredentialSpec, type FetchLike } from './credential-specs.js';
+import { accountRefReserved, findCredentialSpec, type CredentialSpec, type FetchLike } from './credential-specs.js';
+import type { TelephonyConfig } from '../carrier-catalog.js';
 import { Secret, secretHint } from './secret.js';
 import { safeIssues } from './safe-issues.js';
 import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../webhook-grace.js';
@@ -78,6 +79,10 @@ export function revokeInUseMessage(
 
 const fail = (code: TelephonyCredentialErrorCode, message: string, details?: Array<{ path: string; message: string }>): ServiceResult<never> =>
   ({ ok: false, code, message, ...(details ? { details } : {}) });
+
+/** A credential naming an account ref its spec reserves (CR3). Fixed text: the ref is not echoed. */
+const accountRefIsReserved = (): ServiceResult<never> =>
+  fail('account_ref_reserved', 'This carrier account is this service’s own, so it cannot be registered as a tenant’s credential');
 
 /**
  * Why a credential is being resolved, which decides which statuses may serve it.
@@ -176,6 +181,11 @@ export class TelephonyCredentialService {
     fetchImpl?: FetchLike;
     /** The phone inventory, for `syncNumbers`. */
     numbers?: NumberSyncRepo;
+    /**
+     * This deployment's carrier env (`config.telephony`), for the account refs a spec reserves
+     * (`CredentialSpec.reservedAccountRefs`, CR3). Absent: none is reserved.
+     */
+    telephony?: TelephonyConfig;
   }) {}
 
   get storeAvailable(): boolean {
@@ -203,6 +213,9 @@ export class TelephonyCredentialService {
         ...(secParsed.success ? [] : issues(secParsed.error, 'fields')),
       ]);
     }
+    // Before the carrier is asked: a reserved ref is the service's own account, and its login
+    // is never tried with a secret a tenant's form supplied.
+    if (accountRefReserved(spec, spec.accountRef(pubParsed.data), this.deps.telephony)) return accountRefIsReserved();
     if (!(await this.deps.tenants.findById(input.tenantId))) return fail('tenant_not_found', 'Tenant not found');
 
     const check = await spec.check(pubParsed.data, secParsed.data, this.deps.fetchImpl);
@@ -262,6 +275,9 @@ export class TelephonyCredentialService {
     if (current.secret_version !== input.expectedVersion) {
       return fail('version_conflict', 'The credential was changed since this form was opened');
     }
+    // The account ref cannot change on a rotate, but what is reserved comes from env and can:
+    // a credential naming what is now the service's own account takes no new secret.
+    if (accountRefReserved(spec, current.account_ref, this.deps.telephony)) return accountRefIsReserved();
 
     const check = await spec.check(current.public_config as Record<string, string>, secParsed.data, this.deps.fetchImpl);
     if (check.result === 'rejected') return fail('carrier_rejected', check.reason);

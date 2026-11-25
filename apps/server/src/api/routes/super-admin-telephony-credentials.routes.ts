@@ -63,6 +63,7 @@ const STATUS: Record<TelephonyCredentialErrorCode, number> = {
   phone_number_not_linked: 409,
   carrier_number_missing: 409,
   carrier_refused: 422,
+  account_ref_reserved: 409,
 };
 
 const idParams = z.object({ id: z.string().uuid() });

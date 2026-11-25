@@ -18,8 +18,24 @@ import {
   TelephonyCredentialService, CredentialUnavailableError, type CredentialRepo,
 } from '../../../src/telephony/credentials/credential-service.js';
 import type { FetchLike } from '../../../src/telephony/credentials/credential-specs.js';
+import type { CredentialSpec } from '../../../src/telephony/credentials/credential-specs.js';
+import type { TelephonyConfig } from '../../../src/telephony/carrier-catalog.js';
 import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../../../src/telephony/webhook-grace.js';
 import { auditLogger } from '../../../src/audit/audit-logger.js';
+
+// A spec double for the account refs a spec reserves (CR3): no spec declares any yet, so
+// while `reserve.fn` is set the Plivo spec is served with it; otherwise the real specs.
+const reserve = vi.hoisted(() => ({ fn: null as ((telephony: unknown) => readonly string[]) | null }));
+vi.mock('../../../src/telephony/credentials/credential-specs.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../src/telephony/credentials/credential-specs.js')>();
+  return {
+    ...real,
+    findCredentialSpec: (provider: string): CredentialSpec | undefined => {
+      const spec = real.findCredentialSpec(provider);
+      return spec && reserve.fn ? { ...spec, reservedAccountRefs: reserve.fn } : spec;
+    },
+  };
+});
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const ADMIN = '99999999-9999-4999-8999-999999999999';
@@ -145,10 +161,11 @@ const fetchImpl: FetchLike = async (url, init) => {
   return { status: carrier.status };
 };
 
-function service(opts: { sealer?: CredentialSealer | null } = {}) {
+function service(opts: { sealer?: CredentialSealer | null; telephony?: TelephonyConfig } = {}) {
   return new TelephonyCredentialService({
     repo, sealer: opts.sealer === undefined ? sealer : opts.sealer, fetchImpl,
     tenants: { findById: async (id) => (id === TENANT ? { id } : null) },
+    ...(opts.telephony ? { telephony: opts.telephony } : {}),
   });
 }
 
@@ -159,6 +176,7 @@ async function createOk(token = CANARY) {
 }
 
 beforeEach(() => {
+  reserve.fn = null;
   repo = new FakeRepo();
   sealer = new CredentialSealer(new EnvKeyringWrapper(keyring, 'v1'));
   carrier = { status: 200, calls: [] };
@@ -382,6 +400,43 @@ describe('rotate', () => {
     const r = await svc.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
     expect(!r.ok && r.code).toBe('carrier_rejected');
     expect((await svc.resolve(row.id, 'dial')).secret.reveal()).toEqual({ auth_token: CANARY });
+  });
+});
+
+describe('reserved account refs (CR3: the service’s own account is never a tenant credential)', () => {
+  const TELEPHONY = { voicelink: { username: 'service-user' } } as unknown as TelephonyConfig;
+  const createWith = (s: TelephonyCredentialService) =>
+    s.create({ tenantId: TENANT, provider: 'plivo', label: 'Main', fields: { auth_id: AUTH_ID, auth_token: CANARY }, adminId: ADMIN });
+
+  it('refuses a create naming a reserved ref, case-insensitively, before the carrier is asked, without echoing it', async () => {
+    const seen: unknown[] = [];
+    reserve.fn = (telephony) => { seen.push(telephony); return [` ${AUTH_ID.toLowerCase()} `]; };
+    const r = await createWith(service({ telephony: TELEPHONY }));
+    expect(!r.ok && r.code).toBe('account_ref_reserved');
+    expect(!r.ok && r.message).not.toContain(AUTH_ID);
+    expect(JSON.stringify(r)).not.toContain(CANARY);
+    expect(seen).toEqual([TELEPHONY]);
+    expect(carrier.calls).toHaveLength(0);
+    expect(repo.rows.size).toBe(0);
+  });
+
+  it('lets a create through when the ref is not reserved, or no carrier env is given', async () => {
+    reserve.fn = () => ['MAZZZZZZZZZZZZZZZZZZ', ''];
+    expect((await createWith(service({ telephony: TELEPHONY }))).ok).toBe(true);
+    repo = new FakeRepo();
+    reserve.fn = () => [AUTH_ID];
+    expect((await createWith(service())).ok).toBe(true);
+  });
+
+  it('refuses a rotate of a credential whose ref the env has since reserved, keeping the old secret', async () => {
+    const s = service({ telephony: TELEPHONY });
+    const row = await createOk();
+    const callsBefore = carrier.calls.length;
+    reserve.fn = () => [AUTH_ID];
+    const r = await s.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
+    expect(!r.ok && r.code).toBe('account_ref_reserved');
+    expect(carrier.calls).toHaveLength(callsBefore);
+    expect((await s.resolve(row.id, 'dial')).secret.reveal()).toEqual({ auth_token: CANARY });
   });
 });
 

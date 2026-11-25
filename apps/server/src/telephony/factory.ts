@@ -1,11 +1,15 @@
-// Two kinds of adapter. The service's own carrier accounts (VoiceLink) are built from
-// env by `buildProviderConfig` + `instantiate`; any other name there throws `Unknown
-// telephony provider: <name>`. A tenant's own carrier account (BYOC, decision B18) is
-// built by `BYOC_ADAPTERS` from a credential the credential service resolves (Plivo).
+// Two kinds of adapter, one map per account mode (docs/carriers.md §2.3). An adapter on the
+// service's own carrier account is built from env by `SERVICE_ADAPTERS` (VoiceLink); any name
+// with no entry there throws `Unknown telephony provider: <name>`. An adapter on a tenant's own
+// carrier account (BYOC, decision B18) is built by `TENANT_ADAPTERS` from a credential the
+// credential service resolves (Plivo). A carrier registers one line in the map of each mode its
+// catalogue entry declares (`carrier-catalog.ts`, CR14); the conformance test
+// (`test/unit/telephony/carrier-conformance.test.ts`) holds both maps equal to the catalogue.
 import type { TelephonyProvider } from './types.js';
 import type { AppConfig } from '../config/index.js';
 import { VoicelinkAdapter } from './voicelink/voicelink.adapter.js';
 import { createPlivoAdapter } from './plivo/plivo.adapter.js';
+import { findCarrier } from './carrier-catalog.js';
 import {
   CredentialUnavailableError,
   isKeyringFaultKind,
@@ -64,61 +68,83 @@ export interface CredentialResolver {
 }
 
 /** Builds an adapter on a tenant's own carrier account. */
-export type ByocAdapterFactory = (credential: ResolvedCredential, config: AppConfig) => TelephonyProvider;
+export type TenantAdapterFactory = (credential: ResolvedCredential, config: AppConfig) => TelephonyProvider;
+
+/** Builds an adapter on the service's own carrier account, from env. */
+export type ServiceAdapterFactory = (config: AppConfig) => TelephonyProvider;
 
 /**
- * BYOC adapters by provider name. **Adding a BYOC carrier means adding its factory
- * here**, its credential spec (`credentials/credential-specs.ts`) and its carrier
- * module (`carrier-modules.ts`).
+ * Service-account adapters by provider name: one per carrier whose catalogue entry declares
+ * `accounts.service`.
+ *
+ * Two rules are load-bearing:
+ *
+ *  * Each builds from `config.telephony.<provider>` unchanged ({@link buildProviderConfig}).
+ *  * `webhookBaseUrl` **always comes from env**, never from tenant data, on either account
+ *    mode. A per-tenant callback host is an SSRF sink and a call-hijack vector: the carrier
+ *    would POST our answer/status webhooks — which carry the call's identity and drive its
+ *    state machine — at an address the tenant chose. A tenant adapter takes its account's
+ *    credential from the resolved credential and everything else, the webhook base included,
+ *    from env.
  */
-const BYOC_ADAPTERS: ReadonlyMap<string, ByocAdapterFactory> = new Map<string, ByocAdapterFactory>([
+const SERVICE_ADAPTERS: ReadonlyMap<string, { settings: (config: AppConfig) => unknown; build: ServiceAdapterFactory }> = new Map([
+  ['voicelink', {
+    settings: (config: AppConfig) => config.telephony.voicelink,
+    build: (config: AppConfig) => new VoicelinkAdapter(config.telephony.voicelink),
+  }],
+]);
+
+/** Tenant-account adapters by provider name: one per carrier whose catalogue entry declares `accounts.tenant`. */
+const TENANT_ADAPTERS: ReadonlyMap<string, TenantAdapterFactory> = new Map<string, TenantAdapterFactory>([
   ['plivo', createPlivoAdapter],
 ]);
 
-/** The providers a tenant credential can dial on. The carrier-module guard reads it. */
-export function byocProviderNames(): string[] {
-  return [...BYOC_ADAPTERS.keys()];
+/** The providers with an adapter on the service's own account. The conformance test reads it. */
+export function serviceProviderNames(): string[] {
+  return [...SERVICE_ADAPTERS.keys()];
+}
+
+/** The providers a tenant credential can dial on. The conformance test reads it. */
+export function tenantProviderNames(): string[] {
+  return [...TENANT_ADAPTERS.keys()];
+}
+
+/** The service-account factory for a provider, or undefined. The conformance test builds adapters with it. */
+export function findServiceAdapterFactory(provider: string): ServiceAdapterFactory | undefined {
+  return SERVICE_ADAPTERS.get(provider)?.build;
+}
+
+/** The tenant-account factory for a provider, or undefined. The conformance test builds adapters with it. */
+export function findTenantAdapterFactory(provider: string): TenantAdapterFactory | undefined {
+  return TENANT_ADAPTERS.get(provider);
 }
 
 /** How many BYOC adapters the process keeps (one per credential and purpose in use). */
 const BYOC_CACHE_MAX = 256;
 
 /**
- * Map a provider name onto the config shape the adapter constructor takes.
- * **Adding a provider means adding a case here and in `instantiate`.**
- *
- * Two rules are load-bearing:
- *
- *  * It returns `config.telephony[provider]` unchanged.
- *  * `webhookBaseUrl` **always comes from env**, never from tenant data. A
- *    per-tenant callback host is an SSRF sink and a call-hijack vector: the
- *    carrier would POST our answer/status webhooks — which carry the call's
- *    identity and drive its state machine — at an address the tenant chose.
+ * The env settings a provider's service-account adapter is built from: `config.telephony[provider]`
+ * unchanged. Throws `Unknown telephony provider: <name>` for a provider with no service account
+ * (a name no carrier answers to, or a tenant-accounts-only carrier such as Plivo).
  */
 export function buildProviderConfig(
   provider: string,
   config: AppConfig,
 ): unknown {
-  const telephony = config.telephony;
-
-  switch (provider) {
-    case 'voicelink': return telephony.voicelink;
-    default: throw new Error(`Unknown telephony provider: ${provider}`);
-  }
+  return serviceAdapter(provider).settings(config);
 }
 
-/** Construct an adapter from an already-resolved provider config. */
-function instantiate(providerName: string, providerConfig: unknown): TelephonyProvider {
-  switch (providerName) {
-    case 'voicelink':
-      return new VoicelinkAdapter(providerConfig as ConstructorParameters<typeof VoicelinkAdapter>[0]);
-    default:
-      throw new Error(`Unknown telephony provider: ${providerName}`);
-  }
+function serviceAdapter(provider: string) {
+  const entry = SERVICE_ADAPTERS.get(provider);
+  if (entry) return entry;
+  // A carrier the catalogue knows but with no service account: say so, so a log line read
+  // later does not suggest a typo where a call was sent down the wrong account mode.
+  const why = findCarrier(provider) ? ' (it has no service account: its calls run on a tenant credential)' : '';
+  throw new Error(`Unknown telephony provider: ${provider}${why}`);
 }
 
 function createProviderInstance(providerName: string, config: AppConfig): TelephonyProvider {
-  return instantiate(providerName, buildProviderConfig(providerName, config));
+  return serviceAdapter(providerName).build(config);
 }
 
 /**
@@ -135,17 +161,17 @@ export class TelephonyProviderRegistry {
   private readonly byocOrigin = new WeakMap<TelephonyProvider, { credentialId: string; secretVersion: number }>();
   private readonly config: AppConfig;
   private readonly credentials: (() => CredentialResolver) | null;
-  private readonly byocAdapters: ReadonlyMap<string, ByocAdapterFactory>;
+  private readonly tenantAdapters: ReadonlyMap<string, TenantAdapterFactory>;
 
   constructor(config: AppConfig, opts: {
     /** Lazy, so building a registry never builds the credential service. */
     credentials?: () => CredentialResolver;
-    /** Tests only: replaces `BYOC_ADAPTERS`. */
-    byocAdapters?: ReadonlyMap<string, ByocAdapterFactory>;
+    /** Tests only: replaces `TENANT_ADAPTERS`. */
+    tenantAdapters?: ReadonlyMap<string, TenantAdapterFactory>;
   } = {}) {
     this.config = config;
     this.credentials = opts.credentials ?? null;
-    this.byocAdapters = opts.byocAdapters ?? BYOC_ADAPTERS;
+    this.tenantAdapters = opts.tenantAdapters ?? TENANT_ADAPTERS;
   }
 
   /**
@@ -223,7 +249,7 @@ export class TelephonyProviderRegistry {
     const fingerprint = peeked.versions.join(',');
     const cached = this.byoc.get(slot);
     if (cached && cached.fingerprint === fingerprint) return cached.adapter;
-    const factory = this.byocAdapters.get(providerName);
+    const factory = this.tenantAdapters.get(providerName);
     if (!factory) throw new ByocCredentialUnavailableError(credentialId, `no BYOC adapter for ${providerName}`);
     const resolved = await this.unavailableAsByoc(credentialId, () => credentials.resolve(credentialId, purpose));
     // The row was re-read: a tenant or provider changed in SQL since `peek` is refused too.

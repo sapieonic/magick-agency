@@ -34,6 +34,7 @@ export function getTelephonyCredentialService(): TelephonyCredentialService {
       tenants: tenantRepository,
       sealer: buildSealerFromConfig(config.telephonyCredentials),
       numbers: phoneNumberRepository,
+      telephony: config.telephony,
     });
   }
   return service;

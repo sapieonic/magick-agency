@@ -248,7 +248,9 @@ export type TelephonyCredentialErrorCode =
   | 'phone_number_not_linkable'
   | 'phone_number_not_linked'
   | 'carrier_number_missing'
-  | 'carrier_refused';
+  | 'carrier_refused'
+  /** The account ref is one this deployment reserves: the service's own account on that carrier (create, rotate). */
+  | 'account_ref_reserved';
 
 /** Runtime list of {@link TelephonyCredentialErrorCode}, in declaration order. */
 export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
@@ -277,6 +279,7 @@ export const TELEPHONY_CREDENTIAL_ERROR_CODES = [
   'phone_number_not_linked',
   'carrier_number_missing',
   'carrier_refused',
+  'account_ref_reserved',
 ] as const satisfies readonly TelephonyCredentialErrorCode[];
 
 const _allTelephonyCredentialErrorCodesListed: AllListed<

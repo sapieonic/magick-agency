@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { AppConfig } from '../../../src/config/index.js';
 import {
-  TelephonyProviderRegistry, ByocCredentialUnavailableError, type ByocAdapterFactory, type CredentialResolver,
+  TelephonyProviderRegistry, ByocCredentialUnavailableError, type TenantAdapterFactory, type CredentialResolver,
 } from '../../../src/telephony/factory.js';
 import {
   CredentialUnavailableError, type ResolvedCredential, type ResolvePurpose,
@@ -30,10 +30,10 @@ function resolved(over: Partial<ResolvedCredential> = {}): ResolvedCredential {
   };
 }
 
-function registry(resolver: CredentialResolver | null, factories = new Map<string, ByocAdapterFactory>()) {
+function registry(resolver: CredentialResolver | null, factories = new Map<string, TenantAdapterFactory>()) {
   return new TelephonyProviderRegistry(CONFIG, {
     ...(resolver ? { credentials: () => resolver } : {}),
-    byocAdapters: factories,
+    tenantAdapters: factories,
   });
 }
 
@@ -246,7 +246,7 @@ describe('the registered BYOC adapters', () => {
       version: 2,
       previous: purpose === 'call_control' ? [{ version: 1, secret: new Secret({ auth_token: 'old' }) }] : [],
     }));
-    // No `byocAdapters` override: the registry's own `BYOC_ADAPTERS`.
+    // No `tenantAdapters` override: the registry's own `TENANT_ADAPTERS`.
     const r = new TelephonyProviderRegistry(CONFIG, { credentials: () => c });
     const control = await r.getForCredentialId('plivo', 'cred-1', 'call_control', 't1');
     const dial = await r.getForCredentialId('plivo', 'cred-1', 'dial', 't1');

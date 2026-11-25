@@ -34,7 +34,7 @@ import {
   DEVICE_AWAY_BREAK_REASON,
   SOFTPHONE_BREAK_REASON,
 } from '@magick-agency/contracts/agency';
-import { carrierCancelsRinging, carrierRingingDeclarations } from '../telephony/carrier-ringing.js';
+import { carrierCancelsRinging, carrierNames } from '../telephony/carrier-catalog.js';
 import type {
   AgencyActiveAttempt,
   AgencyAgentState,
@@ -181,7 +181,7 @@ export const DIAL_ACTIVITY_TTL_MS = 12 * 60 * 60_000;
 const DIAL_ACTIVITY_MAX_ENTRIES = 10_000;
 
 /** The carriers the code declares: the `provider` label's whole vocabulary, with `other`. */
-const PROVIDER_LABELS: ReadonlySet<string> = new Set(carrierRingingDeclarations());
+const PROVIDER_LABELS: ReadonlySet<string> = new Set(carrierNames());
 
 /**
  * How long a campaign's import column order (AS20, More details) is reused before it is read

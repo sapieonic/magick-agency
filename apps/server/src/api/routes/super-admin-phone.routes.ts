@@ -14,7 +14,7 @@ import {
 } from '../validators/phone-number.validator.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.js';
-import { findCredentialSpec } from '../../telephony/credentials/credential-specs.js';
+import { carrierHasServiceAccount, carrierTakesTenantAccounts } from '../../telephony/carrier-catalog.js';
 import { getTelephonyInboundService } from '../../telephony/credentials/index.js';
 import type { InboundReleaseCause, TelephonyInboundService } from '../../telephony/credentials/inbound-service.js';
 
@@ -68,16 +68,17 @@ export async function superAdminPhoneRoutes(
   /**
    * GET /super-admin/telephony-providers
    * List all telephony providers. Optional ?status=active filter. Each carries
-   * `takes_tenant_credentials`: whether it is dialled on tenants' own accounts, whose
-   * numbers come from a credential's sync and cannot be added by hand (`POST
-   * /phone-numbers` below refuses them), so the console can leave it out of "Add number".
+   * `takes_tenant_credentials`: whether it takes tenants' own accounts (its catalogue
+   * entry's account modes, CR1). Today such a carrier has no service account, so its numbers
+   * come from a credential's sync and cannot be added by hand (`POST /phone-numbers` below
+   * refuses them), and the console leaves it out of "Add number".
    */
   app.get('/telephony-providers', async (request: FastifyRequest, reply: FastifyReply) => {
     const query = request.query as Record<string, string>;
     const status = query['status'] || undefined;
     const providers = (await telephonyProviderRepository.findAll(status)).map((p) => ({
       ...p,
-      takes_tenant_credentials: findCredentialSpec(p.name) !== undefined,
+      takes_tenant_credentials: carrierTakesTenantAccounts(p.name),
     }));
     return reply.send({ providers });
   });
@@ -100,10 +101,11 @@ export async function superAdminPhoneRoutes(
     if (provider.status === 'inactive') {
       return reply.code(400).send({ error: 'Bad Request', message: 'Telephony provider is not active' });
     }
-    // A carrier dialled on tenants' own accounts gets its numbers from a credential's
-    // number sync, which pins each to the credential: a number added by hand would name
-    // no credential, so no campaign could use it and no call could dial from it.
-    if (findCredentialSpec(provider.name)) {
+    // A number added here names no credential, so it is on the service's own account: a
+    // carrier without one gets its numbers from a credential's number sync, which pins each
+    // to the credential. A number added by hand there could serve no campaign and no call.
+    // (A carrier the catalogue does not know is let through, as before; its row cannot dial.)
+    if (carrierTakesTenantAccounts(provider.name) && !carrierHasServiceAccount(provider.name)) {
       return reply.code(400).send({
         error: 'Bad Request',
         message: 'Numbers on this carrier come from the tenant’s carrier account: sync them from its credential instead',

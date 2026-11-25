@@ -1,8 +1,7 @@
-// The carrier-module registry: every carrier the bridge can carry a call on. Adding a
-// carrier means adding its module here and its adapter in `factory.ts` (the
-// `instantiate` switch, or `BYOC_ADAPTERS` for a tenant-credential carrier); the
-// conformance test (`test/unit/telephony/carrier-modules.test.ts`) holds the lists
-// equal.
+// The carrier-module registry: every carrier the bridge can carry a call on. A carrier
+// registers one line here, beside its catalogue entry (`carrier-catalog.ts`) and the other
+// pieces its account modes need (docs/carriers.md §2.3, CR14);
+// `test/unit/telephony/carrier-conformance.test.ts` holds every list equal to the catalogue.
 import type { CarrierModule } from './carrier-module.js';
 import { voicelinkCarrier } from './voicelink/voicelink.media.js';
 import { plivoCarrier } from './plivo/plivo.media.js';
@@ -18,9 +17,9 @@ export function findCarrierModule(provider: string): CarrierModule | undefined {
 
 /**
  * Whether a hang-up stops a call on this carrier ringing ({@link CarrierModule.cancelsRinging}),
- * from the codec-free registry of each carrier's own declaration (`carrier-ringing.ts`).
+ * from the codec-free carrier catalogue (`carrier-catalog.ts`).
  */
-export { carrierCancelsRinging } from './carrier-ringing.js';
+export { carrierCancelsRinging } from './carrier-catalog.js';
 
 /** Every registered carrier name. */
 export function carrierModuleNames(): string[] {

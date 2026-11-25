@@ -51,6 +51,11 @@ describe('TelephonyProviderRegistry — get(name) is unchanged', () => {
     const registry = new TelephonyProviderRegistry(config);
     expect(() => registry.get('carrier_pigeon')).toThrow(/Unknown telephony provider/);
   });
+
+  it('throws, naming it, for a carrier with no service account (Plivo: tenant accounts only)', () => {
+    const registry = new TelephonyProviderRegistry(config);
+    expect(() => registry.get('plivo')).toThrow(/^Unknown telephony provider: plivo \(it has no service account/);
+  });
 });
 
 describe('TelephonyProviderRegistry — pinned-credential resolution', () => {

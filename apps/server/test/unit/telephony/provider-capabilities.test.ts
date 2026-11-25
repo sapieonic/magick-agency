@@ -1,13 +1,13 @@
-// The registry is the `instantiate` switch (the service's own accounts) plus
-// `BYOC_ADAPTERS` (tenant credentials): VoiceLink and Plivo. Plivo can cancel a ringing
+// The registry is `SERVICE_ADAPTERS` (the service's own accounts) plus `TENANT_ADAPTERS`
+// (tenant credentials), held equal to the carrier catalogue by `carrier-conformance.test.ts`:
+// VoiceLink and Plivo. Plivo can cancel a ringing
 // leg (by its request id, then its call id); VoiceLink cannot. There is no transfer gate
 // (no escalation).
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { canCancelRinging, queuesOutboundDials, recordsOnDemand, type TelephonyProvider } from '../../../src/telephony/types.js';
 import { VoicelinkAdapter } from '../../../src/telephony/voicelink/voicelink.adapter.js';
-import { byocProviderNames } from '../../../src/telephony/factory.js';
+import { serviceProviderNames, tenantProviderNames } from '../../../src/telephony/factory.js';
+import { carrierNames } from '../../../src/telephony/carrier-catalog.js';
 import { PlivoAdapter, DEFAULT_PLIVO_SETTINGS } from '../../../src/telephony/plivo/plivo.adapter.js';
 import { Secret } from '../../../src/telephony/credentials/secret.js';
 import { findCarrierModule } from '../../../src/telephony/carrier-modules.js';
@@ -25,8 +25,8 @@ import { findCarrierModule } from '../../../src/telephony/carrier-modules.js';
  * wrong, and nothing else in the tree would say so.
  *
  * So the registry is read from the source of truth rather than re-listed here:
- * the adapter names in `factory.ts`'s `instantiate` switch ARE the registry, and
- * a provider added there but not below fails the first test. The per-adapter
+ * the carrier catalogue, which the adapter maps in `factory.ts` are held equal to, and
+ * a carrier added there but not below fails the first test. The per-adapter
  * verdicts are then pinned individually, because each one is a claim about a
  * carrier's API that someone will eventually be tempted to flip on a hunch —
  * the rationale for each sits at the declaration in that adapter.
@@ -59,22 +59,14 @@ const ADAPTERS: ReadonlyArray<{ name: string; provider: TelephonyProvider; cance
   },
 ];
 
-/** The registry itself: the provider names `instantiate` can construct. */
-function registryProviderNames(): string[] {
-  const src = readFileSync(resolve(process.cwd(), 'src/telephony/factory.ts'), 'utf8');
-  const body = src.slice(src.indexOf('function instantiate('));
-  const switchBody = body.slice(0, body.indexOf('function createProviderInstance'));
-  return [...switchBody.matchAll(/case '([a-z0-9_]+)':/g)].map((m) => m[1]!);
-}
-
 describe('TelephonyProvider capabilities — every adapter in the registry declares them', () => {
-  it('covers exactly the providers factory.ts can build, including BYOC adapters', () => {
-    const own = registryProviderNames();
-    // Sanity: the extraction found a switch, not an empty string. Without this a
-    // renamed function would make the whole assertion vacuously true.
-    expect(own.length).toBe(1);
-    const registry = [...new Set([...own, ...byocProviderNames()])].sort();
-    expect([...ADAPTERS].map((a) => a.name).sort()).toEqual(registry);
+  it('covers exactly the carriers in the catalogue, and every carrier factory.ts can build', () => {
+    // Sanity: the catalogue is not empty. Without this an empty list would make the whole
+    // assertion vacuously true.
+    expect(carrierNames().length).toBeGreaterThan(0);
+    expect([...ADAPTERS].map((a) => a.name).sort()).toEqual(carrierNames().sort());
+    const buildable = [...new Set([...serviceProviderNames(), ...tenantProviderNames()])].sort();
+    expect(buildable).toEqual(carrierNames().sort());
   });
 
   it.each(ADAPTERS.map((a) => [a.name, a] as const))(

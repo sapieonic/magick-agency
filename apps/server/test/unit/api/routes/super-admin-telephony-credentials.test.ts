@@ -152,7 +152,7 @@ describe('super-admin telephony credential routes', () => {
     inbound_enabled: 409, inbound_not_enabled: 409, inbound_numbers_linked: 409, inbound_previous_token_in_use: 409,
     inbound_unconfigured: 503,
     phone_number_not_found: 404, phone_number_not_linkable: 409, phone_number_not_linked: 409,
-    carrier_number_missing: 409, carrier_refused: 422,
+    carrier_number_missing: 409, carrier_refused: 422, account_ref_reserved: 409,
   };
 
   it('has an expected status for every code of the contract, and no other', () => {

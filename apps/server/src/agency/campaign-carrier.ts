@@ -3,13 +3,13 @@
  *
  * A campaign names a carrier (`telephony_provider`) and, for a carrier dialled on the
  * TENANT's own account, the credential it dials with (`telephony_credential_id`). The
- * rules, decided per carrier by whether it takes tenant credentials (a credential spec
- * exists for it), never by its name:
+ * rules, decided per carrier by the account modes its catalogue entry declares
+ * (`telephony/carrier-catalog.ts`, CR1), never by its name:
  *
  *  - the carrier must be an active `telephony_providers` row;
- *  - a carrier on the service's own account (no credential spec) takes no credential;
- *  - a tenant-account carrier requires a credential of THIS tenant on THAT carrier, and
- *    it must be `active` to be pinned;
+ *  - a null credential is the service's own account: refused on a carrier without one;
+ *  - a set credential needs a carrier that takes tenant accounts, and must be of THIS
+ *    tenant on THAT carrier and `active` to be pinned;
  *  - on a tenant-account carrier every caller ID must be an active number synced from
  *    that credential and available to the campaign's account. A service-account
  *    campaign's caller IDs stay shape-checked only (`callerIdsIssue`).
@@ -23,7 +23,7 @@
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import { telephonyProviderRepository } from '../db/repositories/telephony-provider.repository.js';
-import { findCredentialSpec } from '../telephony/credentials/credential-specs.js';
+import { carrierHasServiceAccount, carrierTakesTenantAccounts } from '../telephony/carrier-catalog.js';
 import { UUID_RE } from '../utils/uuid.js';
 import { AGENCY_CAMPAIGN_COLUMN_DEFAULTS } from '@magick-agency/contracts/agency';
 
@@ -34,11 +34,6 @@ export const DEFAULT_CAMPAIGN_PROVIDER = AGENCY_CAMPAIGN_COLUMN_DEFAULTS.telepho
 export type CampaignCarrierRefusal =
   | { kind: 'validation'; details: Record<string, string> }
   | { kind: 'coded'; status: 404 | 409; code: 'telephony_credential_not_found' | 'telephony_credential_not_active'; message: string };
-
-/** Whether a carrier is dialled on a tenant's own account (it takes tenant credentials). */
-export function carrierTakesTenantCredential(provider: string): boolean {
-  return findCredentialSpec(provider) !== undefined;
-}
 
 type CodedRefusal = Extract<CampaignCarrierRefusal, { kind: 'coded' }>;
 
@@ -98,18 +93,20 @@ export async function campaignCarrierRefusal(
     }
   }
 
-  if (!carrierTakesTenantCredential(provider)) {
-    if (credentialId !== null) {
-      return {
-        kind: 'validation',
-        details: { telephony_credential_id: 'must be null: this carrier dials on the service’s own account' },
-      };
+  // The account mode (CR1). A null credential is the service's own account; its caller IDs
+  // stay shape-checked only (`callerIdsIssue`). A carrier the catalogue does not know takes
+  // no credential, as before.
+  if (credentialId === null) {
+    if (carrierTakesTenantAccounts(provider) && !carrierHasServiceAccount(provider)) {
+      return { kind: 'validation', details: { telephony_credential_id: 'is required: this carrier dials on the organisation’s own carrier account' } };
     }
     return null;
   }
-
-  if (credentialId === null) {
-    return { kind: 'validation', details: { telephony_credential_id: 'is required: this carrier dials on the organisation’s own carrier account' } };
+  if (!carrierTakesTenantAccounts(provider)) {
+    return {
+      kind: 'validation',
+      details: { telephony_credential_id: 'must be null: this carrier dials on the service’s own account' },
+    };
   }
   if (changed.provider || changed.credential) {
     const credential = await telephonyCredentialRepository.findById(credentialId);
