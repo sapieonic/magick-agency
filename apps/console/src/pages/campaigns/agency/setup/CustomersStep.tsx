@@ -9,11 +9,13 @@ import {
   Switch,
 } from '../../../../components/campaign-setup';
 import { ColumnMapper } from '../ColumnMapper';
+import { SheetNotice } from '../SheetNotice';
 import { IngestSummary } from '../IngestSummary';
 import type { UploadPhase, useRosterIngest } from '../../../../hooks/useRosterIngest';
 import { MAPPING_BLOCK_COPY, mappingBlockReason } from '../../../../utils/agencyColumnMapping';
 import { buildIngestSummary, checkComparison } from '../../../../utils/agencyIngestSummary';
 import { formatSpineTimestamp } from '../../../../utils/agencySpineCopy';
+import { CUSTOMER_FILE_ACCEPT, CUSTOMER_FILE_LABEL } from '../../../../utils/agencyCustomerFile';
 import { formatCount } from '../../../../utils/format/number';
 import {
   fileRowLine,
@@ -82,10 +84,11 @@ export interface CustomersStepProps {
 const UPLOAD_PHASES: readonly UploadPhase[] = ['idle', 'uploading', 'analyzing'];
 
 /**
- * Step 2 of the campaign setup, "Customers" (CS6–CS9): upload a CSV, which is checked straight
- * away when the phone column is sure (CS8; otherwise the column mapper asks), then the check's
- * counts as chips, and the columns agents see as switches over sample rows. The footer's primary
- * action (Add 1,240 customers, Continue, Skip for now) is the page's, from `customersContinue`.
+ * Step 2 of the campaign setup, "Customers" (CS6–CS9): upload an Excel or CSV file (CS7), which
+ * is checked straight away when the phone column is sure (CS8; otherwise the column mapper asks),
+ * then the check's counts as chips, and the columns agents see as switches over sample rows. The
+ * footer's primary action (Add 1,240 customers, Continue, Skip for now) is the page's, from
+ * `customersContinue`.
  *
  * Controlled: every piece of state is the roster ingest's (`useRosterIngest`), except the drag
  * feedback and the note that the step started the check itself.
@@ -178,7 +181,7 @@ export function CustomersStep({
   return (
     <SetupCard
       title="Customers"
-      helper="Upload a CSV file. We check it for you."
+      helper="Upload an Excel or CSV file. We check it for you."
       headingRef={headingRef}
       testId="customers-step"
     >
@@ -202,7 +205,7 @@ export function CustomersStep({
             <Upload size={22} />
           </span>
           <p className={styles.dropCopy}>
-            Drop a CSV file here, or choose one. We find the phone number column for you.
+            Drop an Excel or CSV file here, or choose one. We find the phone number column for you.
           </p>
           {limits ? (
             <p className={styles.muted} data-testid="ingest-limits">
@@ -214,8 +217,8 @@ export function CustomersStep({
             ref={fileInputRef}
             className="sr-only"
             type="file"
-            accept=".csv,text/csv"
-            aria-label="CSV file"
+            accept={CUSTOMER_FILE_ACCEPT}
+            aria-label={CUSTOMER_FILE_LABEL}
             disabled={phase !== 'idle'}
             onChange={(event) => {
               void pick(event.target.files?.[0]);
@@ -227,7 +230,7 @@ export function CustomersStep({
             disabled={phase !== 'idle'}
             onClick={() => fileInputRef.current?.click()}
           >
-            Choose a CSV file
+            Choose a file
           </button>
           {phase === 'uploading' ? <p className={styles.busy} role="status">Uploading…</p> : null}
           {phase === 'analyzing' ? <p className={styles.busy} role="status">Reading the columns…</p> : null}
@@ -244,6 +247,7 @@ export function CustomersStep({
             <span className={styles.muted}>
               {fileRowLine(upload, analysis, finished ? job : null)}
             </span>
+            <SheetNotice upload={upload} readClassName={styles.muted} othersClassName={styles.note} />
           </div>
           {!importedDone ? (
             <button

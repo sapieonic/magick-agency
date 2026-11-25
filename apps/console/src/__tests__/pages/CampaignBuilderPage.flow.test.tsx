@@ -154,7 +154,7 @@ describe('the guided setup path', () => {
     expect(stepCard('Customers').disabled).toBe(false);
     fireEvent.click(footerButton('Continue'));
     expect(currentStep()).toBe('contacts');
-    expect(screen.getByLabelText('CSV file')).toBeTruthy();
+    expect(screen.getByLabelText('Excel or CSV file')).toBeTruthy();
     expect(stepCard('Customers').getAttribute('aria-current')).toBe('step');
   });
 
@@ -177,7 +177,7 @@ describe('the guided setup path', () => {
     fireEvent.dragOver(dropzone);
     expect(dropzone.getAttribute('data-drag-over')).toBe('true');
 
-    fireEvent.change(screen.getByLabelText('CSV file'), { target: { files: [first] } });
+    fireEvent.change(screen.getByLabelText('Excel or CSV file'), { target: { files: [first] } });
 
     await waitFor(() => {
       expect(screen.getByTestId('contacts-dropzone').getAttribute('data-drag-over')).toBeNull();

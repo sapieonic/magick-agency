@@ -135,11 +135,29 @@ export interface AgencyIngestLimits {
   max_file_bytes: number;
 }
 
+/**
+ * The sheet an Excel upload was read from (IM8). Only the first sheet is read;
+ * the screen names the others so a supervisor whose customers are on another
+ * sheet sees that before checking.
+ */
+export interface AgencyUploadSheet {
+  /** The name of the sheet that was read: the workbook's first visible worksheet, in tab order. */
+  name: string;
+  /** The workbook's other visible worksheets, in tab order (hidden and chart sheets are not named). None of them was read. */
+  other_sheet_names: string[];
+}
+
 /** `POST /proxy/agency/ingest/upload`. */
 export interface AgencyUploadResponse {
   s3_key: string;
+  /** The name the supervisor's file had, `.xlsx` included for an Excel upload. */
   file_name: string;
+  /** Size of the file as uploaded (the workbook, for an Excel upload). */
   file_size_bytes: number;
+  /** What was uploaded. An Excel upload is stored as CSV, so every later step reads it the same way. */
+  format: 'csv' | 'xlsx';
+  /** Present for an Excel upload only. */
+  sheet?: AgencyUploadSheet;
 }
 
 /** One column's profile from `POST /proxy/agency/ingest/analyze`. */

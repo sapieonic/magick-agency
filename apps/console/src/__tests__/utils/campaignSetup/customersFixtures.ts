@@ -38,7 +38,19 @@ export const UPLOAD: AgencyUploadResponse = {
   s3_key: 'agency-ingest/upload-1.csv',
   file_name: 'collections_nov.csv',
   file_size_bytes: 48 * 1024,
+  format: 'csv',
 };
+
+/** An Excel upload: the server read its first sheet and stored it as CSV (IM8). */
+export function xlsxUpload(otherSheetNames: string[] = []): AgencyUploadResponse {
+  return {
+    s3_key: 'agency-ingest/upload-2.csv',
+    file_name: 'Customers May.xlsx',
+    file_size_bytes: 64 * 1024,
+    format: 'xlsx',
+    sheet: { name: 'Customers', other_sheet_names: otherSheetNames },
+  };
+}
 
 export function ingestJob(over: Partial<AgencyIngestJob> = {}): AgencyIngestJob {
   return {

@@ -359,8 +359,9 @@ One process saturates at 200 calls, and at 500 it cannot bridge more than about 
 - More processes than cores is allowed and logged once at boot (cores, media, analysis,
   primary); they then share cores, and a worker waiting for a core delays its calls' audio.
 - Size the RAM for the primary's heap (the entrypoint's 4 GB), plus
-  `MEDIA_WORKERS × MEDIA_WORKER_HEAP_MB`, plus the analysis children, plus Redis, nginx and the
-  OS.
+  `MEDIA_WORKERS × MEDIA_WORKER_HEAP_MB`, plus the analysis children, plus the Excel upload's
+  conversion child while one runs (one at a time: a 1 GiB heap, plus the workbook, up to 512 MiB;
+  IM8, `apps/server/src/agency/agency-xlsx-runner.ts`), plus Redis, nginx and the OS.
 
 **Postgres connections.** Every process opens its own pool, so the host can open the sum:
 

@@ -12,6 +12,7 @@ import {
   fakeIngest,
   ingestJob,
   reviewingIngest,
+  xlsxUpload,
 } from '../../utils/campaignSetup/customersFixtures';
 
 const api = vi.hoisted(() => ({
@@ -47,13 +48,26 @@ afterEach(() => {
 });
 
 describe('the drop zone', () => {
-  it('reads as the mock-up, CSV only (CS7), with the limits in Indian grouping', () => {
+  it('reads as the mock-up, Excel or CSV (CS7), with the limits in Indian grouping', () => {
     renderStep();
     expect(screen.getByRole('heading', { name: 'Customers' })).toBeTruthy();
-    expect(screen.getByText('Upload a CSV file. We check it for you.')).toBeTruthy();
+    expect(screen.getByText('Upload an Excel or CSV file. We check it for you.')).toBeTruthy();
+    expect(screen.getByText('Drop an Excel or CSV file here, or choose one. We find the phone number column for you.')).toBeTruthy();
     expect(screen.getByTestId('ingest-limits').textContent).toBe('Up to 10,00,000 rows and 512 MB per file.');
-    expect((screen.getByLabelText('CSV file') as HTMLInputElement).accept).toBe('.csv,text/csv');
-    expect(document.body.textContent).not.toMatch(/excel|xlsx/i);
+    expect(screen.getByRole('button', { name: 'Choose a file' })).toBeTruthy();
+    // By extension and by type; a legacy .xls is not offered (the server refuses it, IM8).
+    const accept = (screen.getByLabelText('Excel or CSV file') as HTMLInputElement).accept.split(',');
+    expect(accept).toEqual(['.csv', 'text/csv', '.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
+    expect(accept).not.toContain('.xls');
+    expect(accept).not.toContain('application/vnd.ms-excel');
+  });
+
+  it('hands a dropped Excel file over as it does a CSV', () => {
+    const onPickFile = vi.fn(async () => {});
+    renderStep({ onPickFile });
+    const workbook = new File(['PK'], 'Customers May.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    fireEvent.drop(screen.getByTestId('contacts-dropzone'), { dataTransfer: { files: [workbook] } });
+    expect(onPickFile).toHaveBeenCalledWith(workbook);
   });
 
   it('shows drag-over, and takes one file at a time while the first is being taken', async () => {
@@ -68,7 +82,7 @@ describe('the drop zone', () => {
     expect(zone.getAttribute('data-drag-over')).toBeNull();
     // Still `idle` (the page has not re-rendered): the step's own lock holds the second.
     fireEvent.drop(zone, { dataTransfer: { files: [csv('second.csv')] } });
-    fireEvent.change(screen.getByLabelText('CSV file'), { target: { files: [csv('third.csv')] } });
+    fireEvent.change(screen.getByLabelText('Excel or CSV file'), { target: { files: [csv('third.csv')] } });
     fireEvent.dragOver(zone);
     expect(zone.getAttribute('data-drag-over')).toBeNull();
     expect(onPickFile).toHaveBeenCalledTimes(1);
@@ -85,12 +99,53 @@ describe('the drop zone', () => {
     const onPickFile = vi.fn();
     renderStep({ onPickFile, ingest: fakeIngest({ phase: 'uploading' }) });
     expect(screen.getByText('Uploading…')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Choose a CSV file' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Choose a file' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.drop(screen.getByTestId('contacts-dropzone'), { dataTransfer: { files: [csv()] } });
     expect(onPickFile).not.toHaveBeenCalled();
     cleanup();
     renderStep({ ingest: fakeIngest({ phase: 'analyzing' }) });
     expect(screen.getByText('Reading the columns…')).toBeTruthy();
+  });
+});
+
+describe('an Excel upload’s sheets (CS7)', () => {
+  it('says nothing about sheets for a CSV', () => {
+    renderStep({ ingest: reviewingIngest() });
+    expect(screen.getByTestId('file-row')).toBeTruthy();
+    expect(screen.queryByTestId('sheet-read')).toBeNull();
+    expect(screen.queryByTestId('sheet-others')).toBeNull();
+    expect(screen.getByTestId('file-row').textContent).not.toMatch(/sheet/i);
+  });
+
+  it('names the sheet read, in the file row, and nothing more when it is the only one', () => {
+    renderStep({ ingest: reviewingIngest({ upload: xlsxUpload() }) });
+    const row = screen.getByTestId('file-row');
+    expect(within(row).getByText('Customers May.xlsx').tagName).toBe('STRONG');
+    expect(within(row).getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
+    expect(screen.queryByTestId('sheet-others')).toBeNull();
+  });
+
+  it('names one other sheet that was not read, and how to import it', () => {
+    renderStep({ ingest: reviewingIngest({ upload: xlsxUpload(['Paid']) }) });
+    expect(within(screen.getByTestId('file-row')).getByTestId('sheet-others').textContent).toBe(
+      'This file has 1 other sheet (‘Paid’) that was not read. To import it, move those customers to the first sheet, or save that sheet as its own file.',
+    );
+  });
+
+  it('names several other sheets that were not read, in tab order', () => {
+    renderStep({ ingest: reviewingIngest({ upload: xlsxUpload(['Paid', 'Archive']) }) });
+    expect(screen.getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
+    expect(screen.getByTestId('sheet-others').textContent).toBe(
+      'This file has 2 other sheets (‘Paid’, ‘Archive’) that were not read. To import them, move those customers to the first sheet, or save each sheet as its own file.',
+    );
+  });
+
+  it('shows the sheet while the columns are being picked too', () => {
+    renderStep({
+      ingest: fakeIngest({ phase: 'mapping', upload: xlsxUpload(['Paid']), analysis: { ...ANALYSIS, suggested_phone_column: null, phone_column_ambiguous: true }, mapping: initialMapping(ANALYSIS) }),
+    });
+    expect(screen.getByTestId('customers-mapper')).toBeTruthy();
+    expect(within(screen.getByTestId('file-row')).getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
   });
 });
 
@@ -344,5 +399,64 @@ describe('with the roster ingest itself', () => {
     await waitFor(() => expect(api.importCheckedFile).toHaveBeenCalledWith('check-1', 'camp-1', 't1', 'a1'));
     const mapping = onIngestStarted.mock.calls[0]![1];
     expect(buildContextDisplay(mapping).facts?.map((f) => f.column)).toEqual(['Amount Due']);
+  });
+
+  it('reads an Excel file the same way, says which sheet was read, and names the downloads without .xlsx', async () => {
+    api.uploadRosterCsv.mockResolvedValue(xlsxUpload(['Paid', 'Archive']));
+    api.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
+    api.getIngestJob.mockResolvedValue(ingestJob({ file_name: 'Customers May.xlsx' }));
+    api.downloadRejectedRows.mockResolvedValue(new Blob(['x']));
+    api.downloadSkippedRows.mockResolvedValue(new Blob(['x']));
+    const names: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    try {
+      render(<Harness />);
+      const workbook = new File(['PK'], 'Customers May.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      fireEvent.drop(screen.getByTestId('contacts-dropzone'), { dataTransfer: { files: [workbook] } });
+      await waitFor(() => expect(screen.getByTestId('chip-ready').textContent).toBe('1,240 customers ready'));
+      expect(api.uploadRosterCsv.mock.calls[0]![0]).toBe(workbook);
+      // The check reads the stored CSV, under the name the supervisor's file had.
+      expect(api.startRosterIngest.mock.calls[0]![0]).toMatchObject({ file_name: 'Customers May.xlsx', dry_run: true });
+      const row = screen.getByTestId('file-row');
+      expect(within(row).getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
+      expect(within(row).getByTestId('sheet-others').textContent).toContain('2 other sheets (‘Paid’, ‘Archive’) that were not read');
+
+      const chips = screen.getByTestId('ingest-chips');
+      fireEvent.click(within(chips).getByRole('button', { name: 'Download the rejected rows' }));
+      await waitFor(() => expect(names).toEqual(['Customers May-rejected-rows.csv']));
+      fireEvent.click(within(chips).getByRole('button', { name: 'Download the skipped rows' }));
+      await waitFor(() => expect(names).toEqual(['Customers May-rejected-rows.csv', 'Customers May-skipped-rows.csv']));
+    } finally {
+      click.mockRestore();
+    }
+  });
+
+  it.each([
+    ['a CSV’s, whatever its case', 'NOV LIST.CSV', 'NOV LIST-rejected-rows.csv'],
+    ['a macro workbook’s (the server reads it by its content)', 'Customers.xlsm', 'Customers-rejected-rows.csv'],
+  ])('names %s downloads without the extension', async (_what, fileName, expected) => {
+    api.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
+    api.getIngestJob.mockResolvedValue(ingestJob({ file_name: fileName }));
+    api.downloadRejectedRows.mockResolvedValue(new Blob(['x']));
+    const names: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    try {
+      render(<Harness />);
+      await dropFile();
+      await waitFor(() => expect(screen.getByTestId('chip-ready')).toBeTruthy());
+      expect(screen.queryByTestId('sheet-read')).toBeNull();
+      fireEvent.click(within(screen.getByTestId('ingest-chips')).getByRole('button', { name: 'Download the rejected rows' }));
+      await waitFor(() => expect(names).toEqual([expected]));
+    } finally {
+      click.mockRestore();
+    }
   });
 });

@@ -8,6 +8,8 @@ import { hasPermission } from '../../utils/permissions';
 import { mappingBlockReason } from '../../utils/agencyColumnMapping';
 import { ColumnMapper } from '../campaigns/agency/ColumnMapper';
 import { IngestSummary, ReviewNextSteps } from '../campaigns/agency/IngestSummary';
+import { SheetNotice } from '../campaigns/agency/SheetNotice';
+import { CUSTOMER_FILE_ACCEPT, CUSTOMER_FILE_LABEL } from '../../utils/agencyCustomerFile';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { CampaignWorkspace, type CampaignWorkspaceSection } from './campaign-detail/CampaignWorkspace';
@@ -177,7 +179,7 @@ function AddContactsSection({
           {phase === 'idle' || phase === 'uploading' || phase === 'analyzing' ? (
             <div className={styles.dropzone}>
               <p className={styles.dropzoneCopy}>
-                Upload a CSV. Any columns you like — you pick the phone column next.
+                Upload an Excel or CSV file. Any columns you like — you pick the phone column next.
               </p>
               {limits && (
                 <p className={styles.limits}>
@@ -190,8 +192,8 @@ function AddContactsSection({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,text/csv"
-                aria-label="CSV file"
+                accept={CUSTOMER_FILE_ACCEPT}
+                aria-label={CUSTOMER_FILE_LABEL}
                 className={styles.fileInput}
                 disabled={!canAdd || phase !== 'idle'}
                 onChange={(event) => {
@@ -206,10 +208,16 @@ function AddContactsSection({
                 disabled={!canAdd || phase !== 'idle'}
                 onClick={() => fileInputRef.current?.click()}
               >
-                Choose a CSV
+                Choose a file
               </button>
               {phase === 'uploading' && <p className={styles.progressLine}>Uploading…</p>}
               {phase === 'analyzing' && <p className={styles.progressLine}>Reading the columns…</p>}
+            </div>
+          ) : upload?.sheet ? (
+            // An Excel upload: which sheet was read, and any that were not (CS7). Kept through
+            // the check and the import, until the file is replaced.
+            <div className={styles.sheetNotice} data-testid="sheet-notice">
+              <SheetNotice upload={upload} readClassName={styles.sheetRead} othersClassName={styles.sheetOthers} />
             </div>
           ) : null}
 

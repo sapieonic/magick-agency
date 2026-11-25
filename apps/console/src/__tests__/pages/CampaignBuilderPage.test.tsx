@@ -193,7 +193,7 @@ describe('the check that starts by itself, and Add N customers (CS8, IM2)', () =
   });
 
   it('a check that failed offers the way back: a corrected file, or other columns', async () => {
-    await reachCheck(check({ status: 'failed', error_code: 'malformed_csv', error_message: 'Could not read the CSV: Invalid Closing Quote.' }));
+    await reachCheck(check({ status: 'failed', error_code: 'malformed_csv', error_message: 'Could not read the file: Invalid Closing Quote.' }));
     const recovery = await screen.findByTestId('ingest-recovery', undefined, { timeout: 4000 });
     expect(within(recovery).getByRole('button', { name: 'Upload a corrected file' })).toBeTruthy();
     expect(footerButton('Skip for now')).toBeTruthy();
@@ -256,6 +256,67 @@ describe('the check that starts by itself, and Add N customers (CS8, IM2)', () =
       'a1',
     );
     expect(mocks.updateAgencyCampaign.mock.invocationCallOrder[0]!).toBeLessThan(mocks.importCheckedFile.mock.invocationCallOrder[0]!);
+  });
+});
+
+describe('an Excel file on Customers (CS7)', () => {
+  it('says which sheet was read and which were not, and keeps saying it after moving between steps', async () => {
+    mocks.uploadRosterCsv.mockResolvedValue({
+      s3_key: 'agency-ingest/t1/u1/customers.csv',
+      file_name: 'Customers May.xlsx',
+      file_size_bytes: 9000,
+      format: 'xlsx',
+      sheet: { name: 'Customers', other_sheet_names: ['Paid', 'Archive'] },
+    });
+    serveJobs(check({ file_name: 'Customers May.xlsx' }), imported());
+    await renderPage();
+    fillBasics();
+    goToStep('Customers');
+    dropCsv('Customers May.xlsx');
+    await screen.findByTestId('chip-ready', undefined, { timeout: 4000 });
+    const others = 'This file has 2 other sheets (‘Paid’, ‘Archive’) that were not read. To import them, move those customers to the first sheet, or save each sheet as its own file.';
+    const row = screen.getByTestId('file-row');
+    expect(within(row).getByText('Customers May.xlsx')).toBeTruthy();
+    expect(within(row).getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
+    expect(within(row).getByTestId('sheet-others').textContent).toBe(others);
+
+    goToStep('Name & number');
+    expect(screen.queryByTestId('file-row')).toBeNull();
+    goToStep('Customers');
+    expect(within(screen.getByTestId('file-row')).getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
+    expect(screen.getByTestId('sheet-others').textContent).toBe(others);
+  });
+
+  it('says a refused workbook in the server’s words, and offers the picker again', async () => {
+    const message = 'This workbook is protected with a password. Remove the password, save it and upload it again.';
+    mocks.uploadRosterCsv.mockRejectedValue(new ApiError(400, { error: 'workbook_protected', message }));
+    await renderPage();
+    fillBasics();
+    goToStep('Customers');
+    dropCsv('Locked.xlsx');
+    expect((await screen.findByTestId('builder-error')).textContent).toBe(message);
+    expect(mocks.analyzeRosterColumns).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Choose a file' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe('a workbook refused while another is being read', () => {
+  const message = 'Another Excel file is being read. Try again in a minute.';
+
+  it.each([
+    [429, 'Too Many Requests'],
+    [503, 'Service Unavailable'],
+  ])('says a %i in the server’s words, never a generic error, and offers the picker again', async (status, label) => {
+    mocks.uploadRosterCsv.mockRejectedValue(new ApiError(status, { statusCode: status, error: label, message }, 'req-77'));
+    await renderPage();
+    fillBasics();
+    goToStep('Customers');
+    dropCsv('Second.xlsx');
+    const alert = await screen.findByTestId('builder-error');
+    expect(alert.textContent!.startsWith(message)).toBe(true);
+    expect(alert.textContent).not.toMatch(/something went wrong|server error|API error/i);
+    expect(mocks.analyzeRosterColumns).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Choose a file' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

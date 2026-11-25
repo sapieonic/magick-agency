@@ -175,7 +175,7 @@ export type AgencyIngestFailureCode =
  * `AgencyIngestError` as `malformed_csv`. It was written for parser and stream
  * failures, which is right — but `onBatch` and `onRejected` are the CALLER's
  * code, and an error they raise travels the same path. So a caller's own
- * exception came back as "Could not read the CSV", about a file that was fine.
+ * exception came back as "Could not read the file" (`malformed_csv`), about a file that was fine.
  *
  * Two live consequences, one of them silent:
  *
@@ -207,6 +207,18 @@ async function fromCaller<T>(fn: () => Promise<T> | T): Promise<T> {
 function isCallerError(err: unknown): boolean {
   return err !== null && typeof err === 'object' && CALLER_ERROR in err;
 }
+
+/**
+ * The words of the whole-file limits, shared by the ingest, the column analysis and the
+ * upload's Excel conversion (IM8), which refuses a workbook over them before storing it.
+ * "The file", never "the CSV": an Excel upload reaches these too.
+ */
+export const AGENCY_LIMIT_MESSAGES = {
+  tooManyRows: (maxRows: number): string =>
+    `The file has more than ${maxRows.toLocaleString()} rows. Split it into smaller campaigns.`,
+  tooManyColumns: (columns: number, maxColumns: number): string =>
+    `The file has ${columns} columns. The maximum is ${maxColumns}.`,
+};
 
 export class AgencyIngestError extends Error {
   constructor(
@@ -314,7 +326,7 @@ export interface AgencyIngestContact {
   phone_e164: string;
   /** Every retained non-phone column, original (de-duplicated) header as key. */
   context: Record<string, string>;
-  /** 1-based line in the uploaded file on which this record starts. */
+  /** 1-based row of the uploaded file this record is on, as a spreadsheet shows it (records and blank lines before it, IM8). */
   source_row_number: number;
   /** From the mapped timezone column; undefined ⇒ campaign default. */
   timezone?: string;
@@ -692,10 +704,8 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     // Arrays, not objects: `columns: true` silently collapses duplicate headers,
     // and duplicate headers need suffixing, not collapsing.
     columns: false,
-    // Line numbers and byte offsets. `info.lines` is what keeps
-    // `source_row_number` correct after a record containing an embedded
-    // newline — counting emitted records instead would drift by one line for
-    // every multiline row, and every row number after it would be wrong.
+    // Byte offsets for the progress bar, and `empty_lines`, which the row
+    // numbers below need (see `previousRow`).
     info: true,
   });
 
@@ -731,10 +741,17 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
   let pending: AgencyIngestCandidate[] = [];
   let keyInfo: AgencyIngestKeyInfo = { mode: 'none', columns: [], phone_parts: [] };
 
-  // `info.lines` is the line on which the current record ENDS. The line it
-  // STARTS on is what a spreadsheet shows the operator, so track the previous
-  // record's end and add one.
-  let previousEndLine = 0;
+  // A record's row number is the row a spreadsheet shows it on, which is how the
+  // operator finds it again (IM8): one row per record before it, plus one per
+  // blank line before it. A blank line is a blank row in a spreadsheet, and
+  // `skip_empty_lines` skips it, so the records alone would drift by one at every
+  // blank line (an Excel upload keeps its blank rows as blank lines, so that row N
+  // here is row N of the sheet). A record whose quoted cell holds a line break is
+  // still ONE row, as a spreadsheet opens it: counting the file's lines instead
+  // (`info.lines`, as this did before IM8) put every row after such a cell one
+  // further down per line break than the spreadsheet shows it.
+  let previousRow = 0;
+  let previousEmptyLines = 0;
 
   // Settled with the header row. `none` until then, which no data row can see.
   let dedupeMode: 'phone' | 'column' | 'none' = 'none';
@@ -875,15 +892,16 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
       // A data row's NULs and formula-guard apostrophes (`readDataCells`); the header row as written.
       const record = headers.length > 0 ? readDataCells(item.record) : item.record;
       bytesRead = info.bytes;
-      const startLine = previousEndLine + 1;
-      previousEndLine = info.lines;
+      const startLine = previousRow + 1 + (info.empty_lines - previousEmptyLines);
+      previousRow = startLine;
+      previousEmptyLines = info.empty_lines;
 
       // ── Header row ──────────────────────────────────────────────────────
       if (headers.length === 0) {
         if (record.length > maxColumns) {
           throw new AgencyIngestError(
             'too_many_columns',
-            `The file has ${record.length} columns. The maximum is ${maxColumns}.`,
+            AGENCY_LIMIT_MESSAGES.tooManyColumns(record.length, maxColumns),
           );
         }
 
@@ -898,7 +916,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
         if (headers.some((h) => h.includes('�') || hasNul(h))) {
           throw new AgencyIngestError(
             'unsupported_encoding',
-            'The column headers contain characters that are not valid UTF-8. Save the file as CSV UTF-8 and upload it again.',
+            'The column headers contain characters that are not valid UTF-8. Save the file as CSV UTF-8 or as an Excel Workbook (.xlsx) and upload it again.',
           );
         }
 
@@ -967,7 +985,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
       if (rowsRead > maxRows) {
         throw new AgencyIngestError(
           'too_many_rows',
-          `The file has more than ${maxRows.toLocaleString()} rows. Split it into smaller campaigns.`,
+          AGENCY_LIMIT_MESSAGES.tooManyRows(maxRows),
         );
       }
 
@@ -1098,7 +1116,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     if (isCallerError(err)) throw err;
     throw new AgencyIngestError(
       'malformed_csv',
-      `Could not read the CSV: ${err instanceof Error ? err.message : 'unknown error'}`,
+      `Could not read the file: ${err instanceof Error ? err.message : 'unknown error'}`,
     );
   }
 

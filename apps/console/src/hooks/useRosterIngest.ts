@@ -17,6 +17,7 @@ import {
   type MappingState,
 } from '../utils/agencyColumnMapping';
 import { HIGH_REJECTION_RATIO, checkStillImportable, isTerminal } from '../utils/agencyIngestSummary';
+import { uploadBaseName } from '../utils/agencyCustomerFile';
 import {
   trackAgencyRosterIngestCompleted,
   trackAgencyRosterIngestFailed,
@@ -400,7 +401,8 @@ export function useRosterIngest(
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `${job.file_name.replace(/\.csv$/i, '')}-${which}-rows.csv`;
+      // CSV whatever was uploaded: `Customers.xlsx` → `Customers-rejected-rows.csv`.
+      anchor.download = `${uploadBaseName(job.file_name)}-${which}-rows.csv`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (err: unknown) {
