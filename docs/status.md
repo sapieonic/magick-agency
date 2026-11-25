@@ -2428,7 +2428,7 @@ Known limits: the dialler-conversations count reads the day's attempts deploymen
 filters to the account (an account-first index would bound it); Will pay shows Successes for a
 moment until the promises read answers.
 
-### Live floor Phase 3 2026-11-19 (LF4–LF7 decided; LF11–LF39 built as defaults, pending Manas)
+### Live floor Phase 3 2026-11-19 (LF4–LF7 decided; LF11–LF38 built as defaults, pending Manas)
 
 Phase 3 of the Live floor, as Manas decided LF4–LF7, on the console, the app and the server.
 **Need help** (LF4, LF11–LF16, LF24, LF28, LF35): the agent raises it on their own live session, on
@@ -2458,9 +2458,9 @@ only (`409 late_callbacks_pool_mode`). **The account's Callbacks page** (LF22, L
 keyset pages, the customer's name never the number (`0053_account_callbacks_index.sql`: 38 ms for
 the overdue page on 25 campaigns of 40,000 contacts, 3.4 s before it). Phase 4 (Join call, whisper,
 LF8) stays Coming soon. Known limits: the campaign Agents tab still flags breaks at the fixed 30
-minutes (its stats read carries no limit, LF33); Need help is not on the console's inbound and soft
-phone views nor the app's soft phone screens (LF24, LF39; since done by the agent station redesign,
-2026-11-20); the Callbacks page's campaign filter
+minutes (its stats read carries no limit, LF33); Need help was not on the console's inbound and soft
+phone views nor the app's soft phone screens (LF24, LF39; the station's views since the agent station
+redesign, 2026-11-20, the app's Phone tab and the console's soft phone page since LF39, 2026-11-24); the Callbacks page's campaign filter
 lists the board's first 25 campaigns.
 
 ### Staging reports of 2026-11-17: a stuck summary, short recordings, inbound on the soft phone 2026-11-19 (AD1, AD2, TR1)
@@ -2864,6 +2864,30 @@ or Mark handled, and no Missed, Voicemail or Abandoned in its outcome filter; an
 shows an inbound entry as one it cannot show yet ([`call-log.md`](call-log.md) §8 "What P6 left
 as it was").
 
+### Live floor Phase 3's follow-ups 2026-11-24 (LF39, [`decisions.md`](decisions.md) "Live floor (LF)")
+
+Manas decided LF39, the three follow-ups left by the app's Phase 3; all built, client-only (the
+server already accepted a raise on a soft-phone session and sent the frames to every station socket).
+
+- **Need help on every soft phone screen.** The app's Phone tab now has the button and the card (the
+  station controller publishes a soft-phone session's help beside its messages; the screens read it
+  through `sessionHelpProvider` and `sessionHelpActionsProvider`). The console's soft phone page
+  `/dialer/phone` has Need help and shows supervisors' messages; its socket is the station socket
+  (`client=web`), so `ready.help`, `help_answered`, `help_cleared` and `supervisor_message` already
+  reached it. The message banner and the side Need help button are shared with the station
+  (`SupervisorBanner`, `SideNeedHelpButton`).
+- **A message vibrates the app.** One short vibration, never a sound, when a message first arrives:
+  once per id, once per burst (2 s), only while Me → Vibration is on. The console is unchanged.
+- **Telemetry**, six events from both clients and one from the console (`decisions.md` LF39 (c)): `agency_help_raised`,
+  `_cancelled`, `_answered`, `_expired`, `_refused`, `agency_supervisor_message_shown`, and the
+  console's `agency_supervisor_message_sent`. Each Need help event at most once per request;
+  `cancelled` only on the server's `help_cleared {cancelled}`; no text, names or customer details.
+
+**Not verified:** the vibration has not been felt on a phone (Android with touch feedback off, iOS
+while the call's audio session records); none of it has been seen against a deployed server. Me →
+Vibration now gates the call-arrival and connect buzzes too (before LF39 it gated nothing), as its
+subtitle says; the buzz on a refused Save is form feedback and stays.
+
 ### Abandonment on 23 Nov: the 3 s grace, the Resume warning, answer-to-audio 2026-11-24 (AG1, AW1–AW3)
 
 On 23 Nov two staging campaigns read about 10% abandoned and the guardrail paused them over and over.
@@ -2902,8 +2926,15 @@ until the server is deployed.
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
 control on the cards. Phase 3's follow-up: break limits on the campaign Agents tab (LF33). (Need
-help on the inbound and soft-phone screens of both clients, LF24 and LF39, is done by the agent
-station redesign.)
+help on the inbound and soft-phone screens of both clients, LF24 and LF39, is done: the agent
+station redesign and LF39.) LF39's message vibration is unproven on a phone: Android's
+`HapticFeedback.vibrate` does nothing with the system's touch feedback off (fix: `Vibrator` over a
+platform channel; `VIBRATE` is in the manifest) and iOS mutes it while the call records (fix:
+`setAllowHapticsAndSystemSoundsDuringRecording(true)` in `VoiceEngine.swift`); neither native change
+could be compiled in the build container ([`mobile.md`](mobile.md) "Not verified yet"). The PostHog
+event names the console and the app share are typed by hand on each side, with no check that they
+match (the soft phone's and LF39's alike): a shared list in `packages/contracts`, carried to the app
+through `literals.json`, would guard them.
 
 **Launch work** (phase 10):
 
@@ -3019,7 +3050,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Soft-phone results (2026-11-15) | Ratify SR1–SR3 and SR5–SR8: tagged soft-phone calls beside the dialler's figures, never in its connect rate; "Dialler connect rate" and "All calls" in the console and the campaign report; the export's `source` column; the workbook's Summary rows appear only when there were soft-phone calls (a parser keyed on "Connect rate" then reads "Dialler connect rate") |
 | Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
-| Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF8 (Join call, whisper); ratify LF1, LF9 and LF10, and Phase 3's defaults LF11–LF38 (LF21: no late callbacks to an agent on a break; LF27: Agents on every campaign's Settings); LF39 open. LF4–LF7 (Phase 3) decided 2026-11-19 and built (`decisions.md`, "Live floor (LF)") |
+| Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF8 (Join call, whisper); ratify LF1, LF9 and LF10, and Phase 3's defaults LF11–LF38 (LF21: no late callbacks to an agent on a break; LF27: Agents on every campaign's Settings). LF4–LF7 (Phase 3) decided 2026-11-19 and built; LF39 decided 2026-11-24 and built (`decisions.md`, "Live floor (LF)") |
 | Archived campaigns (2026-11-21) | Ratify AR1–AR7: a flag beside the status; draft and stopped only, not completed; archived campaigns out of every list, picker and search (a picker keeps one it holds); `agency.campaigns.write`; only Start refused on an archived campaign, the console offering no new work on it |
 | Staging reports (2026-11-19) | Ratify AD1–AD2 (a summary reads "delayed" server-wide while the AI vendor's newest answer is a refusal) and TR1 (identical audio transcribed at most twice across attempts that end short, at worst 2 per attempt); run `terraform apply` in `grafana/` so `agy-analysis-vendor-refusing` exists; decide P3 soft-phone pickup, and a note on the agent app's Phone tab meanwhile |
 

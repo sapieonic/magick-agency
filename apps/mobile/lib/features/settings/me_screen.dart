@@ -319,7 +319,7 @@ class _LocalPrefsCard extends ConsumerWidget {
             value: prefs.haptics,
             onChanged: notifier.setHaptics,
             title: const Text('Vibration'),
-            subtitle: Text('A buzz when a call arrives and when it connects', style: text.bodySmall),
+            subtitle: Text('A buzz when a call arrives, when it connects and when your supervisor sends a message', style: text.bodySmall),
           ),
         ],
       ),

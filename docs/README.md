@@ -100,7 +100,9 @@ Live floor (2026-11-18, LF1–LF10 and B28b, defaults pending Manas): the superv
 rebuilt as the Live floor: tiles, Needs you now beside the active campaigns, an agent card grid
 from one account-wide floor read, promises to pay and "Will pay", who paused a campaign, and a
 Callbacks section. Phase 3 (Need help, messages to agents, break limits, giving late callbacks to
-free agents) and Phase 4 (Join call, whisper) are Coming soon controls only
+free agents) is built (2026-11-19, LF4–LF7 decided, its defaults pending Manas), with its follow-ups
+LF39 (Need help on every soft phone screen, a message vibration in the app, Need help and message
+telemetry) decided and built on 2026-11-24; Phase 4 (Join call, whisper) is a Coming soon control
 ([`status.md`](status.md)).
 
 Archived campaigns (2026-11-21, AR1–AR7, defaults pending Manas): a draft or stopped campaign can

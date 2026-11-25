@@ -31,7 +31,12 @@ import { SOFTPHONE_SURFACE } from '../../utils/agencyAgentSurfaces';
 import { SoftphoneScreen } from '../../components/softphone/StationSoftphone';
 import { SOFTPHONE_LEAVE_BLOCKED_COPY, SOFTPHONE_STAYS_OPEN_COPY } from '../../components/softphone/SoftphoneHeader';
 import { AgentNav } from '../../components/agency/AgentNav';
-import { StationBanner, StationFrame, type FrameView } from '../../components/agency/station/StationFrame';
+import { SideNeedHelpButton, StationBanner, StationFrame, type FrameView } from '../../components/agency/station/StationFrame';
+import { SupervisorBanner } from '../../components/agency/station/SupervisorBanner';
+import { FloorAssistAnnouncer, useFloorAssistAnnouncer, useSupervisorMessageShown } from '../../components/agency/SupervisorMessages';
+import { FLOOR_ASSIST_FLAG } from '../../utils/agency/floorAssistFlag';
+import type { HelpWhere } from '../../utils/agency/helpTelemetry';
+import { useStationHelp } from './station/useStationHelp';
 import { EscapeLink, JoinFrame, type Who } from '../../components/agency/station/StationJoinScreens';
 import { StationListenFirstNotice, StationListenNotice } from '../../components/agency/StationListenNotice';
 import { useReadAloud } from '../../hooks/useSpeech';
@@ -280,6 +285,28 @@ function SoftphoneConsole({
     supervises,
   });
 
+  /*
+    Floor assist (LF4, LF5, LF39): Need help in the top bar and supervisors' messages under the band,
+    as on the station's soft phone. This page's socket is a station socket like the station's (a
+    console has floor assist without declaring it), so `ready.help`, `help_answered`, `help_cleared`
+    and `supervisor_message` reach it; the server takes a raise on a soft-phone session in any state
+    (AS5), so raising is offered whatever the call is doing.
+  */
+  const floorAssistOn = useFeatureFlagEnabled(FLOOR_ASSIST_FLAG);
+  const help = useStationHelp({
+    offered: floorAssistOn,
+    everywhere: true,
+    sessionId: session.session_id,
+    tenantId: tenantId ?? undefined,
+    accountId: accountId ?? undefined,
+    station: stationState,
+    clock,
+  });
+  const announced = useFloorAssistAnnouncer(stationState.supervisorMessages, help.announcement);
+  // On a call: connected or owing its outcome, the pad's own rule. Dialling or ringing is not.
+  const helpWhere: HelpWhere = { surface: 'softphone', onCall: sp.padEnabled };
+  useSupervisorMessageShown(stationState.supervisorMessages, helpWhere.onCall);
+
   const [closeOpen, setCloseOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const [closeFailure, setCloseFailure] = useState<string | null>(null);
@@ -326,6 +353,13 @@ function SoftphoneConsole({
               </span>
               {/* That a supervisor may listen (LS2), behind the same info button as the station's. */}
               <StationListenNotice />
+              <SideNeedHelpButton
+                help={help}
+                connected={connection === 'open'}
+                where={helpWhere}
+                raisedAt={stationState.help?.raised_at ?? null}
+                nowMs={clock.now}
+              />
             </>
           ),
           menu: () => null,
@@ -358,6 +392,7 @@ function SoftphoneConsole({
                   {connection === 'superseded' ? STATION_COPY.otherDeviceSubtitle : STATION_COPY.internetGaveUpSubtitle}
                 </StationBanner>
               ) : null}
+              <SupervisorBanner station={stationState} help={help} />
               <StationListenFirstNotice />
             </>
           ),
@@ -384,6 +419,7 @@ function SoftphoneConsole({
           ),
         }}
       />
+      <FloorAssistAnnouncer lines={announced} />
 
       <ConfirmDialog
         open={closeOpen}

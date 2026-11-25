@@ -128,6 +128,30 @@ class FakeSoftphoneActions implements SoftphoneActions {
   void dismissSessionError() => _rec('dismissSessionError');
 }
 
+/// Need help's actions on the hosted session (LF39), recorded.
+class FakeHelpActions implements SessionHelpActions {
+  final calls = <String>[];
+  int count(String name) => calls.where((c) => c == name).length;
+
+  @override
+  Future<void> raiseHelp() async => calls.add('raiseHelp');
+  @override
+  Future<void> cancelHelp() async => calls.add('cancelHelp');
+  @override
+  void dismissHelpNotice() => calls.add('dismissHelpNotice');
+}
+
+/// The session's [HelpView], as the station core publishes it.
+class HelpHolder extends Notifier<HelpView> {
+  HelpHolder(this.initial);
+  final HelpView initial;
+
+  @override
+  HelpView build() => initial;
+
+  void set(HelpView v) => state = v;
+}
+
 class FakePermissions implements SoftphonePermissions {
   MicPermission mic = MicPermission.granted;
   int micAsked = 0;
@@ -172,6 +196,8 @@ class SoftphoneHarness {
     this.clock,
     this.platformCalls,
     this.announcements,
+    this.helpHolder,
+    this.helpActions,
   );
 
   final WidgetTester tester;
@@ -182,10 +208,18 @@ class SoftphoneHarness {
   final TestClock clock;
   final List<MethodCall> platformCalls;
   final List<Object?> announcements;
+  final NotifierProvider<HelpHolder, HelpView> helpHolder;
+  final FakeHelpActions helpActions;
   int settingsOpened = 0;
   late final GoRouter router;
 
   SoftphoneView get view => container.read(holder);
+
+  /// The session's Need help, as the station core would publish it.
+  Future<void> setHelp(HelpView v) async {
+    container.read(helpHolder.notifier).set(v);
+    await settle(tester);
+  }
 
   Future<void> setView(SoftphoneView v) async {
     container.read(holder.notifier).set(v);
@@ -237,6 +271,8 @@ Future<SoftphoneHarness> pumpSoftphone(
   bool listenNotice = false,
   String? listenScope,
   KeyValueStore? store,
+  bool needHelp = false,
+  HelpView help = const HelpView(),
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
@@ -257,6 +293,8 @@ Future<SoftphoneHarness> pumpSoftphone(
   addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
 
   final holder = NotifierProvider<ViewHolder, SoftphoneView>(() => ViewHolder(view));
+  final helpHolder = NotifierProvider<HelpHolder, HelpView>(() => HelpHolder(help));
+  final helpActions = FakeHelpActions();
   final actions = FakeSoftphoneActions();
   final permissions = FakePermissions();
   final clock = TestClock(now ?? t0);
@@ -273,14 +311,17 @@ Future<SoftphoneHarness> pumpSoftphone(
       stationListenNoticeProvider.overrideWithValue(listenNotice),
       listenNoticeScopeProvider.overrideWithValue(listenScope),
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
-      // Need help on the station's soft phone (AS5): the account's flag, off unless a test says.
-      stationNeedHelpProvider.overrideWithValue(false),
+      // Need help on the soft phone (AS5, LF39): the account's flag, off unless a test says; the
+      // hosted session's request and its actions, as the station core publishes them.
+      stationNeedHelpProvider.overrideWithValue(needHelp),
+      sessionHelpProvider.overrideWith((ref) => ref.watch(helpHolder)),
+      sessionHelpActionsProvider.overrideWithValue(helpActions),
       // A phone that can speak, answered at once (What happened?'s speakers, AS13).
       readAloudAvailableProvider.overrideWith((ref) => true),
     ],
   );
   addTearDown(container.dispose);
-  h = SoftphoneHarness(tester, container, holder, actions, permissions, clock, platformCalls, announcements);
+  h = SoftphoneHarness(tester, container, holder, actions, permissions, clock, platformCalls, announcements, helpHolder, helpActions);
 
   final routes = <RouteBase>[
     GoRoute(

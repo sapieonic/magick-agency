@@ -3,6 +3,7 @@ import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { AGENCY_SUPERVISOR_MESSAGE_MAX_CHARS } from '@magick-agency/contracts/agency/floor-assist';
 import { sendSupervisorMessage } from '../../../api/agencyFloorAssist';
+import { trackAgencySupervisorMessageSent } from '../../../analytics/events';
 import { useTenant } from '../../../contexts/TenantContext';
 import {
   messageFits,
@@ -25,6 +26,8 @@ import styles from './LiveFloor.module.css';
  *   session gone. A sent message closes it with a toast.
  * - The shared `Modal`: focus trapped and restored, Escape closes, the text box takes focus. The
  *   overlay does not dismiss it, so a stray click never throws a half-written message away.
+ * - A sent message is `agency_supervisor_message_sent` (LF39): `reminder` from Send reminder, `talk`
+ *   from Talk; never the text or the agent.
  */
 export function MessageDialog({ target, onClose }: { target: MessageTarget; onClose: () => void }) {
   const { tenantId, accountId } = useTenant();
@@ -44,6 +47,7 @@ export function MessageDialog({ target, onClose }: { target: MessageTarget; onCl
     setError(null);
     try {
       await sendSupervisorMessage(target.sessionId, text.trim(), tenantId, accountId);
+      trackAgencySupervisorMessageSent({ kind: reminder ? 'reminder' : 'talk' });
       showToast(`Sent to ${target.name}.`, 'success');
       onClose();
     } catch (err: unknown) {
