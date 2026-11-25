@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// The dial scopes beyond the account cap (PL14, CR13) are not this file's subject: unbounded.
+vi.mock('../../../src/agency/pacing/dial-scopes.js', async (importOriginal) =>
+  (await import('../../helpers/pacing-scopes.js')).withUnboundedScopes(await importOriginal()));
 
 // ---------------------------------------------------------------------------
 // Contact assignment in the tick (CA1, CA3): on a `strict` or `preferred` campaign an agent

@@ -1,6 +1,9 @@
 // The DNC double is an untyped `{ check }` stub, so the scope argument is not asserted here
 // (it is asserted in `pacing-engine-gates.test.ts`).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// The dial scopes beyond the account cap (PL14, CR13) are not this file's subject: unbounded.
+vi.mock('../../../src/agency/pacing/dial-scopes.js', async (importOriginal) =>
+  (await import('../../helpers/pacing-scopes.js')).withUnboundedScopes(await importOriginal()));
 
 // ---------------------------------------------------------------------------
 // The closed-loop controller.

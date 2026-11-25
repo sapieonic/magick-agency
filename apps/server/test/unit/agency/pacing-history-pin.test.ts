@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// The dial scopes beyond the account cap (PL14, CR13) are not this file's subject: unbounded.
+vi.mock('../../../src/agency/pacing/dial-scopes.js', async (importOriginal) =>
+  (await import('../../helpers/pacing-scopes.js')).withUnboundedScopes(await importOriginal()));
 
 // ---------------------------------------------------------------------------
 // The pacing history and the pacing metrics, PINNED TOGETHER (IN2).

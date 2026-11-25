@@ -17,6 +17,7 @@ function fakeHost() {
     providerConcurrencyGuard: {
       invalidateLimits: vi.fn().mockResolvedValue(undefined),
       getAccountProviderCounts: vi.fn().mockResolvedValue({ status: 'available', counts: new Map([['voicelink', 4]]) }),
+      getProviderCount: vi.fn().mockResolvedValue(3),
     },
     credentialConcurrencyGuard: {
       invalidateCap: vi.fn(),
@@ -43,6 +44,12 @@ describe('createConcurrencyControl', () => {
     const out = await createConcurrencyControl(host as any).getAccountProviderCounts('t', 'a');
     expect(host.providerConcurrencyGuard.getAccountProviderCounts).toHaveBeenCalledWith('t', 'a');
     expect(out).toEqual({ status: 'available', counts: new Map([['voicelink', 4]]) });
+  });
+
+  it('getProviderCount → providerConcurrencyGuard.getProviderCount(t, a, p), result unchanged (PL14, read by pacing)', async () => {
+    const host = fakeHost();
+    await expect(createConcurrencyControl(host as any).getProviderCount('t', 'a', 'voicelink')).resolves.toBe(3);
+    expect(host.providerConcurrencyGuard.getProviderCount).toHaveBeenCalledWith('t', 'a', 'voicelink');
   });
 
   it('getAccountCount → accountConcurrencyGuard.getAccountCount(t, a)', async () => {
@@ -124,5 +131,7 @@ describe('the voice bootstrap registers the implementation (setConcurrencyContro
     expect(invalidateCap).toHaveBeenCalledWith('cred-1');
     await expect(getConcurrencyControl().getCredentialCounts(['cred-1']))
       .resolves.toEqual({ status: 'unavailable', counts: new Map() });
+    // No Redis: a carrier share's counter is unreadable, never "zero calls".
+    await expect(getConcurrencyControl().getProviderCount('t', 'a', 'voicelink')).resolves.toBeNull();
   });
 });

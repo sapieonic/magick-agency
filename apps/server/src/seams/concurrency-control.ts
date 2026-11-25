@@ -18,6 +18,11 @@
  * next admission reads it, and read the live calls on each credential with
  * `getCredentialCounts`.
  *
+ * The pacing engine reads two of these counters too (`agency/pacing/dial-scopes.ts`): an
+ * account's live calls in its share of one carrier (`getProviderCount`) and the live calls on a
+ * carrier account (`getCredentialCounts`), so a tick never plans more dials than admission will
+ * take on those scopes (PL14, CR13).
+ *
  * `bootstrap/voice.ts` registers the implementation at boot (`setConcurrencyControl`). The
  * default throws, so a super-admin write before the voice engine is wired fails loudly
  * instead of leaving a stale cross-replica limit cached in Redis.
@@ -41,6 +46,12 @@ export interface ConcurrencyControl {
    * leases per provider. `unavailable` is a Redis fault, never "zero calls".
    */
   getAccountProviderCounts(tenantId: string, accountId: string): Promise<AccountProviderCounts>;
+  /**
+   * `providerConcurrencyGuard.getProviderCount(tenantId, accountId, provider)` — the account's
+   * live calls in its share of one carrier, the counter admission compares against (one GET).
+   * null is a Redis fault, never "zero calls". Read by pacing (PL14).
+   */
+  getProviderCount(tenantId: string, accountId: string, provider: string): Promise<number | null>;
   /**
    * `accountConcurrencyGuard.getAccountCount(tenantId, accountId)` — the runtime
    * accessor; falls back to a process-local lease count when Redis is degraded. The
@@ -74,6 +85,9 @@ const UNWIRED: ConcurrencyControl = {
     throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
   async getAccountProviderCounts() {
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
+  },
+  async getProviderCount() {
     throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
   async getAccountCount() {

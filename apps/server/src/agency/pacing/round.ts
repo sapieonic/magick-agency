@@ -40,8 +40,8 @@
  *    any campaign of that account in a later round; they are picked up by the first
  *    round after it closes. Once closed it grants nothing more. So when a later round
  *    reads the account, every grant of every earlier split is already in the ledger
- *    (each tick adds its grant right after `submit` resolves, in microtasks, before any
- *    timer can start a round). A forced tick (`tickOnce`, its own round) is exempt: it
+ *    (each grant is put in it synchronously, by the `onGrant` the tick passes to `submit`,
+ *    at the instant the split decides it). A forced tick (`tickOnce`, its own round) is exempt: it
  *    has no production caller.
  *
  * The count itself errs only in the safe direction. A row inserted between the ledger
@@ -107,10 +107,25 @@
  * account concurrency guard, which refuses the excess. An account-level lease is an
  * open decision.
  *
+ * ── The other scopes a dial is admitted against (PL14, CR13) ────────────────
+ * A claim may carry SCOPES (`pacing/dial-scopes.ts`): the account's share of its carrier in
+ * provider-breakdown mode, and the cap of the tenant carrier account it dials on. Each has a
+ * room of its own, possibly shared with campaigns of OTHER accounts (a carrier account serves
+ * every account of its tenant). The split gives a slot only to a claim every one of whose
+ * scopes still has room, taking it from those rooms as it goes, so two campaigns of one
+ * account on one carrier share its room rather than each spending it; a claim whose scope is
+ * full is passed over and its slots go to the others by the same fewest-live rule (MC1 keeps
+ * its guarantees: a campaign that cannot use its slots leaves them to the others). A late
+ * reporter's grant is bounded the same way. Every grant is reported to its tick synchronously
+ * (`onGrant`), before the split returns, so the engine charges it to the scopes' ledger before
+ * any other split, of this account or another, can read their room.
+ *
  * `fresh` marks a forced round (`tickOnce`): reads skip the engine's cross-round
  * caches (the campaign row, the account limit) and go to the database, as the
  * method has always done. A forced tick is its round's only participant.
  */
+
+import { tightestRoom, type ScopeRoom } from './dial-scopes.js';
 
 /** How long the round waits for an account's slowest participant before splitting without it (MC2). */
 export const PACING_SHARE_WAIT_MS = 1_000;
@@ -131,6 +146,11 @@ export interface ShareClaim {
   demand: number;
   /** Its own live calls as this round saw them (0 when not read: a lone participant). */
   ownLive: number;
+  /**
+   * The other scopes its dials are admitted against (`pacing/dial-scopes.ts`), each with its
+   * room right now. None: the account's headroom is its only bound.
+   */
+  scopes?: readonly ScopeRoom[];
 }
 
 /**
@@ -141,6 +161,12 @@ export interface ShareClaim {
  * than `headroom` in total, nor more than a claim's demand; negative or fractional
  * inputs are floored at 0. With one claim the grant is `MAX(0, MIN(headroom, demand))`.
  * Every claim has an entry in the result (0 when it got nothing).
+ *
+ * A claim's {@link ShareClaim.scopes} bound it further: a slot goes to a claim only while
+ * every one of its scopes has room left, and each slot granted takes one from each of the
+ * claim's scopes (shared by every claim that names the scope). Each scope's room is read once,
+ * at the start (the smallest any claim reports for it). With one claim the grant is
+ * `MAX(0, MIN(headroom, demand, room of each scope))`.
  */
 export function splitHeadroom(headroom: number, claims: readonly ShareClaim[], rotation = 0): Map<string, number> {
   const grants = new Map<string, number>();
@@ -148,7 +174,15 @@ export function splitHeadroom(headroom: number, claims: readonly ShareClaim[], r
   if (claims.length === 1) {
     // What the loop below grants a lone claim, without the sort and the slot copies.
     const only = claims[0]!;
-    return grants.set(only.id, Math.max(0, Math.min(Math.floor(headroom), Math.floor(only.demand))));
+    const bound = Math.min(Math.floor(headroom), Math.floor(only.demand), tightestRoom(only.scopes));
+    return grants.set(only.id, Math.max(0, bound));
+  }
+  const rooms = new Map<string, number>();
+  for (const c of claims) {
+    for (const scope of c.scopes ?? []) {
+      const room = Math.max(0, Math.floor(scope.room()));
+      rooms.set(scope.key, Math.min(rooms.get(scope.key) ?? Number.POSITIVE_INFINITY, room));
+    }
   }
   const sorted = [...claims].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const start = ((Math.trunc(rotation) % sorted.length) + sorted.length) % sorted.length;
@@ -157,17 +191,20 @@ export function splitHeadroom(headroom: number, claims: readonly ShareClaim[], r
     demand: Math.max(0, Math.floor(c.demand)),
     load: Math.max(0, Math.floor(c.ownLive)),
     granted: 0,
+    scopes: [...new Set((c.scopes ?? []).map((s) => s.key))],
   }));
+  const hasRoom = (slot: (typeof slots)[number]): boolean => slot.scopes.every((key) => (rooms.get(key) ?? 0) > 0);
   let left = Math.max(0, Math.floor(headroom));
   while (left > 0) {
     let best: (typeof slots)[number] | null = null;
     for (const s of slots) {
-      if (s.granted >= s.demand) continue;
+      if (s.granted >= s.demand || !hasRoom(s)) continue;
       // Strictly fewer: on a tie the first in rotated order keeps it.
       if (!best || s.load + s.granted < best.load + best.granted) best = s;
     }
     if (!best) break; // nobody can use another slot: the rest stays unused this round
     best.granted++;
+    for (const key of best.scopes) rooms.set(key, rooms.get(key)! - 1);
     left--;
   }
   for (const s of slots) grants.set(s.id, s.granted);
@@ -231,6 +268,7 @@ export interface PacingRoundOptions {
 interface Waiting {
   claim: ShareClaim;
   resolve: (grant: ShareGrant) => void;
+  onGrant?: ((grant: number) => void) | undefined;
 }
 
 /** One account's arbiter, for one round. */
@@ -262,6 +300,7 @@ export class PacingRound {
   private readonly limits = new Map<string, Promise<number>>();
   private readonly occupancy = new Map<string, Promise<number>>();
   private readonly ownOccupancy = new Map<string, Promise<Map<string, number>>>();
+  private readonly scopeReads = new Map<string, Promise<unknown>>();
   private readonly accounts = new Map<string, AccountShare>();
   /** Each participant's account, so {@link withdraw} needs only the campaign. */
   private readonly accountOf = new Map<string, string>();
@@ -292,6 +331,15 @@ export class PacingRound {
    */
   liveByCampaign(accountKey: string, load: () => Promise<Map<string, number>>): Promise<Map<string, number>> {
     return memo(this.ownOccupancy, accountKey, load);
+  }
+
+  /**
+   * One read of a dial scope for this round (`pacing/dial-scopes.ts`: a carrier share's or a
+   * carrier account's limit or live calls), keyed by the caller: loaded once, however many
+   * campaigns of however many accounts ask.
+   */
+  scopeRead<T>(key: string, load: () => Promise<T>): Promise<T> {
+    return memo(this.scopeReads as Map<string, Promise<T>>, key, load);
   }
 
   /**
@@ -338,11 +386,23 @@ export class PacingRound {
    * participant. Reporting after the split ran but while it is still open: at once,
    * `MIN(demand, leftover)`, first come first served. Reporting after it closed
    * (`closed`): at once, 0. A campaign that never joined (a forced tick) joins here.
+   *
+   * `scopes` bound the grant further (see {@link splitHeadroom}); `onGrant` is called with the
+   * grant synchronously, at the instant it is decided and before the promise resolves (not for
+   * a report into a closed split), so the caller can charge it to its ledgers before any other
+   * split reads them.
    */
   submit(
     accountKey: string,
     campaignId: string,
-    report: { demand: number; ownLive: number | null; limit: number; live: number },
+    report: {
+      demand: number;
+      ownLive: number | null;
+      limit: number;
+      live: number;
+      scopes?: readonly ScopeRoom[];
+      onGrant?: (grant: number) => void;
+    },
   ): Promise<ShareGrant> {
     if (this.accountOf.get(campaignId) !== accountKey) this.join(accountKey, campaignId);
     const share = this.share(accountKey);
@@ -358,19 +418,24 @@ export class PacingRound {
     }
     if (share.split) {
       // Late but open (MC2): the split ran without it. No later round has read the account
-      // (the split is open), so the leftover is still unspent. The tick adds this grant to
-      // the ledger in the microtasks that follow, before any later round (a timer) can start,
-      // even when this report is the one that closes the split.
-      const grant = Math.min(demand, share.leftover);
+      // (the split is open), so the leftover is still unspent. `onGrant` puts this grant in
+      // the ledger before this returns, even when this report is the one that closes the split.
+      // Bounded by its own scopes' room as well, read now: other splits may have spent some.
+      const grant = Math.max(0, Math.min(demand, share.leftover, tightestRoom(report.scopes)));
       share.leftover -= grant;
       if (share.pending.size === 0) this.closeShare(share);
+      report.onGrant?.(grant);
       return Promise.resolve({ grant, closed: false });
     }
 
     const promise = new Promise<ShareGrant>((resolve) => {
       share.waiting.set(campaignId, {
-        claim: { id: campaignId, demand, ownLive: Math.max(0, report.ownLive ?? 0) },
+        claim: {
+          id: campaignId, demand, ownLive: Math.max(0, report.ownLive ?? 0),
+          ...(report.scopes && report.scopes.length > 0 ? { scopes: report.scopes } : {}),
+        },
         resolve,
+        onGrant: report.onGrant,
       });
     });
     if (share.pending.size === 0) {
@@ -454,9 +519,12 @@ export class PacingRound {
     let granted = 0;
     for (const g of grants.values()) granted += g;
     share.leftover = Math.max(0, headroom - granted);
-    // Closed before the grants resolve: their ticks put them in the engine's ledger in
-    // microtasks after this, before anything can start a later split of the account.
+    // Closed before the grants resolve; each grant is in the engine's ledgers (`onGrant`)
+    // before this returns, so before anything can start a later split of the account.
     if (forceClose || share.pending.size === 0) this.closeShare(share);
+    // Every grant is charged (onGrant) before any resolves: the charges are what another split
+    // of a shared scope reads, and it must find them all.
+    for (const w of waiting) w.onGrant?.(grants.get(w.claim.id) ?? 0);
     for (const w of waiting) w.resolve({ grant: grants.get(w.claim.id) ?? 0, closed: false });
   }
 }

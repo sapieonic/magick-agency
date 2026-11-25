@@ -2,6 +2,9 @@
 // `check` call carries `{ accountId: 'a1', campaignId: 'camp-1' }`, and the `check` stub declares
 // the required `DncCheckScope` parameter. Passing a null scope from `pre-dial-gates.ts` reds it.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// The dial scopes beyond the account cap (PL14, CR13) are not this file's subject: unbounded.
+vi.mock('../../../src/agency/pacing/dial-scopes.js', async (importOriginal) =>
+  (await import('../../helpers/pacing-scopes.js')).withUnboundedScopes(await importOriginal()));
 
 // ---------------------------------------------------------------------------
 // The pacing gates WHERE THEY ARE CONSUMED.

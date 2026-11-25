@@ -91,6 +91,18 @@ import {
 } from './pacing/invalidation-bus.js';
 import { GenerationTtlCache, PACING_CACHE_TTL_MS } from './pacing/read-cache.js';
 import { PACING_SHARE_WAIT_MS, PACING_SPLIT_DEADLINE_MS, PacingRound, ShareRotation, accountKeyOf } from './pacing/round.js';
+import {
+  carrierShareScopeKey,
+  credentialScopeKey,
+  repositoryScopeSource,
+  scopeRoom,
+  tightestRoom,
+  type AccountCarrierShares,
+  type PacingScopeSource,
+  type ScopeReading,
+  type ScopeRoom,
+} from './pacing/dial-scopes.js';
+import { AGENCY_CAMPAIGN_COLUMN_DEFAULTS } from '@magick-agency/contracts/agency';
 import { holdBackForInbound, type InboundHold } from './pacing/inbound-hold-back.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
@@ -215,6 +227,13 @@ interface TickPlan {
    * ({@link PacingEngine.demandCap}).
    */
   contended?: boolean;
+  /**
+   * `no_slots` because a dial scope other than the account's own cap had no room, or could
+   * not be read (`pacing/dial-scopes.ts`): the account's share of the campaign's carrier
+   * (PL14) or the carrier account's own cap (CR13). The carrier account's id when it was that
+   * cap (a call on another account of the tenant ending frees it: {@link PacingEngine.onInvalidation}).
+   */
+  scopeBound?: { credentialId: string | null };
 }
 
 /**
@@ -234,6 +253,14 @@ interface DialHold {
   touchedAt: number;
   /** The read has already warned that this hold went stale (once per hold). */
   staleWarned: boolean;
+  /**
+   * The dial scopes its grant was charged to (`pacing/dial-scopes.ts`); empty when none. Its
+   * part of each scope's ledger is `remaining + dispatching`: a dial is in no guard counter
+   * until its admission, inside the dispatch.
+   */
+  scopeKeys: readonly string[];
+  /** Attempts inserted whose dispatch has not settled yet (admitted or refused). */
+  dispatching: number;
 }
 
 /**
@@ -312,6 +339,12 @@ interface CampaignPacingState {
    * a running tick into the pacing history from it (`countRunningTick`).
    */
   runningRow: AgencyCampaignRecord | null;
+  /**
+   * The carrier account whose own cap left the last full tick no room (CR13), or null. A call
+   * ending on ANY account of the tenant can free that cap, so `account_capacity_freed` for the
+   * tenant wakes it, not only for its own account.
+   */
+  credentialBound: string | null;
 }
 
 const NEVER = Number.NEGATIVE_INFINITY;
@@ -336,6 +369,12 @@ export interface PacingEngineOptions {
    * other dial paths. Default: a new one on the engine's clock and cache TTL.
    */
   dedications?: DedicatedCallerIdCache;
+  /**
+   * Where the dial scopes beyond the account cap are read (`pacing/dial-scopes.ts`): the
+   * carrier shares, carrier-account caps and their guards' live counters. Default: the
+   * repositories admission reads and the concurrency-control seam.
+   */
+  scopes?: PacingScopeSource;
 }
 
 /** One tick, as the engine saw it. For tests and the measurement harness only. */
@@ -383,6 +422,18 @@ export class PacingEngine {
   private readonly campaignCache: GenerationTtlCache<AgencyCampaignRecord>;
   /** `max_concurrent_calls` per account, invalidated by `account_limit_changed`. */
   private readonly limitCache: GenerationTtlCache<number>;
+  /**
+   * Per account, its allocation by carrier (PL14), invalidated by `account_limit_changed`
+   * (the same seam call that drops the provider guard's cache). `pacing/dial-scopes.ts`.
+   */
+  private readonly carrierShareCache: GenerationTtlCache<AccountCarrierShares>;
+  /**
+   * Per tenant carrier account, its own cap or null (CR13), invalidated by
+   * `credential_limit_changed` (the same seam call that drops the credential guard's cache).
+   */
+  private readonly credentialCapCache: GenerationTtlCache<number | null>;
+  /** Where the dial scopes are read: {@link PacingEngineOptions.scopes}. */
+  private readonly scopeSource: PacingScopeSource;
   /**
    * A `pool` campaign's shared queue state (agent station BE-5, `readPoolQueueState`), read once
    * per campaign and shared by every tick within the cache's TTL; invalidated by
@@ -435,6 +486,9 @@ export class PacingEngine {
     const ttl = options.cacheTtlMs ?? PACING_CACHE_TTL_MS;
     this.campaignCache = new GenerationTtlCache(ttl, this.now);
     this.limitCache = new GenerationTtlCache(ttl, this.now);
+    this.carrierShareCache = new GenerationTtlCache(ttl, this.now);
+    this.credentialCapCache = new GenerationTtlCache(ttl, this.now);
+    this.scopeSource = options.scopes ?? repositoryScopeSource;
     this.poolQueueCache = new GenerationTtlCache(ttl, this.now);
     this.dedications = options.dedications ?? new DedicatedCallerIdCache(ttl, this.now);
     this.history = options.history ?? new PacingHistoryAccumulator();
@@ -479,6 +533,21 @@ export class PacingEngine {
    * ({@link pendingOf}); a hold at 0 leaves its account's set, and an empty set is deleted.
    */
   private readonly pendingDials = new Map<string, Set<DialHold>>();
+
+  /**
+   * The SCOPE LEDGER (`pacing/dial-scopes.ts`), per dial scope key: the holds whose grant was
+   * charged to the scope and is not yet settled (each counts `remaining + dispatching`), and
+   * the scope's running total of every dial ever granted on it. A scope's room reading
+   * snapshots both before its Redis read; see the module note for why that cannot over-dial,
+   * across accounts included. Process-wide, never per account: a carrier account's cap is
+   * shared by every account of its tenant. The totals are kept for the process's life (one
+   * number per carrier share and carrier account ever dialled on: a reading in flight must
+   * never see one go back).
+   */
+  private readonly scopeHolds = new Map<string, Set<DialHold>>();
+  private readonly scopeGranted = new Map<string, number>();
+  /** Per campaign: when its dial scopes' unreadable warning was last logged (throttled like the dedication read's). */
+  private readonly scopeReadFailing = new Map<string, number>();
 
   /**
    * The CLAIM-SHORTFALL CAP, per campaign: under contention a campaign's demand can exceed
@@ -991,6 +1060,7 @@ export class PacingEngine {
     for (const id of this.queueSent.keys()) if (!known.has(id)) this.queueSent.delete(id);
     for (const id of this.fallbackSweptAt.keys()) if (!known.has(id)) this.fallbackSweptAt.delete(id);
     for (const id of this.dedicationReadFailing.keys()) if (!known.has(id)) this.dedicationReadFailing.delete(id);
+    for (const id of this.scopeReadFailing.keys()) if (!known.has(id)) this.scopeReadFailing.delete(id);
     // `revoked` too, which `beginLeading` alone used to clear — except under a tick
     // still in flight, whose dial sites are what the mark exists to stop. A campaign
     // absent from `findActive` is neither running nor stopping, so no later tick of
@@ -1030,7 +1100,7 @@ export class PacingEngine {
     // Dirty, so the first round ticks it in full whatever happened before.
     this.pacingState.set(campaign.id, {
       dirty: true, quiescent: false, lastFullAt: NEVER, accountKey: accountKeyOf(campaign.tenant_id, campaign.account_id),
-      tenantId: campaign.tenant_id, runningRow: null,
+      tenantId: campaign.tenant_id, runningRow: null, credentialBound: null,
     });
 
     const renew = setInterval(() => {
@@ -1050,6 +1120,8 @@ export class PacingEngine {
     if (this.unsubscribeBus) return;
     this.campaignCache.clear();
     this.limitCache.clear();
+    this.carrierShareCache.clear();
+    this.credentialCapCache.clear();
     this.poolQueueCache.clear();
     this.dedications.arm();
     this.unsubscribeBus = this.bus.subscribe((event) => this.onInvalidation(event));
@@ -1070,6 +1142,8 @@ export class PacingEngine {
     this.unsubscribeBus = null;
     this.campaignCache.clear();
     this.limitCache.clear();
+    this.carrierShareCache.clear();
+    this.credentialCapCache.clear();
     this.poolQueueCache.clear();
     this.dedications.disarm();
   }
@@ -1126,6 +1200,7 @@ export class PacingEngine {
     this.queueSent.delete(campaignId);
     this.fallbackSweptAt.delete(campaignId);
     this.dedicationReadFailing.delete(campaignId);
+    this.scopeReadFailing.delete(campaignId);
     this.windowClosedAt.delete(campaignId);
     // What this campaign counted goes out now rather than at the next interval (a stop, a
     // completion, a lost lease). Off the path: never awaited, never rejects.
@@ -1155,6 +1230,11 @@ export class PacingEngine {
    * (`limit − occupied`) is split between them by the round, fewest live calls first
    * (decisions MC1, MC2, `pacing/round.ts`); a campaign alone on its account gets exactly
    * the expression above.
+   *
+   * Bounded further by the other scopes admission takes with the account's (PL14, CR13;
+   * `pacing/dial-scopes.ts`): the account's share of the campaign's carrier when the account
+   * is split by carrier, and the carrier account's own cap, each `limit − live − granted and
+   * not yet admitted`, read from the guards' counters. A scope that cannot be read leaves 0.
    *
    * `to_dial == 0` IS the paused state — and the same expression resumes it, so
    * there is no pause flag anywhere that can be left stale. `occupied` counts
@@ -1332,11 +1412,26 @@ export class PacingEngine {
       case 'account_limit_changed': {
         const key = accountKeyOf(event.tenantId, event.accountId);
         this.limitCache.invalidate(key);
+        // The carrier shares are the same allocation (PL14), written and invalidated together.
+        this.carrierShareCache.invalidate(key);
         this.markAccountDirty(key);
         return;
       }
+      case 'credential_limit_changed':
+        // A carrier account's own cap (CR13): every campaign dialling on it may now dial more.
+        this.credentialCapCache.invalidate(event.credentialId);
+        for (const state of this.pacingState.values()) {
+          if (state.credentialBound === event.credentialId
+            || state.runningRow?.telephony_credential_id === event.credentialId) state.dirty = true;
+        }
+        return;
       case 'account_capacity_freed':
         this.markAccountDirty(accountKeyOf(event.tenantId, event.accountId));
+        // A call on another account of the tenant may have been on a carrier account whose cap
+        // held one of ours back (CR13: the cap is tenant-wide).
+        for (const state of this.pacingState.values()) {
+          if (state.credentialBound !== null && state.tenantId === event.tenantId) state.dirty = true;
+        }
         return;
       case 'inbound_waiting': {
         const key = accountKeyOf(event.tenantId, event.accountId);
@@ -1409,7 +1504,9 @@ export class PacingEngine {
     let planned: TickPlan | undefined;
     // This tick's part of the pending-dial ledger: filled by `planTick` at the grant,
     // drained by `dialUpTo`, and whatever is left released in `finally`, on every path.
-    const hold: DialHold = { accountKey: null, remaining: 0, touchedAt: startedAt, staleWarned: false };
+    const hold: DialHold = {
+      accountKey: null, remaining: 0, touchedAt: startedAt, staleWarned: false, scopeKeys: [], dispatching: 0,
+    };
     // The round for `finally`'s withdraw, dropped once the tick is out of the split, so this
     // frame does not keep the round alive across `dialUpTo`'s carrier awaits.
     let inRound: PacingRound | null = round;
@@ -1598,6 +1695,7 @@ export class PacingEngine {
         state.lastFullAt = startedAt;
         state.quiescent = quiescent;
         state.idle = quiescent ? idle : undefined;
+        state.credentialBound = planned?.scopeBound?.credentialId ?? null;
       }
       // A safety tick that found work is a wake-up the bus missed.
       if (cause === 'safety' && planned && planned.toDial > 0) {
@@ -1745,6 +1843,25 @@ export class PacingEngine {
       return live + pending;
     });
 
+    // ── The other scopes the dial is admitted against (PL14, CR13) ──────────────
+    // The account's share of the campaign's carrier when the account's concurrency is split by
+    // carrier, and the carrier account's own cap: admission takes them with the account's in
+    // one transaction, so a dial past either is refused at the bridge, an attempt row and a
+    // popup per refusal. `pacing/dial-scopes.ts`. A scope that cannot be read leaves no room
+    // (admission refuses a capped call it cannot check): 0 dials for this campaign this tick.
+    const scopes = await this.dialScopes(campaign, round);
+    if (scopes === null) {
+      return { toDial: 0, candidates: [], accountLimit, occupied, idle: 'no_slots', scopeBound: { credentialId: null } };
+    }
+    const scopeRoomNow = tightestRoom(scopes.rooms);
+    if (scopeRoomNow <= 0) {
+      // Full: out of the split (`runTick` withdraws it), so its share goes to the others (MC1).
+      return {
+        toDial: 0, candidates: [], accountLimit, occupied, idle: 'no_slots',
+        scopeBound: { credentialId: scopes.fullCredentialId },
+      };
+    }
+
     /**
      * **The two limits constrain different things, and subtracting one from the
      * other counts every busy agent twice.**
@@ -1801,11 +1918,18 @@ export class PacingEngine {
       // Agents ready and nothing to dial: `runTick` withdraws it from the split at once.
       return { toDial: 0, candidates: [], accountLimit, occupied, idle: 'no_contacts' };
     }
-    const share = await round.submit(accountKey, campaign.id, { demand, ownLive, limit: accountLimit, live: occupied });
+    // Never ask for more than its scopes leave now; the split bounds the grant by them again,
+    // at the instant it is made, shared with every other claim on the same scope.
+    demand = Math.min(demand, scopeRoomNow);
+    const share = await round.submit(accountKey, campaign.id, {
+      demand, ownLive, limit: accountLimit, live: occupied,
+      ...(scopes.rooms.length > 0 ? { scopes: scopes.rooms } : {}),
+      // Into the pending-dial ledger and the scope ledger at the instant the split decides
+      // the grant, synchronously (the `pacing/round.ts` header: every later read of the account,
+      // and every other split of a shared scope, must see it).
+      onGrant: (n) => this.holdDials(hold, accountKey, n, scopes.keys),
+    });
     const toDial = share.grant;
-    // Into the pending-dial ledger at once, with no `await` between the grant and here (the
-    // `pacing/round.ts` header: every later round's read must see it).
-    this.holdDials(hold, accountKey, toDial);
     // What the split held back while the account had room (0 for a lone campaign). The
     // round's headroom is this same `MAX(0, limit − live)`: every report of the round passes
     // the same memoised pair.
@@ -1827,8 +1951,11 @@ export class PacingEngine {
 
   // ─── The pending-dial ledger ({@link pendingDials}) ──────────────────────
 
-  /** Put a grant of `n` dials into the ledger under `hold`. */
-  private holdDials(hold: DialHold, accountKey: string, n: number): void {
+  /**
+   * Put a grant of `n` dials into the ledger under `hold`, and charge it to each of
+   * `scopeKeys` (the scope ledger). Called by the split at the instant it decides the grant.
+   */
+  private holdDials(hold: DialHold, accountKey: string, n: number, scopeKeys: readonly string[] = []): void {
     if (n <= 0) return;
     hold.accountKey = accountKey;
     hold.remaining += n;
@@ -1839,14 +1966,38 @@ export class PacingEngine {
       this.pendingDials.set(accountKey, set);
     }
     set.add(hold);
+    if (scopeKeys.length === 0) return;
+    hold.scopeKeys = scopeKeys;
+    for (const key of scopeKeys) {
+      this.scopeGranted.set(key, (this.scopeGranted.get(key) ?? 0) + n);
+      let holds = this.scopeHolds.get(key);
+      if (!holds) {
+        holds = new Set();
+        this.scopeHolds.set(key, holds);
+      }
+      holds.add(hold);
+    }
   }
 
-  /** One attempt row was inserted: from now on the live count has it, so the ledger does not. */
+  /**
+   * One attempt row was inserted: from now on the live count has it, so the account ledger does
+   * not. The scope ledger keeps it until its dispatch settles ({@link settleDial}): the guards'
+   * counters take it only at admission.
+   */
   private spendDial(hold: DialHold): void {
+    if (hold.scopeKeys.length > 0) hold.dispatching++;
     this.trimDials(hold, hold.remaining - 1);
     hold.touchedAt = this.now();
     // Progress again: a later stall of this same hold is warned about too.
     hold.staleWarned = false;
+  }
+
+  /** An inserted attempt's dispatch is over: admitted (now in its scopes' counters) or not placed. */
+  private settleDial(hold: DialHold): void {
+    if (hold.dispatching === 0) return;
+    hold.dispatching--;
+    hold.touchedAt = this.now();
+    this.dropSettledScopes(hold);
   }
 
   /** The tick will insert at most `atMost` more attempts: release the rest of its hold now. */
@@ -1854,15 +2005,44 @@ export class PacingEngine {
     const keep = Math.max(0, Math.min(hold.remaining, atMost));
     if (hold.accountKey === null || keep === hold.remaining) return;
     hold.remaining = keep;
+    this.dropSettledScopes(hold);
     if (keep > 0) return;
     const set = this.pendingDials.get(hold.accountKey);
     set?.delete(hold);
     if (set?.size === 0) this.pendingDials.delete(hold.accountKey);
   }
 
-  /** The tick is over: whatever it holds leaves the ledger. */
+  /** A hold with nothing unsettled leaves every scope's ledger. */
+  private dropSettledScopes(hold: DialHold): void {
+    if (hold.remaining + hold.dispatching > 0) return;
+    for (const key of hold.scopeKeys) {
+      const holds = this.scopeHolds.get(key);
+      holds?.delete(hold);
+      if (holds?.size === 0) this.scopeHolds.delete(key);
+    }
+  }
+
+  /** The tick is over: whatever it holds leaves the ledgers. */
   private releaseDials(hold: DialHold): void {
+    hold.dispatching = 0;
     this.trimDials(hold, 0);
+    this.dropSettledScopes(hold);
+  }
+
+  /**
+   * A scope's unsettled grants as its reading snapshots them: every hold's
+   * `remaining + dispatching`, except a hold with no progress for
+   * {@link PACING_DIAL_HOLD_MAX_MS} (the account ledger's rule, and its warning). Synchronous.
+   */
+  private scopePendingOf(key: string): number {
+    const holds = this.scopeHolds.get(key);
+    if (!holds) return 0;
+    const now = this.now();
+    let n = 0;
+    for (const hold of holds) {
+      if (now - hold.touchedAt < PACING_DIAL_HOLD_MAX_MS) n += hold.remaining + hold.dispatching;
+    }
+    return n;
   }
 
   /**
@@ -2122,6 +2302,93 @@ export class PacingEngine {
     } finally {
       this.sweeping.delete(campaign.id);
     }
+  }
+
+  /**
+   * The dial scopes beyond the account cap that this campaign's dials are admitted against
+   * (`pacing/dial-scopes.ts`), each with its room as a live function of the scope ledger, and
+   * their ledger keys; null when one of them cannot be read (the tick then plans 0: admission
+   * refuses a capped call it cannot check). `fullCredentialId` names the carrier account when
+   * its cap is the scope with no room left.
+   *
+   *  - The account's share of the campaign's carrier, when the account is in
+   *    `provider_breakdown` (PL14). No share (no row, or 0) is no room: admission answers
+   *    `provider_unallocated`.
+   *  - The carrier account's own cap, when the campaign dials on one that has a cap (CR13).
+   *
+   * Limits through the engine's invalidated caches (read through on a forced round); each
+   * scope's live count once per round, however many campaigns of however many accounts dial
+   * on it. A legacy account's campaign on the service's account costs one cached read.
+   */
+  private async dialScopes(
+    campaign: AgencyCampaignRecord,
+    round: PacingRound,
+  ): Promise<{ rooms: ScopeRoom[]; keys: string[]; fullCredentialId: string | null } | null> {
+    const { tenant_id: tenantId, account_id: accountId } = campaign;
+    const accountKey = accountKeyOf(tenantId, accountId);
+    const provider = (campaign.telephony_provider ?? AGENCY_CAMPAIGN_COLUMN_DEFAULTS.telephony_provider).toLowerCase();
+    const credentialId = campaign.telephony_credential_id ?? null;
+    const readings: ScopeReading[] = [];
+    try {
+      const shares = await round.scopeRead(`shares:${accountKey}`, () => this.carrierShareCache.getOrLoad(
+        accountKey, () => this.scopeSource.carrierShares(tenantId, accountId), { fresh: round.fresh }));
+      if (shares.breakdown) {
+        const key = carrierShareScopeKey(accountKey, provider);
+        const limit = Math.max(0, Math.floor(shares.shares.get(provider) ?? 0));
+        readings.push(await round.scopeRead(`live:${key}`, () => this.readScope(key, 'carrier_share', limit,
+          // No share: no room, and nothing to count.
+          limit === 0 ? async () => 0 : () => this.scopeSource.carrierShareLive(tenantId, accountId, provider))));
+      }
+      if (credentialId) {
+        const cap = await round.scopeRead(`cap:${credentialId}`, () => this.credentialCapCache.getOrLoad(
+          credentialId, () => this.scopeSource.credentialCap(credentialId), { fresh: round.fresh }));
+        if (cap !== null) {
+          const key = credentialScopeKey(credentialId);
+          readings.push(await round.scopeRead(`live:${key}`, () => this.readScope(key, 'carrier_account', cap,
+            () => this.scopeSource.credentialLive(credentialId))));
+        }
+      }
+    } catch (err) {
+      this.noteScopeReadFailed(campaign, err);
+      return null;
+    }
+    this.scopeReadFailing.delete(campaign.id);
+    const rooms = readings.map((reading): ScopeRoom => ({
+      key: reading.key,
+      room: () => scopeRoom(reading, this.scopeGranted.get(reading.key) ?? 0),
+    }));
+    const full = readings.find((r) => r.kind === 'carrier_account' && scopeRoom(r, this.scopeGranted.get(r.key) ?? 0) === 0);
+    return { rooms, keys: readings.map((r) => r.key), fullCredentialId: full && credentialId ? credentialId : null };
+  }
+
+  /**
+   * One scope's reading: the ledger snapshotted synchronously BEFORE the live read is issued
+   * (an async function runs to its first `await` at once), then the guard's counter. Throws
+   * when the counter cannot be read.
+   */
+  private async readScope(
+    key: string,
+    kind: ScopeReading['kind'],
+    limit: number,
+    readLive: () => Promise<number | null>,
+  ): Promise<ScopeReading> {
+    const pendingAtSnapshot = this.scopePendingOf(key);
+    const grantedAtSnapshot = this.scopeGranted.get(key) ?? 0;
+    const live = await readLive();
+    if (live === null) throw new Error(`the live count of ${kind} scope ${key} could not be read`);
+    return { key, kind, limit, live, pendingAtSnapshot, grantedAtSnapshot };
+  }
+
+  /** A campaign's dial scopes could not be read: logged at once, then at most once a minute while it lasts. */
+  private noteScopeReadFailed(campaign: AgencyCampaignRecord, err: unknown): void {
+    const now = this.now();
+    const last = this.scopeReadFailing.get(campaign.id);
+    if (last !== undefined && now - last < DEDICATION_READ_FAILURE_LOG_MS) return;
+    this.scopeReadFailing.set(campaign.id, now);
+    log.warn(
+      { err, campaignId: campaign.id, tenantId: campaign.tenant_id },
+      'Pacing could not read a carrier share or carrier account cap — dialling nothing for the campaign until it can',
+    );
   }
 
   /** `max_concurrent_calls`: cached between scheduled rounds, read through on a forced one. */
@@ -2410,6 +2677,9 @@ export class PacingEngine {
         });
         // The dial never went out: a reopen marker the attempt consumed goes back.
         await this.returnPair(sessionId, contact.id, new Date(), 'available', { restoreAgentReopen: attempt.agent_reopened === true });
+      } finally {
+        // Admitted (in its scopes' counters from now on) or not placed: out of the scope ledger.
+        this.settleDial(hold);
       }
     }
     return dialed;

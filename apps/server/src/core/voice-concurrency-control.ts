@@ -15,6 +15,8 @@ export function createConcurrencyControl(
       host.providerConcurrencyGuard.invalidateLimits(tenantId, accountId),
     getAccountProviderCounts: (tenantId, accountId) =>
       host.providerConcurrencyGuard.getAccountProviderCounts(tenantId, accountId),
+    getProviderCount: (tenantId, accountId, provider) =>
+      host.providerConcurrencyGuard.getProviderCount(tenantId, accountId, provider),
     getAccountCount: (tenantId, accountId) =>
       host.accountConcurrencyGuard.getAccountCount(tenantId, accountId),
     getDistributedAccountCount: (tenantId, accountId) =>

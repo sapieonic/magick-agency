@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
     invalidateAccountLimit: vi.fn(),
     invalidateProviderLimits: vi.fn(),
     getAccountProviderCounts: vi.fn(),
+    getProviderCount: vi.fn(),
     getAccountCount: vi.fn(),
     getDistributedAccountCount: vi.fn(),
     invalidateCredentialLimit: vi.fn(),
