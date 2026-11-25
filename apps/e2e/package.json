@@ -1,0 +1,28 @@
+{
+  "name": "@magick-agency/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The golden end-to-end suite: Playwright over the whole stack with a simulated carrier, identity, mail, storage and AI. Run on demand, never in regular CI.",
+  "scripts": {
+    "e2e": "tsx src/run.ts",
+    "stack": "tsx src/run.ts --stack",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1147.0",
+    "@magick-agency/server": "workspace:*",
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.12.0",
+    "@types/pg": "^8.11.11",
+    "@types/ws": "^8.18.1",
+    "firebase-admin": "^13.7.0",
+    "ioredis": "^5.7.0",
+    "pg": "^8.13.1",
+    "tsx": "^4.20.0",
+    "typescript": "~5.7.3",
+    "vitest": "^4.1.8",
+    "ws": "^8.22.0"
+  }
+}

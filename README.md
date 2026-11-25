@@ -14,6 +14,7 @@ apps/console/        Vite + React: agent, supervisor, team, invites, accounts, s
 apps/super-admin/    Vite + React: tenants and accounts, users, numbers, limits, settings, flags, usage
 apps/mobile/         Flutter: the agent-only app for Android and iOS (sign in, take calls,
                      outcomes, own performance); its dev setup is apps/mobile/dev-setup.md
+apps/e2e/            the golden end-to-end suite: Playwright with a simulated carrier and vendors
 packages/contracts/  wire contract shared by server and UIs (lead-owned)
 packages/domain/     pure agency rules
 packages/db/         pg pool, repositories, the squashed baseline migration
@@ -160,7 +161,13 @@ docker exec magick-agency-postgres createdb -U magick_agency magick_agency_test_
 pnpm lint               # tsc --noEmit over src and tests, every package
 pnpm test               # unit
 pnpm test:integration   # real Postgres/Redis; needs pnpm infra:up
+pnpm e2e                # golden end-to-end suite in a browser, every vendor simulated (on demand)
 ```
+
+`pnpm e2e` brings up its own stack (a fresh `magick_agency_e2e` database, the built UIs, the
+server, a simulated carrier) and runs the Playwright specs; it uses Postgres and Redis on the ports
+above, starting them if they are not up. It is not part of regular CI: run it before merging a
+feature, or from the manual E2E (golden) workflow. See [`docs/e2e.md`](docs/e2e.md).
 
 The mobile app's checks (`flutter analyze`, `flutter test`, the contract drift check) are listed in
 [`apps/mobile/dev-setup.md`](apps/mobile/dev-setup.md), "Before you push".

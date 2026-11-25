@@ -1631,6 +1631,11 @@ everything twice per merge (once for the change, once for release-please's relea
 | A shared root file (`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `.npmrc`, `.nvmrc`), `ci.yml` or `tooling/ci-scope.mjs` | everything in CI (not the Mobile workflow) |
 | Anything else (`docs/`, `aws/`, the other workflows) | the repository guards only |
 
+The golden end-to-end suite (`apps/e2e`, [`e2e.md`](e2e.md)) is never in this scope: it runs
+only by hand (`pnpm e2e`) or from the manual **E2E (golden)** workflow (`.github/workflows/e2e.yml`,
+`workflow_dispatch` only). Its package's lint and unit tests do follow the server, whose carrier
+mock it imports, and take seconds.
+
 So a console change runs the console's suites and the server's guards, and no integration; a
 contracts change runs nearly everything. A docs-only change runs the guards only, and so does a
 release PR. A Dart-only change to the app runs analyze and the Dart tests, not the APK build:

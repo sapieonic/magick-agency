@@ -60,15 +60,26 @@ test('a shared UI change runs both web UIs, still no integration', () => {
 
 test('a server change runs the server and its integration lanes, not the db lane', () => {
   const s = scope('apps/server/src/app.ts');
-  assert.deepEqual(s.packages, ['apps/server']);
+  assert.deepEqual(s.packages, ['apps/e2e', 'apps/server']);
   assert.deepEqual(s.integration, { db: false, server: true });
   assert.equal(s.serverGuards, false, 'the guards run inside the full server suite');
   assert.equal(s.grafana, true, 'test:grafana reads the server OTel setup');
 });
 
+test("the e2e package's checks follow the server it drives; the browser suite is never in scope", () => {
+  // apps/e2e imports the server's carrier mocks, so a server change lints and unit-tests it (the
+  // simulator's self-tests, seconds). Its Playwright run (`pnpm e2e`) is only ever started by
+  // hand or from the manual e2e.yml workflow, never by ci.yml.
+  assert.deepEqual(scope('apps/e2e/specs/05-core-call.spec.ts').packages, ['apps/e2e']);
+  assert.deepEqual(scope('apps/e2e/specs/05-core-call.spec.ts').integration, { db: false, server: false });
+  assert.deepEqual(scope('apps/console/src/pages/Foo.tsx').packages, ['apps/console'], 'a UI change does not');
+  const ci = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+  assert.doesNotMatch(ci, /pnpm e2e|run e2e|playwright test/);
+});
+
 test('a db change runs its dependents and both integration lanes', () => {
   const s = scope('packages/db/src/pool.ts');
-  assert.deepEqual(s.packages, ['apps/server', 'packages/db']);
+  assert.deepEqual(s.packages, ['apps/e2e', 'apps/server', 'packages/db']);
   assert.deepEqual(s.integration, { db: true, server: true });
 });
 
@@ -84,15 +95,15 @@ test('a contracts change reaches every consumer, the integration lanes and the m
 test('tooling the suites import counts as a change to those packages', () => {
   assert.deepEqual(scope('tooling/test-env.ts').integration, { db: true, server: true });
   assert.deepEqual(scope('tooling/contracts-literals.mjs').packages.includes('packages/contracts'), true);
-  assert.deepEqual(scope('apps/server/test/fixtures/console-paths.json').packages, ['apps/console', 'apps/server']);
+  assert.deepEqual(scope('apps/server/test/fixtures/console-paths.json').packages, ['apps/console', 'apps/e2e', 'apps/server']);
 });
 
 test("files that another package's suites read pull that package in", () => {
   // saRoutes.test.ts holds SA_ROUTES to the server's super-admin routes.
-  assert.deepEqual(scope('apps/server/src/api/routes/super-admin/tenants.ts').packages, ['apps/server', 'apps/super-admin']);
+  assert.deepEqual(scope('apps/server/src/api/routes/super-admin/tenants.ts').packages, ['apps/e2e', 'apps/server', 'apps/super-admin']);
   // brandAssets.test.ts holds the super-admin artwork to the console's.
   assert.deepEqual(scope('apps/console/brands/magick-agency/public/logo.svg').packages, ['apps/console', 'apps/super-admin']);
-  assert.deepEqual(scope('apps/server/src/agency/pacing.ts').packages, ['apps/server'], 'other server source does not');
+  assert.deepEqual(scope('apps/server/src/agency/pacing.ts').packages, ['apps/e2e', 'apps/server'], 'other server source does not');
 });
 
 test('docker/ runs the server packaging guards, not the server suite', () => {
@@ -193,7 +204,7 @@ test("release-please's release PR runs the release-please check and nothing else
   assert.equal(s.release, true);
   assert.equal(s.serverGuards, true);
   // The same files without the version-only knowledge: a real package.json change runs the package.
-  assert.deepEqual(computeScope({ files: ['apps/server/package.json'], workspace }).packages, ['apps/server']);
+  assert.deepEqual(computeScope({ files: ['apps/server/package.json'], workspace }).packages, ['apps/e2e', 'apps/server']);
   assert.equal(computeScope({ files: ['apps/mobile/pubspec.yaml'], workspace }).android, true);
 });
 

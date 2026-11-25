@@ -3,6 +3,7 @@
   "apps/console": "0.35.0",
   "apps/super-admin": "0.7.3",
   "apps/report-renderer": "0.6.1",
+  "apps/e2e": "0.1.0",
   "packages/contracts": "0.31.0",
   "packages/db": "0.29.0",
   "packages/domain": "0.17.0",
