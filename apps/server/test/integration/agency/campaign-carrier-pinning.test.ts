@@ -168,13 +168,15 @@ describe('POST /api/v1/agency-campaigns — the carrier account', () => {
     expect(res.json().details.caller_ids).toContain(MINE[1]);
   });
 
-  it('a tenant-account carrier requires a credential; the service carrier refuses one', async () => {
+  it('a tenant-account carrier requires a credential; a credential of another carrier is refused', async () => {
     const without = await create({ telephony_provider: 'plivo', caller_ids: MINE });
     expect(without.statusCode).toBe(400);
     expect(without.json().details).toHaveProperty('telephony_credential_id');
+    // VoiceLink takes tenant accounts too (docs/carriers.md CR1), so a credential on it is looked
+    // up, and a Plivo credential is not one of this tenant's VoiceLink credentials (CR8).
     const withOne = await create({ telephony_provider: 'voicelink', telephony_credential_id: credA, caller_ids: ['+919000000001'] });
-    expect(withOne.statusCode).toBe(400);
-    expect(withOne.json().details).toHaveProperty('telephony_credential_id');
+    expect(withOne.statusCode).toBe(404);
+    expect(withOne.json()).toMatchObject({ code: 'telephony_credential_not_found' });
   });
 
   it('an unknown or inactive carrier is a 400', async () => {
@@ -201,9 +203,10 @@ describe('PATCH /api/v1/agency-campaigns/:id — the carrier account', () => {
 
   it('moving back to the service carrier must clear the credential in the same PATCH', async () => {
     const campaign = await plivoCampaign();
+    // The Plivo credential kept is no VoiceLink credential of this tenant (CR8).
     const kept = await patch(campaign.id, { telephony_provider: 'voicelink', caller_ids: ['+919000000001'] });
-    expect(kept.statusCode).toBe(400);
-    expect(kept.json().details).toHaveProperty('telephony_credential_id');
+    expect(kept.statusCode).toBe(404);
+    expect(kept.json()).toMatchObject({ code: 'telephony_credential_not_found' });
     const cleared = await patch(campaign.id, { telephony_provider: 'voicelink', telephony_credential_id: null, caller_ids: ['+919000000001'] });
     expect(cleared.statusCode, cleared.body).toBe(200);
     expect(cleared.json()).toMatchObject({ telephony_provider: 'voicelink', telephony_credential_id: null });
