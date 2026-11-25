@@ -8,8 +8,10 @@ vi.mock('../../api/agency', () => ({ raiseHelp: mocks.raiseHelp, cancelHelp: moc
 import * as posthog from '../../analytics/posthog';
 import { ApiError } from '../../api/client';
 import { useStationHelp } from '../../pages/agency/station/useStationHelp';
-import { INITIAL_STATION_STATE, stationReducer, type StationAction } from '../../utils/agencyStationReducer';
-import { HelpTelemetry, answeredHelp, failedWithNoAnswer, helpRefusedCode, helpWaitBucket, type HelpWhere } from '../../utils/agency/helpTelemetry';
+import { INITIAL_STATION_STATE, stationReducer, type StationAction, type StationHelpPressAction } from '../../utils/agencyStationReducer';
+import { HelpTelemetry, answeredHelp, failedWithNoAnswer, helpRefusedCode, type HelpWhere } from '../../utils/agency/helpTelemetry';
+import { secondsInStateBucket } from '../../utils/agencyAgentFloor';
+import { serverClock } from '../../hooks/useServerClock';
 import type { AgencyStationReadyFrame } from '../../types/agency';
 
 /**
@@ -26,28 +28,22 @@ const R1 = '2026-11-19T10:00:00.000Z';
 const R0 = '2026-11-19T09:30:00.000Z';
 const R2 = '2026-11-19T10:30:00.000Z';
 /**
- * The server-aligned clock the hook is handed (offset 0). Two instants, so a test can say both: when
- * Need help is pressed (`pressNow`, 5 s after R1, as a raise's own request is raised as it is
- * pressed: read at the press for the 60 s rule) and when the frames land (`now`, two minutes after
- * R1 unless a test moves it: read for how long a request was open).
+ * The server-aligned clock the hook is handed: a real `serverClock` at `offsetMs` (0 unless a test
+ * sets it before mounting), reading the present from `now`. Need help is pressed at `PRESSED` (5 s
+ * after R1, as a raise's own request is raised as it is pressed: read at the press for the 60 s
+ * rule) unless a test says when, and the frames land at `LANDED` (two minutes after R1 unless a test
+ * moves `now`: read for how long a request was open): `press` sets `now` to the one, then the other.
  */
-let now = Date.parse(R1) + 2 * 60_000;
-let pressNow = Date.parse(R1) + 5_000;
+const PRESSED = Date.parse(R1) + 5_000;
+const LANDED = Date.parse(R1) + 2 * 60_000;
+let now = LANDED;
 let offsetMs = 0;
-const clock = {
-  get offsetMs() {
-    return offsetMs;
-  },
-  now: () => pressNow,
-  since: (anchor: string | number | null | undefined) => (typeof anchor === 'string' ? Math.max(0, now - Date.parse(anchor)) : null),
-};
 
 const ON_CALL: HelpWhere = { surface: 'softphone', onCall: true };
 
 let capture: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
-  now = Date.parse(R1) + 2 * 60_000;
-  pressNow = Date.parse(R1) + 5_000;
+  now = LANDED;
   offsetMs = 0;
   mocks.raiseHelp.mockReset().mockResolvedValue({ session_id: 'sess-1', help: { raised_at: R1, call_id: 'call-1' } });
   mocks.cancelHelp.mockReset().mockResolvedValue({ session_id: 'sess-1', help: null });
@@ -62,19 +58,15 @@ function useHarness() {
   const [state, dispatch] = useReducer(stationReducer, INITIAL_STATION_STATE);
   const setHelp = useCallback((help: typeof state.help) => dispatch({ type: 'help_set', help }), []);
   const dismissHelpNotice = useCallback(() => dispatch({ type: 'help_notice_dismissed' }), []);
-  const noteHelpRaise = useCallback(
-    (raise: { phase: 'started'; at: number } | { phase: 'failed' }) =>
-      dispatch(raise.phase === 'started' ? { type: 'help_raise_started', at: raise.at } : { type: 'help_raise_failed' }),
-    [],
-  );
+  const noteHelpPress = useCallback((press: StationHelpPressAction) => dispatch(press), []);
   const help = useStationHelp({
     offered: true,
     everywhere: true,
     sessionId: 'sess-1',
     tenantId: 't-1',
     accountId: 'a-1',
-    station: { agentState: state.agentState, help: state.help, helpNotice: state.helpNotice, helpFrames: state.helpFrames, setHelp, noteHelpRaise, dismissHelpNotice },
-    clock,
+    station: { agentState: state.agentState, help: state.help, helpNotice: state.helpNotice, helpFrames: state.helpFrames, setHelp, noteHelpPress, dismissHelpNotice },
+    clock: serverClock(offsetMs, () => now),
   });
   return { help, state, dispatch };
 }
@@ -86,10 +78,12 @@ function mount() {
       hook.result.current.dispatch(action);
     });
   };
-  const press = async (where: HelpWhere) => {
+  const press = async (where: HelpWhere, at = PRESSED) => {
+    now = at;
     await act(async () => {
       hook.result.current.help.press(where);
     });
+    now = LANDED;
   };
   const answered = (raisedAt: string, how: 'listen' | 'message', byName: string | null = 'Priya N') =>
     send({ type: 'help_answered', frame: { event: 'help_answered', raised_at: raisedAt, by_name: byName, how } });
@@ -421,7 +415,7 @@ describe('which request a frame counts for (amendment 2)', () => {
     const t = mount();
     // Request A was never shown in this page load; a ready says none is open.
     await t.ready();
-    const A = new Date(pressNow - 14 * 60_000).toISOString();
+    const A = new Date(PRESSED - 14 * 60_000).toISOString();
     const reply = await raiseHeld(t, R1);
     // The server expires A (past its 15 minutes) before it answers the new raise.
     await t.cleared(A, 'expired');
@@ -431,8 +425,8 @@ describe('which request a frame counts for (amendment 2)', () => {
 
   it('the 60 s rule’s edge: a request raised 60 s before the press counts, 61 s does not', async () => {
     const t = mount();
-    const atEdge = new Date(pressNow - 60_000).toISOString();
-    const past = new Date(pressNow - 61_000).toISOString();
+    const atEdge = new Date(PRESSED - 60_000).toISOString();
+    const past = new Date(PRESSED - 61_000).toISOString();
     const reply = await raiseHeld(t, R1);
     await t.cleared(past, 'expired');
     await t.cleared(atEdge, 'expired');
@@ -596,11 +590,10 @@ describe('the press on the server-aligned clock', () => {
     // Aligned, the press is 5 s after R1 (server time); read raw off this clock it would be 10
     // minutes later, and R1 would look too old to be the raise's own request.
     offsetMs = -10 * 60_000;
-    pressNow = Date.parse(R1) + 5_000 - offsetMs;
     const t = mount();
     let resolve!: (v: unknown) => void;
     mocks.raiseHelp.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
-    await t.press(ON_CALL);
+    await t.press(ON_CALL, Date.parse(R1) + 5_000 - offsetMs);
     await t.answered(R1, 'listen');
     await t.cleared(R1, 'answered');
     await act(async () => {
@@ -612,11 +605,10 @@ describe('the press on the server-aligned clock', () => {
   it('with the server 10 minutes ahead of this clock, a request raised 9 minutes before the press (server time) does not count', async () => {
     // Aligned, the press is 9 minutes after R1; read raw off this clock it would be a minute before.
     offsetMs = 10 * 60_000;
-    pressNow = Date.parse(R1) + 9 * 60_000 - offsetMs;
     const t = mount();
     let resolve!: (v: unknown) => void;
     mocks.raiseHelp.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
-    await t.press(ON_CALL);
+    await t.press(ON_CALL, Date.parse(R1) + 9 * 60_000 - offsetMs);
     await t.cleared(R1, 'expired');
     await act(async () => {
       resolve({ session_id: 'sess-1', help: { raised_at: R2, call_id: null } });
@@ -656,11 +648,11 @@ describe('the rules the events are cut by', () => {
     expect(answeredHelp({ help: 'x' })).toBeUndefined();
   });
 
-  it('helpWaitBucket: agency_floor_intervention’s thresholds', () => {
-    expect(helpWaitBucket(59_999)).toBe('under_60');
-    expect(helpWaitBucket(60_000)).toBe('1_5m');
-    expect(helpWaitBucket(5 * 60_000)).toBe('5_15m');
-    expect(helpWaitBucket(15 * 60_000)).toBe('over_15m');
-    expect(helpWaitBucket(null)).toBe('under_60');
+  it('wait_bucket is agency_floor_intervention’s thresholds (secondsInStateBucket)', () => {
+    expect(secondsInStateBucket(59_999)).toBe('under_60');
+    expect(secondsInStateBucket(60_000)).toBe('1_5m');
+    expect(secondsInStateBucket(5 * 60_000)).toBe('5_15m');
+    expect(secondsInStateBucket(15 * 60_000)).toBe('over_15m');
+    expect(secondsInStateBucket(null)).toBe('under_60');
   });
 });

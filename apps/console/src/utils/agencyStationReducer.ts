@@ -148,19 +148,24 @@ export interface StationState {
    */
   helpEndedAt: string | null;
   /**
-   * A raise of this agent's in flight: pressed, its answer not back (`help_raise_started`, ended by
-   * its answer, `help_set`, or its failure, `help_raise_failed`), as the moment it was pressed on the
-   * server-aligned clock (epoch ms, server time); null with none. Nothing on screen reads it.
+   * A raise of this agent's in flight: pressed, its request not settled (`help_raise_started`, ended
+   * by `help_raise_ended` once its reply or failure is handled), as the moment it was pressed on the
+   * server-aligned clock (epoch ms, server time); null with none. Nothing on screen reads it
+   * ({@link helpFrameInScope}).
    */
   helpRaisingSince: number | null;
+  /**
+   * The `raised_at` of each request the agent pressed Cancel for (`help_cancel_pressed`, at the
+   * press), oldest first, the last {@link HELP_CANCELS_HELD}. Nothing on screen reads it
+   * ({@link helpFrameInScope}).
+   */
+  helpCancelsPressed: readonly string[];
   /**
    * Every `help_answered` and `help_cleared` this station heard, oldest first, the last
    * {@link HELP_FRAMES_HELD}, each with a `seq` that only grows (duplicates and frames about another
    * request than the one on screen included), and whether it was in scope when it landed
-   * ({@link helpFrameInScope}). Nothing on screen reads it: it is Need help's telemetry (LF39, its
-   * amendment 2), which reads every entry past the last `seq` it read, so frames that land in one
-   * render are all counted, in order. The telemetry also counts a frame about a request the agent
-   * pressed Cancel for.
+   * ({@link helpFrameInScope}). Nothing on screen reads it: Need help's telemetry (LF39) reads every
+   * entry past the last `seq` it read, so frames that land in one render are all counted, in order.
    */
   helpFrames: readonly StationHelpFrame[];
   /**
@@ -171,6 +176,17 @@ export interface StationState {
    */
   supervisorMessages: AgencyStationSupervisorMessageFrame[];
 }
+
+/**
+ * The agent's own Need help presses, as Need help's telemetry scopes frames by them (LF39,
+ * {@link helpFrameInScope}): a raise pressed (`at`: that moment on the server-aligned clock, epoch
+ * ms in server time) and its request settled (answered, refused or failed), and Cancel pressed for
+ * the request `raisedAt`.
+ */
+export type StationHelpPressAction =
+  | { type: 'help_raise_started'; at: number }
+  | { type: 'help_raise_ended' }
+  | { type: 'help_cancel_pressed'; raisedAt: string };
 
 /** One Need help frame as the station heard it (`StationState.helpFrames`). */
 export interface StationHelpFrame {
@@ -191,6 +207,12 @@ export const HELP_FRAMES_HELD = 32;
  * just before the server's sweep, and the server expires it before answering the new raise).
  */
 export const HELP_IN_FLIGHT_WINDOW_MS = 60_000;
+
+/**
+ * How many pressed cancels the station remembers for Need help's telemetry: a cancelled request's
+ * frames land moments after the press, so far more than are ever waiting on theirs.
+ */
+export const HELP_CANCELS_HELD = 16;
 
 /** What the station says about its last Need help request (see `StationState.helpNotice`). */
 export type StationHelpNotice =
@@ -238,6 +260,7 @@ export const INITIAL_STATION_STATE: StationState = {
   helpNotice: null,
   helpEndedAt: null,
   helpRaisingSince: null,
+  helpCancelsPressed: [],
   helpFrames: [],
   supervisorMessages: [],
 };
@@ -277,12 +300,7 @@ export type StationAction =
    * itself sends no frame (LF15), so its answer is what shows it.
    */
   | { type: 'help_set'; help: AgencySessionHelp | null }
-  /**
-   * The agent pressed Need help (a raise is in flight; `at`: that moment on the server-aligned
-   * clock, epoch ms in server time), or that raise failed with no answer.
-   */
-  | { type: 'help_raise_started'; at: number }
-  | { type: 'help_raise_failed' }
+  | StationHelpPressAction
   | { type: 'help_answered'; frame: AgencyStationHelpAnsweredFrame }
   | { type: 'help_cleared'; frame: AgencyStationHelpClearedFrame }
   /** The agent dismissed what the station said about their last request. */
@@ -513,31 +531,35 @@ export function stationReducer(state: StationState, action: StationAction): Stat
     case 'help_raise_started':
       return { ...state, helpRaisingSince: action.at };
 
-    case 'help_raise_failed':
+    case 'help_raise_ended':
       return state.helpRaisingSince === null ? state : { ...state, helpRaisingSince: null };
+
+    case 'help_cancel_pressed': {
+      if (state.helpCancelsPressed.includes(action.raisedAt)) return state;
+      const pressed = [...state.helpCancelsPressed, action.raisedAt];
+      return { ...state, helpCancelsPressed: pressed.length > HELP_CANCELS_HELD ? pressed.slice(pressed.length - HELP_CANCELS_HELD) : pressed };
+    }
 
     case 'help_set': {
       const { help } = action;
-      // Any answer ends a raise in flight (a cancel's too: none is in flight then).
-      const was = state.helpRaisingSince === null ? state : { ...state, helpRaisingSince: null };
       if (help === null) {
         // The agent's cancel: the request ends here, and says nothing (they know). An answer that
         // reached it first (`help_answered`, its `help_cleared` still on the way) is kept: the
         // supervisor is listening in or wrote, whatever the cancel says.
-        if (was.help === null) return was;
-        const answered = answeredNoticeFor(was.helpNotice, was.help.raised_at);
-        return { ...was, help: null, helpNotice: answered, helpEndedAt: was.help.raised_at };
+        if (state.help === null) return state;
+        const answered = answeredNoticeFor(state.helpNotice, state.help.raised_at);
+        return { ...state, help: null, helpNotice: answered, helpEndedAt: state.help.raised_at };
       }
       // A frame already ended this very request (it was answered or lapsed while the raise was in
       // flight): the late answer must not open it again.
-      if (help.raised_at === was.helpEndedAt) return was;
+      if (help.raised_at === state.helpEndedAt) return state;
       // A raise while one is open answers the open one unchanged (LF13): nothing moves.
-      if (was.help?.raised_at === help.raised_at && was.help.call_id === help.call_id) return was;
+      if (state.help?.raised_at === help.raised_at && state.help.call_id === help.call_id) return state;
       // An answer that arrived before the raise's own answer is about this request: kept.
       return {
-        ...was,
+        ...state,
         help: { raised_at: help.raised_at, call_id: help.call_id },
-        helpNotice: answeredNoticeFor(was.helpNotice, help.raised_at),
+        helpNotice: answeredNoticeFor(state.helpNotice, help.raised_at),
       };
     }
 
@@ -608,12 +630,24 @@ export function stationReducer(state: StationState, action: StationAction): Stat
 }
 
 /**
- * Whether a frame about `raisedAt`, landing on `state`, is in Need help telemetry's scope (LF39):
- * the request on screen; or, with nothing on screen, a raise in flight (the frame may be about it),
- * unless it names the request this station last saw end (a `ready` that left it out, its clear late)
- * or one raised more than {@link HELP_IN_FLIGHT_WINDOW_MS} before Need help was pressed.
+ * Which request a Need help frame counts for (LF39, its amendment 2): whether a `help_answered` or
+ * `help_cleared` about `raisedAt`, landing on `state`, is in Need help telemetry's scope. Only a
+ * frame in scope can send an end event (`utils/agency/helpTelemetry`). In scope:
+ *  - a request the agent pressed Cancel for (`helpCancelsPressed`, recorded at the press, not at
+ *    the cancel's reply), even after the reply and a new raise put another request on screen;
+ *  - the request on screen;
+ *  - with nothing on screen, any request while a raise is in flight (pressed, its reply not back:
+ *    the frame may be about it), unless it names the request this station last saw end (a `ready`
+ *    that left it out, its clear late) or one raised more than {@link HELP_IN_FLIGHT_WINDOW_MS}
+ *    before Need help was pressed (server-aligned).
+ * A raise whose reply failed is no longer in flight, so a frame about it afterwards is out of
+ * scope, though the screen still shows its answer (LF24). Anything else is out of scope.
  */
-export function helpFrameInScope(state: Pick<StationState, 'help' | 'helpRaisingSince' | 'helpEndedAt'>, raisedAt: string): boolean {
+export function helpFrameInScope(
+  state: Pick<StationState, 'help' | 'helpRaisingSince' | 'helpEndedAt' | 'helpCancelsPressed'>,
+  raisedAt: string,
+): boolean {
+  if (state.helpCancelsPressed.includes(raisedAt)) return true;
   if (state.help !== null) return state.help.raised_at === raisedAt;
   if (state.helpRaisingSince === null || raisedAt === state.helpEndedAt) return false;
   const raised = Date.parse(raisedAt);

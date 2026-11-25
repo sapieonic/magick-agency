@@ -2,7 +2,7 @@ import { CircleCheck, Info, MessageSquare } from 'lucide-react';
 import type { UseAgencyStationResult } from '../../../hooks/useAgencyStation';
 import type { StationHelp } from '../../../pages/agency/station/useStationHelp';
 import { messageSender } from '../../../utils/agency/stationHelp';
-import { STATION_COPY, helpAnsweredLine, helpRefusedLine } from '../../../utils/agency/stationCopy';
+import { STATION_COPY, helpAnsweredLine } from '../../../utils/agency/stationCopy';
 import { clockTime } from '../../../utils/agency/stationFormat';
 import { StationBanner } from './StationFrame';
 import styles from './Station.module.css';
@@ -22,7 +22,7 @@ export function SupervisorBanner({
 }) {
   const message = station.supervisorMessages[0] ?? null;
   const helpNotice = station.helpNotice;
-  const helpRefusal = help.refusalKind ? helpRefusedLine(help.refusalKind) : null;
+  const helpRefusal = help.refusal;
   if (message) {
     const sentAt = Date.parse(message.sent_at);
     return (

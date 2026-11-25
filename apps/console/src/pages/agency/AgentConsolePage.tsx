@@ -410,13 +410,14 @@ function StationScreen({
 
   // ── Where Need help is pressed, and whether on a call: an inbound call and the soft phone have
   //    their own screens (below), else the campaign's (LF39's telemetry). Messages are counted with it.
-  //    On the campaign's screens "on a call" is what the screen shows: the call bridged (the dialler
-  //    sends `bridged`, never an `agent_state` of `on_call`) or its outcome owed. Ringing is not.
-  const spPhaseNow = softphone.sp.phase;
+  //    "On a call" is what the screen shows: the call connected or its outcome owed (an inbound
+  //    call's and the soft phone's are their pad's own rule, `padEnabled`); on the campaign's
+  //    screens, the call bridged (the dialler sends `bridged`, never an `agent_state` of `on_call`)
+  //    or its outcome owed. Dialling or ringing is not.
   const helpWhere: HelpWhere = inbound.call
-    ? { surface: 'inbound', onCall: inbound.phase === 'connected' || inbound.phase === 'outcome' }
+    ? { surface: 'inbound', onCall: inbound.padEnabled }
     : softphone.active && !finishOpen
-      ? { surface: 'softphone', onCall: spPhaseNow === 'on_call' || spPhaseNow === 'outcome' }
+      ? { surface: 'softphone', onCall: softphone.sp.padEnabled }
       : { surface: 'station', onCall: (live !== null && live.bridgedAt !== null) || outcomeOwed };
   useSupervisorMessageShown(station.supervisorMessages, helpWhere.onCall);
   const { stop: stopReading } = readAloud;

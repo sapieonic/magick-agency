@@ -14,7 +14,7 @@ import type {
   AgencyStationMediaFormat,
   AgencyStationSupervisorMessageFrame,
 } from '@magick-agency/contracts/agency';
-import type { StationHelpNotice, StationState } from '../../utils/agencyStationReducer';
+import type { StationHelpNotice, StationHelpPressAction, StationState } from '../../utils/agencyStationReducer';
 import type { AgencyManualCall } from '../../types/softphone';
 import type { AgencyInboundCall, AgencyStationCustomerWaitingFrame } from '../../types/inbound';
 import type { AgencyUplinkFrame } from '../../utils/agencyMedia';
@@ -272,11 +272,8 @@ export interface UseAgencyStationResult {
   supervisorMessages: readonly AgencyStationSupervisorMessageFrame[];
   /** The raise's answer (the open request) or the cancel's (`null`): the raise sends no frame. */
   setHelp: (help: AgencySessionHelp | null) => void;
-  /**
-   * A raise was sent (`started`, `at`: the press on the server-aligned clock, epoch ms in server
-   * time), or it failed with no answer (`failed`): the frames' scope (LF39).
-   */
-  noteHelpRaise: (raise: { phase: 'started'; at: number } | { phase: 'failed' }) => void;
+  /** The agent's own Need help presses, which scope the frames for its telemetry (LF39, `helpFrameInScope`). */
+  noteHelpPress: (press: StationHelpPressAction) => void;
   dismissHelpNotice: () => void;
   dismissSupervisorMessage: (id: string) => void;
   /** Force a reconnect (the "Reconnect" button on a dropped station). */

@@ -476,7 +476,7 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
     raise put another request on screen. The reducer hears every `help_answered` and `help_cleared`,
     about the request on screen or not, without changing the screen, and keeps the last 32 in
     `helpFrames` with a growing `seq` and the scope decided as each landed (`helpRaisingSince` holds
-    the raise in flight); `useStationHelp` reads every entry past the last `seq` it read, so frames
+    the raise in flight, `helpCancelsPressed` the last 16 requests the agent pressed Cancel for); `useStationHelp` reads every entry past the last `seq` it read, so frames
     that land in one render (the server sends `help_answered` and `help_cleared` back to back) all
     count, in order. A raise whose reply failed (no answer, 5xx) is no longer in flight, nor is one
     whose answer came back, so a later frame for another request sends nothing, though the screen

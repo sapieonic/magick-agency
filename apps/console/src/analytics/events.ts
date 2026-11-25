@@ -741,20 +741,13 @@ export function trackAgencySoftphoneSwitch(props: EventCatalog['agency_softphone
 // sender's or answerer's name (`from_name`, `by_name`), no session, call or message id, and no
 // code a person typed. A supervisor's send names the kind of message, never the agent it went to.
 //
-// `agency_help_refused` fires once per refused or failed press. Each other Need help event fires
-// at most once per request (its `raised_at`) on a page, through
-// reconnects, duplicate frames, a raise's answer landing after the frames that ended it and a
-// cancel that lost the race to an answer (`utils/agency/helpTelemetry`, LF24's races). Raised is
-// the raise's answer, never a `ready.help`; the end events are the frames about a request in scope
-// (on screen, a raise in flight, or one the agent pressed Cancel for), cancelled the server's
-// `help_cleared { cancelled }` and never the cancel's reply. A `session_ended` clear, or a frame
-// out of scope, sends nothing.
+// When each Need help event fires (once per request, the end events only for a request in scope):
+// `utils/agency/helpTelemetry`, and which request a frame counts for: `helpFrameInScope` in
+// `utils/agencyStationReducer`. A `wait_bucket` is a request's age when it ended, raised to ended
+// on the server-aligned clock, in `agency_floor_intervention`'s buckets.
 
 /** Where the agent pressed Need help: the campaign's own screen, an inbound call, or a soft phone screen. */
 export type AgencyHelpSurface = 'station' | 'inbound' | 'softphone';
-
-/** A request's age when it ended, raised to ended on the server-aligned clock: `agency_floor_intervention`'s buckets. */
-export type AgencyHelpWaitBucket = AgencyFloorStateBucket;
 
 /** A refused or failed raise or cancel: the server's code when it is one of these, else what kind of failure. */
 export type AgencyHelpRefusedCode =
@@ -1741,12 +1734,12 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     on_call: boolean;
   };
   /** {@link trackAgencyHelpCancelled} */
-  agency_help_cancelled: { wait_bucket: AgencyHelpWaitBucket };
+  agency_help_cancelled: { wait_bucket: AgencyFloorStateBucket };
   /** {@link trackAgencyHelpAnswered} */
   agency_help_answered: {
     /** `unknown`: the request was cleared `answered` with no `help_answered` seen. */
     how: 'listen' | 'message' | 'unknown';
-    wait_bucket: AgencyHelpWaitBucket;
+    wait_bucket: AgencyFloorStateBucket;
   };
   /** {@link trackAgencyHelpExpired} */
   agency_help_expired: Record<string, never>;

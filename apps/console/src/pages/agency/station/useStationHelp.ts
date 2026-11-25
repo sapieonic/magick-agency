@@ -31,13 +31,13 @@ import { HelpTelemetry, answeredHelp, failedWithNoAnswer, type HelpWhere } from 
  * only on a call or in wrap-up (LF13, said before asking).
  *
  * ── Telemetry (LF39) ─────────────────────────────────────────────────────────
- * Raised, cancelled, answered and expired, each at most once per request, and refused once per
- * refused or failed press (`utils/agency/helpTelemetry`). Every press names where it was made
- * (`HelpWhere`: the campaign's screen, an inbound call, a soft phone screen, and whether on a call
- * as that screen shows it); the caller decides, this hook never guesses. Only the request's own
- * failure is a refusal (a 2xx with no usable `help` too), never an error thrown while handling its
- * answer. One hook per page, so its memory of what was sent outlives reconnects and moves between
- * the page's screens.
+ * The events and when they fire: `utils/agency/helpTelemetry`; which request a frame counts for:
+ * `helpFrameInScope` (`utils/agencyStationReducer`), which this hook feeds the agent's presses
+ * (`noteHelpPress`). Every press names where it was made (`HelpWhere`: the campaign's screen, an
+ * inbound call, a soft phone screen, and whether on a call as that screen shows it); the caller
+ * decides, this hook never guesses. Only the request's own failure is a refusal (a 2xx with no
+ * usable `help` too), never an error thrown while handling its answer. One hook per page, so its
+ * memory of what was sent outlives reconnects and moves between the page's screens.
  */
 export interface StationHelp {
   /** `agency_floor_assist_enabled` is on: the control is shown at all. */
@@ -56,13 +56,8 @@ export interface StationHelp {
   status: string | null;
   /** `status` is a notice about a request that ended, which the agent may dismiss. */
   dismissible: boolean;
-  /** The refusal of the agent's last press, stated. */
+  /** The refusal of the agent's last press, in the station's words (AS15, `helpRefusedLine`). */
   refusal: string | null;
-  /**
-   * What the refusal was, for a screen that says it in its own words (the agent station, AS15):
-   * the press that was refused and the server's code and status. Null with no refusal.
-   */
-  refusalKind: { action: 'raise' | 'cancel'; code: string | null; status: number | null } | null;
   /** The last thing worth saying out loud, with a counter so the same words are said again. */
   announcement: { text: string; seq: number } | null;
   /** Raise or cancel; `where` is where the agent pressed, and whether on a call then (telemetry only). */
@@ -85,14 +80,14 @@ export function useStationHelp({
   sessionId: string | null;
   tenantId?: string;
   accountId?: string;
-  station: Pick<UseAgencyStationResult, 'agentState' | 'help' | 'helpNotice' | 'helpFrames' | 'setHelp' | 'noteHelpRaise' | 'dismissHelpNotice'>;
-  /** The page's server-aligned clock, for how long a request was open (telemetry). */
-  clock?: Pick<ServerClock, 'since' | 'now' | 'offsetMs'>;
+  station: Pick<UseAgencyStationResult, 'agentState' | 'help' | 'helpNotice' | 'helpFrames' | 'setHelp' | 'noteHelpPress' | 'dismissHelpNotice'>;
+  /** The page's server-aligned clock: when a raise was pressed and how long a request was open (telemetry). */
+  clock: Pick<ServerClock, 'since' | 'now' | 'offsetMs'>;
 }): StationHelp {
-  const { agentState, help, helpNotice, helpFrames, setHelp, noteHelpRaise, dismissHelpNotice } = station;
+  const { agentState, help, helpNotice, helpFrames, setHelp, noteHelpPress, dismissHelpNotice } = station;
   const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
-  const [refusalKind, setRefusalKind] = useState<StationHelp['refusalKind']>(null);
+  // What the agent's last press was refused with: the press, and the server's code and status.
+  const [refusalKind, setRefusalKind] = useState<HelpRefusalKind | null>(null);
   const [announcement, setAnnouncement] = useState<{ text: string; seq: number } | null>(null);
   const say = useCallback((text: string) => setAnnouncement((was) => ({ text, seq: (was?.seq ?? 0) + 1 })), []);
   // Read at press time: a double press while the first is in flight sends nothing more.
@@ -104,20 +99,13 @@ export function useStationHelp({
   const clockRef = useLatestRef(clock);
   const telemetryRef = useRef<HelpTelemetry | null>(null);
   if (telemetryRef.current === null) {
-    telemetryRef.current = new HelpTelemetry((raisedAt) => {
-      const since = clockRef.current?.since(raisedAt);
-      if (since !== undefined) return since;
-      const raised = Date.parse(raisedAt);
-      return Number.isFinite(raised) ? Math.max(0, Date.now() - raised) : null;
-    });
+    telemetryRef.current = new HelpTelemetry((raisedAt) => clockRef.current.since(raisedAt));
   }
   const telemetry = telemetryRef.current;
   // Every frame heard since the last read, in order: frames that land in one render all count.
   const readSeqRef = useRef(0);
   useEffect(() => {
     const last = helpFrames.at(-1)?.seq ?? 0;
-    // A station whose list started again (none today) is read from its start.
-    if (last < readSeqRef.current) readSeqRef.current = 0;
     for (const heard of helpFrames) {
       if (heard.seq > readSeqRef.current) telemetry.frameSeen(heard);
     }
@@ -130,7 +118,6 @@ export function useStationHelp({
 
   // A refusal is about the state it was pressed in; a new state makes it stale.
   useEffect(() => {
-    setRefusal(null);
     setRefusalKind(null);
   }, [agentState]);
 
@@ -144,23 +131,16 @@ export function useStationHelp({
     if (!cancelling && !raisable) return;
     busyRef.current = true;
     setBusy(true);
-    if (cancelling && raisedAt !== null) telemetry.cancelSent(raisedAt);
-    // A raise in flight puts the frames that land meanwhile in scope (LF39).
-    if (!cancelling) {
-      // The press on the server-aligned clock (server time): how old a frame's request may be (LF39).
-      const at = clockRef.current ? clockRef.current.now() + clockRef.current.offsetMs : Date.now();
-      noteHelpRaise({ phase: 'started', at });
-    }
-    setRefusal(null);
+    // The press, for the frames' scope (LF39): Cancel for this request, or a raise (at the press on
+    // the server-aligned clock, in server time), in flight until its request settles (`finally`).
+    if (cancelling && raisedAt !== null) noteHelpPress({ type: 'help_cancel_pressed', raisedAt });
+    if (!cancelling) noteHelpPress({ type: 'help_raise_started', at: clockRef.current.now() + clockRef.current.offsetMs });
     setRefusalKind(null);
     /** A refused or failed press: said in the station's words (AS15), and counted once. */
-    const refuse = (kind: NonNullable<StationHelp['refusalKind']>, noAnswer: boolean) => {
+    const refuse = (kind: HelpRefusalKind, noAnswer: boolean) => {
       telemetry.refused(kind.action, kind.code, kind.status, noAnswer);
-      if (!cancelling) noteHelpRaise({ phase: 'failed' });
-      const text = helpRefusedLine(kind);
-      setRefusal(text);
       setRefusalKind(kind);
-      say(text);
+      say(helpRefusedLine(kind));
     };
     const action = cancelling ? 'cancel' : 'raise';
     const request = cancelling ? cancelHelp(sessionId, tenantId, accountId) : raiseHelp(sessionId, tenantId, accountId);
@@ -193,8 +173,11 @@ export function useStationHelp({
       .finally(() => {
         busyRef.current = false;
         setBusy(false);
+        // Answered, refused or failed: no longer in flight. No frame lands between the answer's
+        // handling and here (a frame is a later task), and `busyRef` holds a second press till now.
+        if (!cancelling) noteHelpPress({ type: 'help_raise_ended' });
       });
-  }, [offered, sessionId, tenantId, accountId, raisable, helpRef, noticeRef, setHelp, noteHelpRaise, say, telemetry, clockRef]);
+  }, [offered, sessionId, tenantId, accountId, raisable, helpRef, noticeRef, setHelp, noteHelpPress, say, telemetry, clockRef]);
 
   /*
     What the station says. While a request is open: that it is waiting, until a supervisor answers
@@ -228,13 +211,15 @@ export function useStationHelp({
       : (open ? STATION_HELP_COPY.cancel : STATION_HELP_COPY.raise),
     status,
     dismissible: help === null && helpNotice !== null,
-    refusal,
-    refusalKind,
+    refusal: refusalKind ? helpRefusedLine(refusalKind) : null,
     announcement,
     press,
     dismiss: dismissHelpNotice,
   };
 }
+
+/** What the agent's last press was refused with: the press, and the server's code and status. */
+type HelpRefusalKind = { action: 'raise' | 'cancel'; code: string | null; status: number | null };
 
 /** What became of a request, in the words its banner shows (AS15): who answered and how, or that it lapsed. */
 function noticeLine(notice: StationHelpNotice): string {

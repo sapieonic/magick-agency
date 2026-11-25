@@ -303,7 +303,8 @@ function SoftphoneConsole({
     clock,
   });
   const announced = useFloorAssistAnnouncer(stationState.supervisorMessages, help.announcement);
-  const helpWhere: HelpWhere = { surface: 'softphone', onCall: sp.phase === 'on_call' || sp.phase === 'outcome' };
+  // On a call: connected or owing its outcome, the pad's own rule. Dialling or ringing is not.
+  const helpWhere: HelpWhere = { surface: 'softphone', onCall: sp.padEnabled };
   useSupervisorMessageShown(stationState.supervisorMessages, helpWhere.onCall);
 
   const [closeOpen, setCloseOpen] = useState(false);
