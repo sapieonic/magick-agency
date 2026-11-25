@@ -149,8 +149,9 @@ void main() {
       expect([ignored.notice, ignored.ended], [null, older], reason: 'only remembered as ended');
       expect(FloorAssistState.empty.holds(older, raisingSince: press), isFalse);
       expect(FloorAssistState.empty.onAnswered(answeredFrame(older, by: 'X'), raisingSince: press), same(FloorAssistState.empty));
-      // Within the slack (the clocks a little apart), it is.
+      // Within the slack (the clocks a little apart), it is; exactly at it too.
       expect(FloorAssistState.empty.holds(within, raisingSince: press), isTrue);
+      expect(FloorAssistState.empty.holds(press.subtract(FloorAssistState.inFlightSlack), raisingSince: press), isTrue);
       expect(FloorAssistState.empty.onCleared(clearedFrame(within, HelpClearedReason.expired), raisingSince: press).notice?.expired, isTrue);
     });
 

@@ -172,9 +172,14 @@ class StationController extends Notifier<StationView?>
   /// When the last new supervisor's message arrived: one vibration per burst ([messageBuzzQuiet]).
   DateTime? _lastMessageAt;
 
-  /// The request the agent last pressed Cancel for (its `raised_at`): its end frames count for the
-  /// events from the press on, whatever the reply or a reconnect does to it on screen (LF39).
-  DateTime? _cancelPressedFor;
+  /// The requests the agent pressed Cancel for this session (their `raised_at`, oldest first, at
+  /// most [cancelsRemembered]): their end frames count for the events from the press on, whatever
+  /// the reply, a reconnect or a later request does to them on screen (LF39). An earlier request's
+  /// `help_cleared {cancelled}` can land after the next one was raised and cancelled.
+  final List<DateTime> _cancelsPressed = [];
+
+  /// How many cancelled requests a session remembers; far more than one session cancels.
+  static const cancelsRemembered = 16;
 
   /// When the agent pressed Need help last, on the server-aligned clock: a frame counts for the
   /// raise in flight only about a request stamped no earlier than a minute before it
@@ -781,7 +786,7 @@ class StationController extends Notifier<StationView?>
     _helpBusy = HelpBusy.none;
     _helpError = null;
     _helpOnlyOnCall = false;
-    _cancelPressedFor = null;
+    _cancelsPressed.clear();
     _raisePressedAt = null;
     _lastMessageAt = null;
     _messageViews = const [];
@@ -1282,6 +1287,9 @@ class StationController extends Notifier<StationView?>
     try {
       final answer = await _api.raiseHelp(s.id);
       if (!_live(s)) return;
+      // A 2xx this build cannot read: the screen waits for the next `ready` to restate the request
+      // (as before); the event says the raise got no usable answer, as the console's does.
+      if (answer == null) _assistEvents.refusedUnreadable(raising: true);
       final open = answer?.help;
       if (open != null) {
         _assist = _assist.onRaised(open);
@@ -1309,15 +1317,19 @@ class StationController extends Notifier<StationView?>
   Future<void> cancelHelp() async {
     final s = _s;
     if (s == null || _helpBusy != HelpBusy.none || _assist.help == null) return;
-    _cancelPressedFor = _assist.help!.raisedAt;
+    _cancelsPressed.add(_assist.help!.raisedAt);
+    if (_cancelsPressed.length > cancelsRemembered) _cancelsPressed.removeAt(0);
     _helpBusy = HelpBusy.cancelling;
     _helpError = null;
     _emit();
     try {
-      await _api.cancelHelp(s.id);
+      final answer = await _api.cancelHelp(s.id);
       if (!_live(s)) return;
+      // A 2xx this build cannot read: the screen goes on as for `help: null` (as before); the event
+      // says the cancel got no usable answer, as the console's does.
+      if (answer == null) _assistEvents.refusedUnreadable(raising: false);
       // How it ended is the frames' to say (`help_cleared {cancelled}`: the cancel won; a
-      // `help_answered`: it lost the race), on either side of this reply ([_cancelPressedFor]).
+      // `help_answered`: it lost the race), on either side of this reply ([_cancelsPressed]).
       _assist = _assist.onCancelled();
       _log.info('help cancelled');
     } catch (e) {
@@ -1365,11 +1377,12 @@ class StationController extends Notifier<StationView?>
   }
 
   /// Whether a `help_answered` or `help_cleared` about [raisedAt] counts for the events (LF39's
-  /// "in scope"): the request on screen, the one a raise in flight ([raising]) is opening, or one the
-  /// agent pressed Cancel for (from the press, [_cancelPressedFor]). A raise whose reply failed is no
+  /// "in scope"): the request on screen, the one a raise in flight (pressed at [raisingSince], the
+  /// server-aligned clock) is opening, or one the agent pressed Cancel for (from the press,
+  /// [_cancelsPressed]). A raise whose reply failed is no
   /// longer in flight; a request a `ready` said is over is held by none of these.
   bool _helpInScope(DateTime raisedAt, {required DateTime? raisingSince}) =>
-      _assist.holds(raisedAt, raisingSince: raisingSince) || (_cancelPressedFor?.isAtSameMomentAs(raisedAt) ?? false);
+      _assist.holds(raisedAt, raisingSince: raisingSince) || _cancelsPressed.any((c) => c.isAtSameMomentAs(raisedAt));
 
   /// When the raise in flight was pressed, on the server-aligned clock; null with none in flight.
   DateTime? get _raisingSince => _helpBusy == HelpBusy.raising ? _raisePressedAt : null;

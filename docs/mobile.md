@@ -1472,7 +1472,8 @@ the flag is on). Break limits are not behind it.
   - The end events count a `help_answered` or `help_cleared` only for a request **in scope** when
     it lands: the one on screen, the one a raise in flight is opening (stamped no earlier than 60 s
     before the press, on the server-aligned clock; a raise whose reply failed is no longer in
-    flight), or one the agent pressed Cancel for (from the press, not the cancel's reply). A
+    flight), or one the agent pressed Cancel for this session (from the press, not the cancel's
+    reply; every such request, so an earlier one's late `help_cleared {cancelled}` still counts). A
     request a reconnect's `ready` said is over is remembered as ended. Either way an older
     request's `help_cleared {expired}`, which the server sends ahead of a new raise's reply, is
     never taken for the new one (nor shown as its expiry).
@@ -1483,7 +1484,9 @@ the flag is on). Break limits are not behind it.
     `help_cleared {cancelled}` (the cancel won), on either side of the cancel's reply. At most one
     end event per request; `session_ended` sends none.
   - `agency_help_refused` (`action`: `raise` or `cancel`; `code`: `floor_assist_disabled`,
-    `help_not_on_call`, `session_ended`, `not_found`, `network` or `other`), once per refusal.
+    `help_not_on_call`, `session_ended`, `not_found`, `network` or `other`), once per refusal; a 2xx
+    reply the app cannot read is `other` too (the screen treats it as before), and no sign-in token
+    offline is `network`.
   - `agency_supervisor_message_shown` (`on_call`) once per message id.
   - `on_call`: on a campaign or inbound call or in its wrap-up; on the soft phone only while its
     call is connected or owes its outcome (dialling and ringing are not on a call).

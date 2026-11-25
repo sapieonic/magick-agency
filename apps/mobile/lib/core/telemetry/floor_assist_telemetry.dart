@@ -28,7 +28,8 @@ enum HelpSurface {
 /// * `agency_help_answered` (`how`, `wait_bucket`): it ended answered, a cancel that lost the race
 ///   to the answer included (`how` is `unknown` when `help_answered` was not seen);
 /// * `agency_help_expired`: it ended `expired`;
-/// * `agency_help_refused` (`action`, `code`): a raise or a cancel was refused or failed;
+/// * `agency_help_refused` (`action`, `code`): a raise or a cancel was refused or failed, or got a
+///   2xx this build cannot read (`other`);
 /// * `agency_supervisor_message_shown` (`on_call`): a message id was first queued.
 ///
 /// The station controller decides when (it sees the frames and the help routes' answers; the
@@ -86,6 +87,10 @@ final class FloorAssistTelemetry {
   /// A raise ([raising]) or a cancel was refused, or got no answer: [error] as the help routes threw it.
   void refused(Object error, {required bool raising}) =>
       Telemetry.event('agency_help_refused', {'action': raising ? 'raise' : 'cancel', 'code': refusalCode(error)});
+
+  /// A raise ([raising]) or a cancel answered 2xx with a body this build cannot read: `other`.
+  void refusedUnreadable({required bool raising}) =>
+      Telemetry.event('agency_help_refused', {'action': raising ? 'raise' : 'cancel', 'code': 'other'});
 
   /// A supervisor's message id first queued for the agent (the controller's once per id).
   void messageShown({required bool onCall}) => Telemetry.event('agency_supervisor_message_shown', {'on_call': onCall});

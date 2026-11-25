@@ -412,6 +412,82 @@ void main() {
       });
     });
 
+    test('the press on the server-aligned clock: with the phone 5 minutes ahead, the frames for the raise\'s own request before its reply count', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        // The server runs 5 minutes behind this phone; the request is stamped as the agent pressed.
+        app.socket.serverPong(serverOffsetMs: -5 * 60 * 1000);
+        app.onCall('a1');
+        const own = '2026-11-01T08:55:00.000Z';
+        app.routes['POST $helpPath'] = (_) async {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          return json(200, helpBody(raised: own));
+        };
+        final pending = app.controller.raiseHelp();
+        async.flushMicrotasks();
+        app.frame(answered(raised: own));
+        app.frame(cleared(raised: own));
+        expect(app.view!.help.notice, 'Anitha N is listening to your call.');
+        async.elapse(const Duration(seconds: 1));
+        app.run(pending);
+        expect(_help(sink), ['agency_help_answered', 'agency_help_raised']);
+        expect(sink.last('agency_help_answered'), {'how': 'listen', 'wait_bucket': 'under_60'});
+        app.dispose();
+      });
+    });
+
+    test('every request cancelled this session stays in scope: an earlier one\'s late help_cleared {cancelled} still counts', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('a1');
+        const r1 = '2026-11-01T09:00:20.000Z';
+        const r2 = '2026-11-01T09:00:40.000Z';
+        app.routes['DELETE $helpPath'] = (_) => json(200, {'session_id': 'sess-1', 'help': null});
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody(raised: r1));
+        app.run(app.controller.raiseHelp());
+        app.run(app.controller.cancelHelp());
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody(raised: r2));
+        app.run(app.controller.raiseHelp());
+        app.run(app.controller.cancelHelp());
+        // The socket is slower than the replies: both clears land after both cancels answered.
+        app.frame(cleared(raised: r1, reason: 'cancelled'));
+        app.frame(cleared(raised: r2, reason: 'cancelled'));
+        expect(_help(sink), ['agency_help_raised', 'agency_help_raised', 'agency_help_cancelled', 'agency_help_cancelled']);
+        app.dispose();
+      });
+    });
+
+    test('a 2xx raise or cancel reply this build cannot read: refused, other; the screen as before', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('a1');
+        app.routes['POST $helpPath'] = (_) => json(200, 'accepted');
+        app.run(app.controller.raiseHelp());
+        expect(sink.last('agency_help_refused'), {'action': 'raise', 'code': 'other'});
+        expect(app.view!.help, const HelpView(), reason: 'nothing opened, nothing said: the next ready restates it');
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody());
+        app.run(app.controller.raiseHelp());
+        app.routes['DELETE $helpPath'] = (_) => json(200, 'done');
+        app.run(app.controller.cancelHelp());
+        expect(sink.last('agency_help_refused'), {'action': 'cancel', 'code': 'other'});
+        expect(app.view!.help, const HelpView(), reason: 'taken as help: null, as before');
+        expect(_help(sink), ['agency_help_refused', 'agency_help_raised', 'agency_help_refused']);
+        app.dispose();
+      });
+    });
+
+    test('no sign-in token offline (Firebase cannot mint): refused, network', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('a1');
+        app.tokens.throws = StateError('network-request-failed');
+        app.run(app.controller.raiseHelp());
+        expect(sink.last('agency_help_refused'), {'action': 'raise', 'code': 'network'});
+        expect(app.requests('POST', helpPath), isEmpty, reason: 'the request never left');
+        app.dispose();
+      });
+    });
+
     test('the cancel won: cancelled once, whether its help_cleared lands before or after the reply', () {
       for (final frameFirst in [false, true]) {
         fakeAsync((async) {
@@ -598,6 +674,21 @@ void main() {
         app.container.read(dismissSupervisorMessageProvider)('m2');
         expect(app.vibrations, 2);
         expect(app.engine.chimes, 0, reason: 'no tone');
+        app.dispose();
+      });
+    });
+
+    test('a new session starts a new burst: a message just after the last session\'s vibrates', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.routes['POST /proxy/agency/sessions/sess-1/leave'] = (_) => json(200, stateBody('offline'));
+        app.readyFrame('available');
+        app.frame(message('m1'));
+        app.run(app.controller.leave());
+        app.start();
+        app.readyFrame('available');
+        app.frame(message('m2'));
+        expect(app.vibrations, 2, reason: 'within ${StationController.messageBuzzQuiet.inSeconds} s, but another session');
         app.dispose();
       });
     });
