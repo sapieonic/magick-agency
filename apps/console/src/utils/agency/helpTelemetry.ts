@@ -9,6 +9,7 @@ import {
   type AgencyHelpSurface,
   type AgencyHelpWaitBucket,
 } from '../../analytics/events';
+import { ApiError } from '../../api/client';
 import { secondsInStateBucket } from '../agencyAgentFloor';
 
 /**
@@ -55,6 +56,34 @@ export function helpRefusedCode(code: string | null, status: number | null, noRe
   return 'other';
 }
 
+/**
+ * Whether a raise or a cancel failed with no answer from the server: `fetch` itself threw (a
+ * `TypeError`), or the sign-in token could not be had before any request went (a Firebase `auth/…`
+ * error from `getIdToken`, as offline; the app maps a token failure to its network error too). An
+ * answer that came back but could not be read (a 2xx whose body is not JSON: a `SyntaxError`) is not
+ * that. Only for an error from the request itself, never one thrown while handling its answer.
+ */
+export function failedWithNoAnswer(err: unknown): boolean {
+  if (err instanceof ApiError) return false;
+  if (err instanceof TypeError) return true;
+  const code = err !== null && typeof err === 'object' ? (err as { code?: unknown }).code : undefined;
+  return typeof code === 'string' && code.startsWith('auth/');
+}
+
+/**
+ * The request a raise's or a cancel's 2xx answer names: the open one (`{ raised_at, call_id }`),
+ * none (`null`), or `undefined` when the body has no usable `help` (a refusal of kind `other`).
+ */
+export function answeredHelp(answer: unknown): AgencySessionHelp | null | undefined {
+  if (answer === null || typeof answer !== 'object' || !('help' in answer)) return undefined;
+  const help = (answer as { help: unknown }).help;
+  if (help === null) return null;
+  if (typeof help !== 'object') return undefined;
+  const { raised_at: raisedAt, call_id: callId } = help as { raised_at?: unknown; call_id?: unknown };
+  if (typeof raisedAt !== 'string') return undefined;
+  return { raised_at: raisedAt, call_id: typeof callId === 'string' ? callId : null };
+}
+
 /** How long a request was open, in `agency_floor_intervention`'s buckets (`secondsInStateBucket`). */
 export function helpWaitBucket(elapsedMs: number | null): AgencyHelpWaitBucket {
   return secondsInStateBucket(elapsedMs);
@@ -72,8 +101,8 @@ export class HelpTelemetry {
   constructor(private readonly elapsed: (raisedAt: string) => number | null) {}
 
   /** A raise's answer: the first naming a request not yet reported is the raise. */
-  raiseAnswered(help: Pick<AgencySessionHelp, 'raised_at'> | null, where: HelpWhere): void {
-    if (help === null || typeof help.raised_at !== 'string' || this.raised.has(help.raised_at)) return;
+  raiseAnswered(help: Pick<AgencySessionHelp, 'raised_at'> | null | undefined, where: HelpWhere): void {
+    if (help === null || help === undefined || typeof help.raised_at !== 'string' || this.raised.has(help.raised_at)) return;
     this.raised.add(help.raised_at);
     trackAgencyHelpRaised({ surface: where.surface, on_call: where.onCall });
   }

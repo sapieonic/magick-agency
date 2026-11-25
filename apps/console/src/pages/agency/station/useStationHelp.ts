@@ -3,12 +3,11 @@ import { cancelHelp, raiseHelp } from '../../../api/agency';
 import { useLatestRef } from '../../../hooks/useLatestRef';
 import type { ServerClock } from '../../../hooks/useServerClock';
 import { errorCode, errorStatus } from '../../../utils/agencyErrors';
-import { ApiError } from '../../../api/client';
 import type { UseAgencyStationResult } from '../../../hooks/useAgencyStation';
 import { STATION_HELP_COPY, helpRaisable } from '../../../utils/agency/stationHelp';
 import { STATION_COPY, helpAnsweredLine, helpRefusedLine } from '../../../utils/agency/stationCopy';
 import type { StationHelpNotice } from '../../../utils/agencyStationReducer';
-import { HelpTelemetry, type HelpWhere } from '../../../utils/agency/helpTelemetry';
+import { HelpTelemetry, answeredHelp, failedWithNoAnswer, type HelpWhere } from '../../../utils/agency/helpTelemetry';
 
 /**
  * Need help on the agent's station (LF4, LF13, LF15, LF24): the raise and the cancel, and what
@@ -33,10 +32,12 @@ import { HelpTelemetry, type HelpWhere } from '../../../utils/agency/helpTelemet
  *
  * ── Telemetry (LF39) ─────────────────────────────────────────────────────────
  * Raised, cancelled, answered and expired, each at most once per request, and refused once per
- * refused or failed press (`utils/agency/helpTelemetry`). The press names where it was made (`HelpWhere`: the campaign's
- * screen, an inbound call, a soft phone screen, and whether on a call); without one it is the
- * campaign's screen, on a call when the agent state says so. One hook per page, so its memory of
- * what was sent outlives reconnects and moves between the page's screens.
+ * refused or failed press (`utils/agency/helpTelemetry`). Every press names where it was made
+ * (`HelpWhere`: the campaign's screen, an inbound call, a soft phone screen, and whether on a call
+ * as that screen shows it); the caller decides, this hook never guesses. Only the request's own
+ * failure is a refusal (a 2xx with no usable `help` too), never an error thrown while handling its
+ * answer. One hook per page, so its memory of what was sent outlives reconnects and moves between
+ * the page's screens.
  */
 export interface StationHelp {
   /** `agency_floor_assist_enabled` is on: the control is shown at all. */
@@ -64,8 +65,8 @@ export interface StationHelp {
   refusalKind: { action: 'raise' | 'cancel'; code: string | null; status: number | null } | null;
   /** The last thing worth saying out loud, with a counter so the same words are said again. */
   announcement: { text: string; seq: number } | null;
-  /** Raise or cancel; `where` is where the agent pressed (telemetry only). */
-  press: (where?: HelpWhere) => void;
+  /** Raise or cancel; `where` is where the agent pressed, and whether on a call then (telemetry only). */
+  press: (where: HelpWhere) => void;
   dismiss: () => void;
 }
 
@@ -136,12 +137,11 @@ export function useStationHelp({
   const open = help !== null;
   const raisable = everywhere || helpRaisable(agentState);
 
-  const press = useCallback((pressedAt?: HelpWhere) => {
+  const press = useCallback((where: HelpWhere) => {
     if (!offered || !sessionId || busyRef.current) return;
     const cancelling = helpRef.current !== null;
     const raisedAt = helpRef.current?.raised_at ?? null;
     if (!cancelling && !raisable) return;
-    const where: HelpWhere = pressedAt ?? { surface: 'station', onCall: helpRaisable(agentState) };
     busyRef.current = true;
     setBusy(true);
     if (cancelling && raisedAt !== null) telemetry.cancelSent(raisedAt);
@@ -153,35 +153,48 @@ export function useStationHelp({
     }
     setRefusal(null);
     setRefusalKind(null);
+    /** A refused or failed press: said in the station's words (AS15), and counted once. */
+    const refuse = (kind: NonNullable<StationHelp['refusalKind']>, noAnswer: boolean) => {
+      telemetry.refused(kind.action, kind.code, kind.status, noAnswer);
+      if (!cancelling) noteHelpRaise({ phase: 'failed' });
+      const text = helpRefusedLine(kind);
+      setRefusal(text);
+      setRefusalKind(kind);
+      say(text);
+    };
+    const action = cancelling ? 'cancel' : 'raise';
     const request = cancelling ? cancelHelp(sessionId, tenantId, accountId) : raiseHelp(sessionId, tenantId, accountId);
+    // The request's own failure is handled apart from its answer's handling: only the request's
+    // failure is a refusal, so nothing thrown below is ever counted as one.
     request
-      .then((answer) => {
-        // The raise's answer is the raise (once per request); a cancel's says nothing by itself.
-        if (!cancelling) telemetry.raiseAnswered(answer.help, where);
-        setHelp(answer.help);
-        // A request a supervisor answered while the cancel was on its way was not cancelled: the
-        // answer is what the station says (it already did), never "cancelled" after it.
-        const notice = noticeRef.current;
-        const answered = notice?.kind === 'answered' && notice.raised_at === raisedAt;
-        if (cancelling && !answered) say(STATION_HELP_COPY.cancelledAnnouncement);
-      })
-      .catch((err: unknown) => {
-        if (!cancelling && errorCode(err) === 'help_not_on_call') setNarrowedFor(sessionId);
-        // The station's own words, keyed on the code (AS15): what the banner shows is what is said.
-        const kind = { action: cancelling ? 'cancel' : 'raise', code: errorCode(err), status: errorStatus(err) } as const;
-        // No answer at all: `fetch` itself threw (a `TypeError`). An answer that could not be read is not that.
-        telemetry.refused(kind.action, kind.code, kind.status, !(err instanceof ApiError) && err instanceof TypeError);
-        if (!cancelling) noteHelpRaise({ phase: 'failed' });
-        const text = helpRefusedLine(kind);
-        setRefusal(text);
-        setRefusalKind(kind);
-        say(text);
-      })
+      .then(
+        (answer) => {
+          const help = answeredHelp(answer);
+          // A 2xx with no usable `help`: the press did not go through, as far as the station can tell.
+          if (help === undefined) {
+            refuse({ action, code: null, status: null }, false);
+            return;
+          }
+          // The raise's answer is the raise (once per request); a cancel's says nothing by itself.
+          if (!cancelling) telemetry.raiseAnswered(help, where);
+          setHelp(help);
+          // A request a supervisor answered while the cancel was on its way was not cancelled: the
+          // answer is what the station says (it already did), never "cancelled" after it.
+          const notice = noticeRef.current;
+          const answered = notice?.kind === 'answered' && notice.raised_at === raisedAt;
+          if (cancelling && !answered) say(STATION_HELP_COPY.cancelledAnnouncement);
+        },
+        (err: unknown) => {
+          if (!cancelling && errorCode(err) === 'help_not_on_call') setNarrowedFor(sessionId);
+          // The station's own words, keyed on the code (AS15): what the banner shows is what is said.
+          refuse({ action, code: errorCode(err), status: errorStatus(err) }, failedWithNoAnswer(err));
+        },
+      )
       .finally(() => {
         busyRef.current = false;
         setBusy(false);
       });
-  }, [offered, sessionId, tenantId, accountId, raisable, agentState, helpRef, noticeRef, setHelp, noteHelpRaise, say, telemetry, clockRef]);
+  }, [offered, sessionId, tenantId, accountId, raisable, helpRef, noticeRef, setHelp, noteHelpRaise, say, telemetry, clockRef]);
 
   /*
     What the station says. While a request is open: that it is waiting, until a supervisor answers

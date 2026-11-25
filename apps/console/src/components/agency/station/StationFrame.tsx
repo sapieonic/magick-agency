@@ -207,8 +207,8 @@ export function NeedHelpButton({
   help: StationHelp;
   raisedAt: string | null;
   nowMs: () => number;
-  /** Where this button is, for Need help's telemetry (LF39); absent, the campaign's own screen. */
-  where?: HelpWhere;
+  /** Where this button is, and whether on a call as its screen shows it: Need help's telemetry (LF39). */
+  where: HelpWhere;
 }) {
   useRepaintTick(help.open);
   const raised = raisedAt ? Date.parse(raisedAt) : NaN;

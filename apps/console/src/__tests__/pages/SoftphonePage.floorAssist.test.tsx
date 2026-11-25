@@ -269,9 +269,13 @@ describe('/dialer/phone: supervisors’ messages', () => {
     ]);
   });
 
-  it('a raise while dialling is not on a call', async () => {
+  it.each([
+    ['dialling', 'dialing', 'Calling'],
+    ['ringing', 'ringing', 'Calling'],
+  ] as const)('a raise while %s is not on a call', async (_what, state, band) => {
     await mount();
-    await frame({ event: 'manual_call', call: step(manualCall(), 2, { state: 'ringing' }) });
+    await frame({ event: 'manual_call', call: step(manualCall(), 1, { state }) });
+    expect(screen.getByTestId('band-title').textContent).toMatch(new RegExp(`^${band}`));
     await press();
     expect(events()).toEqual([['agency_help_raised', { surface: 'softphone', on_call: false }]]);
   });

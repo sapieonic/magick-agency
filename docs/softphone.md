@@ -486,8 +486,11 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
     `help_cleared { expired }`; `agency_help_cancelled` on `help_cleared { cancelled }`, never on the
     cancel's reply (`help: null` whether it won or lost). One end event per request; a cancel that
     lost the race to an answer sends answered. `session_ended` sends nothing.
-  - `agency_help_refused`: `network` only when no response came back (`fetch` threw), `other` for
-    an answer that could not be read; `agency_supervisor_message_shown` once per message id.
+  - `agency_help_refused`, from the request's own failure only (never an error thrown while
+    handling its answer): `network` when no response came back (`fetch` threw, or the sign-in token
+    could not be had before any request went, as offline), `other` for an answer that could not be
+    read or a 2xx with no usable `help`, which the station treats as a failed press;
+    `agency_supervisor_message_shown` once per message id.
 
   The app sends the same names by the same rules.
 - **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0` (also a

@@ -9,7 +9,7 @@ import * as posthog from '../../analytics/posthog';
 import { ApiError } from '../../api/client';
 import { useStationHelp } from '../../pages/agency/station/useStationHelp';
 import { INITIAL_STATION_STATE, stationReducer, type StationAction } from '../../utils/agencyStationReducer';
-import { helpRefusedCode, helpWaitBucket, type HelpWhere } from '../../utils/agency/helpTelemetry';
+import { HelpTelemetry, answeredHelp, failedWithNoAnswer, helpRefusedCode, helpWaitBucket, type HelpWhere } from '../../utils/agency/helpTelemetry';
 import type { AgencyStationReadyFrame } from '../../types/agency';
 
 /**
@@ -33,8 +33,11 @@ const R2 = '2026-11-19T10:30:00.000Z';
  */
 let now = Date.parse(R1) + 2 * 60_000;
 let pressNow = Date.parse(R1) + 5_000;
+let offsetMs = 0;
 const clock = {
-  offsetMs: 0,
+  get offsetMs() {
+    return offsetMs;
+  },
   now: () => pressNow,
   since: (anchor: string | number | null | undefined) => (typeof anchor === 'string' ? Math.max(0, now - Date.parse(anchor)) : null),
 };
@@ -45,6 +48,7 @@ let capture: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   now = Date.parse(R1) + 2 * 60_000;
   pressNow = Date.parse(R1) + 5_000;
+  offsetMs = 0;
   mocks.raiseHelp.mockReset().mockResolvedValue({ session_id: 'sess-1', help: { raised_at: R1, call_id: 'call-1' } });
   mocks.cancelHelp.mockReset().mockResolvedValue({ session_id: 'sess-1', help: null });
   capture = vi.spyOn(posthog, 'captureEvent').mockImplementation(() => {});
@@ -82,7 +86,7 @@ function mount() {
       hook.result.current.dispatch(action);
     });
   };
-  const press = async (where?: HelpWhere) => {
+  const press = async (where: HelpWhere) => {
     await act(async () => {
       hook.result.current.help.press(where);
     });
@@ -124,11 +128,11 @@ describe('agency_help_raised', () => {
     expectNothingPersonal();
   });
 
-  it('defaults to the campaign’s screen, on a call by the agent state', async () => {
+  it('names where the press was made as the caller says, whatever the agent state', async () => {
     const t = mount();
     await t.send({ type: 'agent_state', frame: { event: 'agent_state', state: 'on_call', since: R0 } });
-    await t.press();
-    expect(helpEvents()).toEqual([['agency_help_raised', { surface: 'station', on_call: true }]]);
+    await t.press({ surface: 'station', onCall: false });
+    expect(helpEvents()).toEqual([['agency_help_raised', { surface: 'station', on_call: false }]]);
   });
 
   it('is not sent again for a reconnect’s ready.help, a duplicate answer, or a repeated raise answered with the same request', async () => {
@@ -528,6 +532,8 @@ describe('agency_help_refused', () => {
     ['raise', new TypeError('Failed to fetch'), 'network'],
     // A 2xx whose body was not JSON: an answer came back.
     ['raise', new SyntaxError('Unexpected token < in JSON'), 'other'],
+    // The sign-in token could not be had while offline, before any request went: no answer.
+    ['raise', Object.assign(new Error('Firebase: Error (auth/network-request-failed).'), { name: 'FirebaseError', code: 'auth/network-request-failed' }), 'network'],
     ['raise', new ApiError(500, { message: 'boom' }), 'other'],
     ['raise', new ApiError(400, { code: 'account_scope_required', message: 'raw' }), 'other'],
   ] as const)('%s refused: %s → %s', async (action, error, code) => {
@@ -553,6 +559,72 @@ describe('agency_help_refused', () => {
   });
 });
 
+describe('a refusal is the request’s own failure, never one in handling its answer', () => {
+  it.each([
+    ['no `help` at all', {}],
+    ['a body that is not an object', 'ok'],
+    ['a `help` with no `raised_at`', { session_id: 'sess-1', help: { call_id: 'call-1' } }],
+  ] as const)('a raise answered 2xx with %s is refused `other`, opens nothing and throws nothing', async (_what, body) => {
+    const t = mount();
+    mocks.raiseHelp.mockResolvedValueOnce(body);
+    await t.press(ON_CALL);
+    expect(helpEvents()).toEqual([['agency_help_refused', { action: 'raise', code: 'other' }]]);
+    expect(t.hook.result.current.help.open).toBe(false);
+    expect(t.hook.result.current.help.refusal).toBe('Your request did not go through. Try again.');
+    // Not in flight any more: a frame for an unseen request after it counts for nothing.
+    await t.cleared(R1, 'expired');
+    expect(names()).toEqual(['agency_help_refused']);
+  });
+
+  it('a TypeError thrown while handling a good answer is not counted as a refusal', async () => {
+    const t = mount();
+    const raised = vi.spyOn(HelpTelemetry.prototype, 'raiseAnswered').mockImplementationOnce(() => {
+      throw new TypeError('boom');
+    });
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    await t.press(ON_CALL);
+    await act(async () => {});
+    process.off('unhandledRejection', unhandled);
+    raised.mockRestore();
+    expect(names()).toEqual([]);
+  });
+});
+
+describe('the press on the server-aligned clock', () => {
+  it('with the server 10 minutes behind this clock, the raise’s own request answered before its reply still counts', async () => {
+    // Aligned, the press is 5 s after R1 (server time); read raw off this clock it would be 10
+    // minutes later, and R1 would look too old to be the raise's own request.
+    offsetMs = -10 * 60_000;
+    pressNow = Date.parse(R1) + 5_000 - offsetMs;
+    const t = mount();
+    let resolve!: (v: unknown) => void;
+    mocks.raiseHelp.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    await t.press(ON_CALL);
+    await t.answered(R1, 'listen');
+    await t.cleared(R1, 'answered');
+    await act(async () => {
+      resolve({ session_id: 'sess-1', help: { raised_at: R1, call_id: 'call-1' } });
+    });
+    expect(names()).toEqual(['agency_help_answered', 'agency_help_raised']);
+  });
+
+  it('with the server 10 minutes ahead of this clock, a request raised 9 minutes before the press (server time) does not count', async () => {
+    // Aligned, the press is 9 minutes after R1; read raw off this clock it would be a minute before.
+    offsetMs = 10 * 60_000;
+    pressNow = Date.parse(R1) + 9 * 60_000 - offsetMs;
+    const t = mount();
+    let resolve!: (v: unknown) => void;
+    mocks.raiseHelp.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    await t.press(ON_CALL);
+    await t.cleared(R1, 'expired');
+    await act(async () => {
+      resolve({ session_id: 'sess-1', help: { raised_at: R2, call_id: null } });
+    });
+    expect(names()).toEqual(['agency_help_raised']);
+  });
+});
+
 describe('the rules the events are cut by', () => {
   it('helpRefusedCode: the named codes, then a 404, then no answer, then other', () => {
     expect(helpRefusedCode('floor_assist_disabled', 403, false)).toBe('floor_assist_disabled');
@@ -564,6 +636,24 @@ describe('the rules the events are cut by', () => {
     expect(helpRefusedCode(null, null, false)).toBe('other');
     expect(helpRefusedCode('account_scope_required', 400, false)).toBe('other');
     expect(helpRefusedCode(null, 500, false)).toBe('other');
+  });
+
+  it('failedWithNoAnswer: fetch threw, or the sign-in token could not be had; never an answer or a parse', () => {
+    expect(failedWithNoAnswer(new TypeError('Failed to fetch'))).toBe(true);
+    expect(failedWithNoAnswer(Object.assign(new Error('x'), { code: 'auth/network-request-failed' }))).toBe(true);
+    expect(failedWithNoAnswer(new ApiError(503, { message: 'down' }))).toBe(false);
+    expect(failedWithNoAnswer(new SyntaxError('Unexpected token'))).toBe(false);
+    expect(failedWithNoAnswer(new Error('other'))).toBe(false);
+    expect(failedWithNoAnswer(null)).toBe(false);
+  });
+
+  it('answeredHelp: the request, none, or no usable help', () => {
+    expect(answeredHelp({ help: { raised_at: R1, call_id: 'call-1' } })).toEqual({ raised_at: R1, call_id: 'call-1' });
+    expect(answeredHelp({ help: { raised_at: R1 } })).toEqual({ raised_at: R1, call_id: null });
+    expect(answeredHelp({ help: null })).toBeNull();
+    expect(answeredHelp({})).toBeUndefined();
+    expect(answeredHelp(undefined)).toBeUndefined();
+    expect(answeredHelp({ help: 'x' })).toBeUndefined();
   });
 
   it('helpWaitBucket: agency_floor_intervention’s thresholds', () => {
