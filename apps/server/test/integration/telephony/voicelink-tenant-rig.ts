@@ -50,7 +50,8 @@ export { ACCOUNT, ADMIN, TENANT };
 export const SERVICE_USER = 'mock-vl-user';
 export const SERVICE_PASSWORD = 'mock-vl-password';
 /** The tenant's own VoiceLink login. The password has spaces: it is never trimmed. */
-export const TENANT_USER = 'tenant-vl-user';
+/** Mixed case: the login must send it as typed, while its account ref is lower-cased (CR2). */
+export const TENANT_USER = 'Tenant-VL-User';
 export const TENANT_PASSWORD = ' tenant vl password ';
 /** The tenant's VoiceLink DID (pinned to its credential) and the service account's. */
 export const TENANT_DID = '+919800000777';

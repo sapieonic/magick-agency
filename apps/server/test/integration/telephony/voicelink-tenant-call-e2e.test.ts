@@ -244,6 +244,25 @@ describe('a call on the tenant`s own VoiceLink login, through the real server', 
     expect(await terminalRow(calls.s)).toMatchObject({ status: 'no_answer', telephony_credential_id: null, caller_id: SERVICE_DID });
   }, 60_000);
 
+  it('(f) a second credential naming the same login in another case is refused as the same account; the login keeps the case typed', async () => {
+    const r = rig!;
+    const stored = await getTestPool().query<{ account_ref: string; public_config: { username: string } }>(
+      'SELECT account_ref, public_config FROM telephony_credentials WHERE id = $1', [r.credentialId]);
+    expect(stored.rows[0]).toEqual({ account_ref: TENANT_USER.toLowerCase(), public_config: { username: TENANT_USER } });
+    // A carrier that compares usernames without case would accept the login: only our unique
+    // account ref can catch it.
+    const shouted = TENANT_USER.toUpperCase();
+    r.carrier.addAccount(shouted, TENANT_PASSWORD);
+    const refused = await r.credentials.create({
+      tenantId: TENANT, provider: 'voicelink', label: 'Same login shouted', adminId: ADMIN,
+      fields: { username: shouted, password: TENANT_PASSWORD },
+    });
+    expect(!refused.ok && refused.code).toBe('duplicate_account');
+    expect(r.carrier.requestsTo('login').map((l) => (l.body as { username: string }).username)).toEqual([shouted]);
+    const count = await getTestPool().query<{ n: string }>(`SELECT count(*)::text AS n FROM telephony_credentials WHERE provider = 'voicelink'`);
+    expect(count.rows[0]!.n).toBe('1');
+  }, 30_000);
+
   it('(e) the service`s own VoiceLink username is refused as a tenant credential, before any login', async () => {
     const r = rig!;
     const refused = await r.credentials.create({

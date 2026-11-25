@@ -18,6 +18,7 @@ import {
   TelephonyCredentialService, CredentialUnavailableError, type CredentialRepo,
 } from '../../../src/telephony/credentials/credential-service.js';
 import type { FetchLike } from '../../../src/telephony/credentials/credential-specs.js';
+import { voicelinkSpec } from '../../../src/telephony/voicelink/voicelink.credential-spec.js';
 import type { CredentialSpec } from '../../../src/telephony/credentials/credential-specs.js';
 import type { TelephonyConfig } from '../../../src/telephony/carrier-catalog.js';
 import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../../../src/telephony/webhook-grace.js';
@@ -482,7 +483,7 @@ describe('a VoiceLink credential (CR2, CR3: the tenant\'s own VoiceLink login)',
     ['a blank password', { username: 'tenant-user', password: '   ' }],
     ['an empty username', { username: '  ', password: VL_PASSWORD }],
     ['a username with a control character', { username: 'tenant\u0000user', password: VL_PASSWORD }],
-    ['a username over 255 characters', { username: 'u'.repeat(256), password: VL_PASSWORD }],
+    ['a username over 100 characters (the account_ref column)', { username: 'u'.repeat(101), password: VL_PASSWORD }],
     ['a password over 255 characters', { username: 'tenant-user', password: 'p'.repeat(256) }],
     ['an unknown field (a host of the tenant`s)', { username: 'tenant-user', password: VL_PASSWORD, base_url: 'https://evil.test' }],
   ])('refuses %s without logging in or echoing a value', async (_l, fields) => {
@@ -491,6 +492,30 @@ describe('a VoiceLink credential (CR2, CR3: the tenant\'s own VoiceLink login)',
     expect(JSON.stringify(r)).not.toContain(VL_PASSWORD.trim());
     expect(JSON.stringify(r)).not.toContain('evil.test');
     expect(vl.calls).toHaveLength(0);
+  });
+
+  it('stores the account ref lower-cased and the username as typed, and logs in (create and rotate) with the username as typed', async () => {
+    const s = vlService();
+    const r = await createVl(s, { username: ' Tenant-User ', password: VL_PASSWORD });
+    if (!r.ok) throw new Error(r.code);
+    expect(r.value).toMatchObject({ account_ref: 'tenant-user', public_config: { username: 'Tenant-User' } });
+    expect(JSON.parse(vl.calls[0]!.init.body as string).username).toBe('Tenant-User');
+    expect((await s.resolve(r.value.id, 'dial')).publicConfig).toEqual({ username: 'Tenant-User' });
+    await s.rotate(r.value.id, { fields: { password: 'new password' }, expectedVersion: 1, adminId: ADMIN });
+    expect(JSON.parse(vl.calls[1]!.init.body as string).username).toBe('Tenant-User');
+  });
+
+  it('refuses an account ref wider than the column as a field error, whatever the spec let through', async () => {
+    const spy = vi.spyOn(voicelinkSpec, 'accountRef').mockReturnValue('u'.repeat(101));
+    try {
+      const r = await createVl(vlService());
+      expect(!r.ok && r.code).toBe('invalid_input');
+      expect(!r.ok && r.details).toEqual([{ path: 'fields', message: 'The account name is longer than 100 characters' }]);
+      expect(vl.calls).toHaveLength(0);
+      expect(repo.rows.size).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('refuses the service`s own VoiceLink username (case-insensitively) before logging in, without echoing it', async () => {

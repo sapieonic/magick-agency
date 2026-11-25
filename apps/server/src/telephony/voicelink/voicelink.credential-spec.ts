@@ -7,12 +7,24 @@
 // numbers are added by hand and pinned to the credential (CR6).
 import { z } from 'zod';
 import type { CredentialCheck, CredentialSpec, FetchLike } from '../credentials/credential-specs.js';
+import { TELEPHONY_ACCOUNT_REF_MAX_LENGTH } from '../credentials/account-ref.js';
 
 /** The login check's bound (CR3), on the request and the body read together. */
 export const VOICELINK_CHECK_TIMEOUT_MS = 10_000;
 
 /** Any C0 or C1 control character, or DEL: never part of a username a person types. */
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
+
+/**
+ * The account ref of a VoiceLink login: the username lower-cased. The unique index on
+ * `(provider, account_ref)` compares exactly, while the reserved-username check (CR3) ignores
+ * case, so without this `Acme` and `acme` could both be registered for what is likely one
+ * VoiceLink login. Only the ref is lower-cased: `public_config.username` keeps the case typed,
+ * and it is what every login sends (the check below, the tenant adapter).
+ */
+export function voicelinkAccountRef(username: string): string {
+  return username.toLowerCase();
+}
 
 /** Login answers that refuse the credential itself (CR3): wrong login, locked account, invalid fields. */
 const REFUSED_STATUSES: ReadonlySet<number> = new Set([401, 403, 422]);
@@ -46,11 +58,14 @@ export const voicelinkSpec: CredentialSpec = {
     },
     { key: 'password', label: 'Password', secret: true, help: 'The password for that VoiceLink login. Write-only: it is never shown again.' },
   ],
+  // At most 100 characters, the width of `telephony_credentials.account_ref`, lower-cased too
+  // (a few letters grow when lower-cased), so a long one is a field error and never a 22001.
   publicSchema: z.object({
     username: z.string().trim()
       .min(1, 'Enter the VoiceLink username')
-      .max(255, 'The username is longer than 255 characters')
-      .refine((v) => !CONTROL_CHARS.test(v), 'The username has a character that cannot be typed'),
+      .max(TELEPHONY_ACCOUNT_REF_MAX_LENGTH, `The username is longer than ${TELEPHONY_ACCOUNT_REF_MAX_LENGTH} characters`)
+      .refine((v) => !CONTROL_CHARS.test(v), 'The username has a character that cannot be typed')
+      .refine((v) => voicelinkAccountRef(v).length <= TELEPHONY_ACCOUNT_REF_MAX_LENGTH, `The username is longer than ${TELEPHONY_ACCOUNT_REF_MAX_LENGTH} characters`),
   }).strict(),
   // Not trimmed: a password may begin or end with a space. Blank is refused.
   secretSchema: z.object({
@@ -59,7 +74,7 @@ export const voicelinkSpec: CredentialSpec = {
       .max(255, 'The password is longer than 255 characters')
       .refine((v) => v.trim().length > 0, 'Enter the VoiceLink password'),
   }).strict(),
-  accountRef: (p) => p['username']!,
+  accountRef: (p) => voicelinkAccountRef(p['username']!),
   hintSource: (s) => s['password']!,
 
   /**

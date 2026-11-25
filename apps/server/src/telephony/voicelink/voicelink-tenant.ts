@@ -61,7 +61,9 @@ export function resetVoicelinkTenantLoginsForTests(): void {
  * (`credential.previous`) are not needed: every purpose uses the current one.
  */
 export function createVoicelinkTenantAdapter(credential: ResolvedCredential, config: AppConfig): VoicelinkAdapter {
-  const username = typeof credential.publicConfig['username'] === 'string' ? credential.publicConfig['username'] : credential.accountRef;
+  // The username exactly as typed (`public_config`), never `accountRef`: that is lower-cased for
+  // uniqueness (`voicelinkAccountRef`), and VoiceLink may compare usernames by case.
+  const username = typeof credential.publicConfig['username'] === 'string' ? credential.publicConfig['username'] : '';
   const password = credential.secret.reveal()['password'];
   if (!username || !password) throw new Error(`Telephony credential ${credential.id} has no VoiceLink username or password`);
   const env = config.telephony.voicelink;

@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
  */
 
 import { accountRefReserved, findCredentialSpec, type FetchLike } from '../../../../src/telephony/credentials/credential-specs.js';
+import { TELEPHONY_ACCOUNT_REF_MAX_LENGTH } from '../../../../src/telephony/credentials/account-ref.js';
 import { VOICELINK_CHECK_TIMEOUT_MS, voicelinkSpec } from '../../../../src/telephony/voicelink/voicelink.credential-spec.js';
 import type { TelephonyConfig } from '../../../../src/telephony/carrier-catalog.js';
 
@@ -43,14 +44,23 @@ describe('the VoiceLink credential spec: fields and schemas', () => {
   });
 
   it.each([
-    ['empty', ''], ['blank', '   '], ['over 255', 'u'.repeat(256)], ['a NUL', 'a\u0000b'], ['a newline inside', 'a\nb'],
+    ['empty', ''], ['blank', '   '], ['over 100 (the account_ref column)', 'u'.repeat(101)], ['over 100 once lower-cased', 'İ'.repeat(51)], ['a NUL', 'a\u0000b'], ['a newline inside', 'a\nb'],
     ['DEL', 'a\u007fb'], ['a C1 control', 'a\u0085b'],
   ])('refuses a username that is %s', (_l, username) => {
     expect(voicelinkSpec.publicSchema.safeParse({ username }).success).toBe(false);
   });
 
-  it('takes a username of exactly 255 characters', () => {
-    expect(voicelinkSpec.publicSchema.safeParse({ username: 'u'.repeat(255) }).success).toBe(true);
+  it('takes a username of exactly 100 characters, the width of telephony_credentials.account_ref', () => {
+    expect(TELEPHONY_ACCOUNT_REF_MAX_LENGTH).toBe(100);
+    const parsed = voicelinkSpec.publicSchema.parse({ username: 'U'.repeat(100) });
+    expect(voicelinkSpec.accountRef(parsed)).toHaveLength(100);
+  });
+
+  it('the account ref is the username lower-cased; public_config keeps the case typed', () => {
+    const parsed = voicelinkSpec.publicSchema.parse({ username: ' Acme-Calls ' });
+    expect(parsed).toEqual({ username: 'Acme-Calls' });
+    expect(voicelinkSpec.accountRef(parsed)).toBe('acme-calls');
+    expect(voicelinkSpec.accountRef({ username: 'ACME-CALLS' })).toBe(voicelinkSpec.accountRef(parsed));
   });
 
   it('keeps a password exactly as typed (spaces included), 1 to 255 characters, never blank', () => {
@@ -78,6 +88,12 @@ describe('the VoiceLink credential check (CR3)', () => {
     expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ username: 'tenant-user', password: ' secret with spaces ' });
     expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
     expect(VOICELINK_CHECK_TIMEOUT_MS).toBe(10_000);
+  });
+
+  it('logs in with the username as typed, never the lower-cased account ref', async () => {
+    const { calls, fetchImpl } = recorder(() => answered(200, { data: { access_token: '9|tok' } }));
+    await voicelinkSpec.check({ username: 'Acme-Calls' }, sec, { fetch: fetchImpl, telephony: telephony() });
+    expect(JSON.parse(calls[0]!.init.body as string).username).toBe('Acme-Calls');
   });
 
   it.each<[string, number, unknown, string]>([

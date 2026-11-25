@@ -142,6 +142,13 @@ describe('the tenant factory: env for everything but the login (CR2)', () => {
     expect(carrier.requestsAs(carrier.username)).toEqual([]);
   });
 
+  it('logs in with public_config.username exactly as typed, never the lower-cased account ref (CR2)', async () => {
+    carrier.addAccount('Mixed-Case-User', TENANT_PASSWORD);
+    const adapter = tenantAdapter({}, credential({ id: 'vl-cred-mixed', accountRef: 'mixed-case-user', publicConfig: { username: 'Mixed-Case-User' } }));
+    await adapter.initiateCall(dialRequest());
+    expect(carrier.requestsTo('login').map((l) => (l.body as { username: string }).username)).toEqual(['Mixed-Case-User']);
+  });
+
   it('refuses a credential with no password or username, naming neither value', () => {
     expect(() => createVoicelinkTenantAdapter(credential({}, ''), appConfig())).toThrow(/no VoiceLink username or password/);
     expect(() => createVoicelinkTenantAdapter(credential({ accountRef: '', publicConfig: {} }), appConfig())).toThrow(/vl-cred-1/);

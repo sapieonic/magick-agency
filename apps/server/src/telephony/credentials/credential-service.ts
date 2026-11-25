@@ -20,6 +20,7 @@ import type {
   TelephonyCredentialNumberSync,
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { CredentialSealer, CredentialSealError, type SealContext } from './credential-sealer.js';
+import { TELEPHONY_ACCOUNT_REF_MAX_LENGTH } from './account-ref.js';
 import { accountRefReserved, findCredentialSpec, type CredentialCallContext, type CredentialSpec, type FetchLike } from './credential-specs.js';
 import type { TelephonyConfig } from '../carrier-catalog.js';
 import { Secret, secretHint } from './secret.js';
@@ -220,9 +221,17 @@ export class TelephonyCredentialService {
         ...(secParsed.success ? [] : issues(secParsed.error, 'fields')),
       ]);
     }
+    const accountRef = spec.accountRef(pubParsed.data);
+    // Wider than the column: a field error, never a 22001 from the insert. Each spec caps its
+    // field already; this holds for a spec that forgets.
+    if (accountRef.length > TELEPHONY_ACCOUNT_REF_MAX_LENGTH) {
+      return fail('invalid_input', 'Invalid credential fields', [
+        { path: 'fields', message: `The account name is longer than ${TELEPHONY_ACCOUNT_REF_MAX_LENGTH} characters` },
+      ]);
+    }
     // Before the carrier is asked: a reserved ref is the service's own account, and its login
     // is never tried with a secret a tenant's form supplied.
-    if (accountRefReserved(spec, spec.accountRef(pubParsed.data), this.deps.telephony)) return accountRefIsReserved();
+    if (accountRefReserved(spec, accountRef, this.deps.telephony)) return accountRefIsReserved();
     if (!(await this.deps.tenants.findById(input.tenantId))) return fail('tenant_not_found', 'Tenant not found');
 
     const check = await spec.check(pubParsed.data, secParsed.data, this.carrierContext());
@@ -234,7 +243,7 @@ export class TelephonyCredentialService {
     try {
       const row = await this.deps.repo.create({
         id, tenant_id: input.tenantId, provider: spec.provider, label: input.label,
-        account_ref: spec.accountRef(pubParsed.data), public_config: pubParsed.data,
+        account_ref: accountRef, public_config: pubParsed.data,
         sealed, created_by: input.adminId, verified_at: new Date(),
       });
       return { ok: true, value: row };
