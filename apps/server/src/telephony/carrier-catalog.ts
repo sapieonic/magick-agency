@@ -38,6 +38,12 @@ export interface CarrierDescriptor {
    * `factory.ts`). Read by `core/webhook-url-builder.ts`.
    */
   webhookBaseUrl(telephony: TelephonyConfig): string;
+  /**
+   * Whether this server is configured to dial on a tenant's account of this carrier, beyond the
+   * webhook base (`carrier-dial-readiness.ts`, PL12): e.g. an API host taken from env. Absent:
+   * nothing more is needed (Plivo's API host is a constant). Read from env only.
+   */
+  tenantAccountsReady?(telephony: TelephonyConfig): boolean;
 }
 
 const CATALOG: ReadonlyMap<string, CarrierDescriptor> = new Map(

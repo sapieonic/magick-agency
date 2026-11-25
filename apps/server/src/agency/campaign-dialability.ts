@@ -234,7 +234,7 @@ const CARRIER_CAPACITY_UNALLOCATED: CampaignDialBlocker = {
 export function carrierNotReadyBlocker(
   campaign: Pick<AgencyCampaignRecord, 'telephony_provider' | 'telephony_credential_id'>,
 ): CampaignDialBlocker | null {
-  return campaign.telephony_credential_id && !carrierDialReady(campaign.telephony_provider) ? CARRIER_NOT_READY : null;
+  return campaign.telephony_credential_id && !carrierDialReady(campaign.telephony_provider, 'tenant') ? CARRIER_NOT_READY : null;
 }
 
 /**

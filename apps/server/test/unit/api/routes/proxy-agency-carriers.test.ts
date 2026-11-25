@@ -10,7 +10,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 const mocks = vi.hoisted(() => ({
   providers: vi.fn(),
   credentials: vi.fn(),
-  dialReady: vi.fn((_provider: string) => true),
+  dialReady: vi.fn((_provider: string, _account: 'service' | 'tenant') => true),
 }));
 
 // Whether a carrier can dial from this server (PL12) is its own module's question
@@ -90,7 +90,7 @@ describe('GET /proxy/agency/carriers', () => {
     expect(res.json().carriers).toEqual([
       { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' },
     ]);
-    expect(mocks.dialReady).toHaveBeenCalledWith('plivo');
+    expect(mocks.dialReady).toHaveBeenCalledWith('plivo', 'tenant');
   });
 
   it('a tenant with no credentials sees only the service carrier', async () => {
@@ -113,7 +113,7 @@ describe('GET /proxy/agency/carriers', () => {
       { telephony_provider: 'plivo', telephony_credential_id: 'cred-1', label: 'Main', status: 'active' },
       { telephony_provider: 'voicelink', telephony_credential_id: 'vl-1', label: 'Own line', status: 'active' },
     ]);
-    expect(mocks.dialReady).toHaveBeenCalledWith('voicelink');
+    expect(mocks.dialReady).toHaveBeenCalledWith('voicelink', 'tenant');
   });
 
   it('a service-only carrier offers none of a tenant`s credentials on it (none can be made, but one stored is not offered)', async () => {

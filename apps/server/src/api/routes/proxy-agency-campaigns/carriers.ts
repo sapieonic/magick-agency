@@ -43,7 +43,7 @@ export async function registerCarrierRoutes(app: FastifyInstance): Promise<void>
         .map((p): AgencyCarrier => ({ telephony_provider: p.name, telephony_credential_id: null, label: null, status: 'active' })),
       ...credentials
         .filter((c) => c.status === 'active' && active.has(c.provider) && carrierTakesTenantAccounts(c.provider)
-          && carrierDialReady(c.provider))
+          && carrierDialReady(c.provider, 'tenant'))
         .map((c): AgencyCarrier => ({ telephony_provider: c.provider, telephony_credential_id: c.id, label: c.label, status: 'active' })),
     ];
     const body: AgencyCarriersResponse = { carriers };

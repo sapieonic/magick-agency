@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  carrierDialReady: vi.fn<(provider: string) => boolean>(),
+  carrierDialReady: vi.fn<(provider: string, account: 'service' | 'tenant') => boolean>(),
   findCredentialNumbersForAccount: vi.fn<(...args: unknown[]) => Promise<string[]>>(),
   getProviderLimit: vi.fn<(...args: unknown[]) => Promise<{ mode: string; limit: number | null }>>(),
 }));
