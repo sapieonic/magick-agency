@@ -456,25 +456,38 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   Messages show whatever the console's flag map says, as on the station (the server sends them
   only while the account's flag is on).
 - **Telemetry for Need help and messages (LF39, amendment 2).** In `analytics/events.ts`, sent by
-  `utils/agency/helpTelemetry.ts`, each Need help event at most once per request (`raised_at`):
+  `utils/agency/helpTelemetry.ts`: raised, answered, expired and cancelled at most once per request
+  (`raised_at`), refused once per refused or failed press.
   - `agency_help_raised` (`surface`: `softphone` on this page and the station's soft phone view,
-    `inbound` on an inbound call, `station` on the campaign's screens; `on_call` on a campaign or
-    inbound call or its wrap-up, or on the soft phone while its call is connected or owes its
-    outcome, never while dialling or ringing): the first raise answer naming a `raised_at` not yet
-    reported, on screen or not when it lands. A `ready.help` or a frame never sends it.
+    `inbound` on an inbound call, `station` on the campaign's screens): the first raise answer
+    naming a `raised_at` not yet reported, on screen or not when it lands. A `ready.help` or a frame
+    never sends it.
+  - `on_call` (raised and `agency_supervisor_message_shown`) is what the screen shows: on the
+    campaign's screens, the call bridged (the dialler sends `reserved` then `bridged`, never an
+    `agent_state` of `on_call`) or its outcome owed; on an inbound call, connected or owing its
+    outcome, not while it is offered; on the soft phone, its call connected or owing its outcome,
+    never while dialling or ringing.
   - The end events come from the frames, only for a request in scope when the frame landed: the one
-    on screen; with nothing on screen, any request while a raise is in flight (pressed, its reply
-    not back), except the one the station last saw end (`helpEndedAt`); or one the agent pressed
-    Cancel for (from the press). The reducer decides the first two as the frame lands
-    (`helpRaising`, `helpFrame`). A raise whose reply failed (no answer, 5xx) is no longer in
-    flight, so a later answer for it sends nothing, though the screen still shows it (LF24).
-    `agency_help_answered` on `help_answered` (`how` from the frame), or on `help_cleared
+    on screen; with nothing on screen, a raise in flight (pressed, its reply not back), for any
+    request it names except the one the station last saw end (`helpEndedAt`) and one raised more
+    than 60 s before Need help was pressed on the server-aligned clock (`HELP_IN_FLIGHT_WINDOW_MS`:
+    a request this page never showed, which the server expires before answering the new raise);
+    or one the agent pressed Cancel for (from the press), even after the cancel's reply and a new
+    raise put another request on screen. The reducer hears every `help_answered` and `help_cleared`,
+    about the request on screen or not, without changing the screen, and keeps the last 32 in
+    `helpFrames` with a growing `seq` and the scope decided as each landed (`helpRaisingSince` holds
+    the raise in flight); `useStationHelp` reads every entry past the last `seq` it read, so frames
+    that land in one render (the server sends `help_answered` and `help_cleared` back to back) all
+    count, in order. A raise whose reply failed (no answer, 5xx) is no longer in flight, nor is one
+    whose answer came back, so a later frame for another request sends nothing, though the screen
+    still shows it (LF24).
+  - `agency_help_answered` on `help_answered` (`how` from the frame), or on `help_cleared
     { answered }` with `how: 'unknown'` when no `help_answered` was sent; `agency_help_expired` on
-    `help_cleared { expired }`; `agency_help_cancelled` on `help_cleared { cancelled }`, never on
-    the cancel's reply (`help: null` whether it won or lost). One end event per request; a cancel
-    that lost the race to an answer sends answered. `session_ended` sends nothing.
-  - `agency_help_refused` for a refused or failed raise or cancel; `agency_supervisor_message_shown`
-    once per message id, with `on_call` as above.
+    `help_cleared { expired }`; `agency_help_cancelled` on `help_cleared { cancelled }`, never on the
+    cancel's reply (`help: null` whether it won or lost). One end event per request; a cancel that
+    lost the race to an answer sends answered. `session_ended` sends nothing.
+  - `agency_help_refused`: `network` only when no response came back (`fetch` threw), `other` for
+    an answer that could not be read; `agency_supervisor_message_shown` once per message id.
 
   The app sends the same names by the same rules.
 - **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0` (also a

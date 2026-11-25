@@ -3,6 +3,7 @@ import { cancelHelp, raiseHelp } from '../../../api/agency';
 import { useLatestRef } from '../../../hooks/useLatestRef';
 import type { ServerClock } from '../../../hooks/useServerClock';
 import { errorCode, errorStatus } from '../../../utils/agencyErrors';
+import { ApiError } from '../../../api/client';
 import type { UseAgencyStationResult } from '../../../hooks/useAgencyStation';
 import { STATION_HELP_COPY, helpRaisable } from '../../../utils/agency/stationHelp';
 import { STATION_COPY, helpAnsweredLine, helpRefusedLine } from '../../../utils/agency/stationCopy';
@@ -31,8 +32,8 @@ import { HelpTelemetry, type HelpWhere } from '../../../utils/agency/helpTelemet
  * only on a call or in wrap-up (LF13, said before asking).
  *
  * ── Telemetry (LF39) ─────────────────────────────────────────────────────────
- * Raised, cancelled, answered, expired and refused, each at most once per request
- * (`utils/agency/helpTelemetry`). The press names where it was made (`HelpWhere`: the campaign's
+ * Raised, cancelled, answered and expired, each at most once per request, and refused once per
+ * refused or failed press (`utils/agency/helpTelemetry`). The press names where it was made (`HelpWhere`: the campaign's
  * screen, an inbound call, a soft phone screen, and whether on a call); without one it is the
  * campaign's screen, on a call when the agent state says so. One hook per page, so its memory of
  * what was sent outlives reconnects and moves between the page's screens.
@@ -83,11 +84,11 @@ export function useStationHelp({
   sessionId: string | null;
   tenantId?: string;
   accountId?: string;
-  station: Pick<UseAgencyStationResult, 'agentState' | 'help' | 'helpNotice' | 'helpFrame' | 'setHelp' | 'noteHelpRaise' | 'dismissHelpNotice'>;
+  station: Pick<UseAgencyStationResult, 'agentState' | 'help' | 'helpNotice' | 'helpFrames' | 'setHelp' | 'noteHelpRaise' | 'dismissHelpNotice'>;
   /** The page's server-aligned clock, for how long a request was open (telemetry). */
-  clock?: Pick<ServerClock, 'since'>;
+  clock?: Pick<ServerClock, 'since' | 'now' | 'offsetMs'>;
 }): StationHelp {
-  const { agentState, help, helpNotice, helpFrame, setHelp, noteHelpRaise, dismissHelpNotice } = station;
+  const { agentState, help, helpNotice, helpFrames, setHelp, noteHelpRaise, dismissHelpNotice } = station;
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
   const [refusalKind, setRefusalKind] = useState<StationHelp['refusalKind']>(null);
@@ -110,7 +111,17 @@ export function useStationHelp({
     });
   }
   const telemetry = telemetryRef.current;
-  useEffect(() => telemetry.frameSeen(helpFrame), [telemetry, helpFrame]);
+  // Every frame heard since the last read, in order: frames that land in one render all count.
+  const readSeqRef = useRef(0);
+  useEffect(() => {
+    const last = helpFrames.at(-1)?.seq ?? 0;
+    // A station whose list started again (none today) is read from its start.
+    if (last < readSeqRef.current) readSeqRef.current = 0;
+    for (const heard of helpFrames) {
+      if (heard.seq > readSeqRef.current) telemetry.frameSeen(heard);
+    }
+    readSeqRef.current = last;
+  }, [telemetry, helpFrames]);
 
   // An older server's `help_not_on_call` narrows this session back to calls (BE-9).
   const [narrowedFor, setNarrowedFor] = useState<string | null>(null);
@@ -135,7 +146,11 @@ export function useStationHelp({
     setBusy(true);
     if (cancelling && raisedAt !== null) telemetry.cancelSent(raisedAt);
     // A raise in flight puts the frames that land meanwhile in scope (LF39).
-    if (!cancelling) noteHelpRaise('started');
+    if (!cancelling) {
+      // The press on the server-aligned clock (server time): how old a frame's request may be (LF39).
+      const at = clockRef.current ? clockRef.current.now() + clockRef.current.offsetMs : Date.now();
+      noteHelpRaise({ phase: 'started', at });
+    }
     setRefusal(null);
     setRefusalKind(null);
     const request = cancelling ? cancelHelp(sessionId, tenantId, accountId) : raiseHelp(sessionId, tenantId, accountId);
@@ -154,8 +169,9 @@ export function useStationHelp({
         if (!cancelling && errorCode(err) === 'help_not_on_call') setNarrowedFor(sessionId);
         // The station's own words, keyed on the code (AS15): what the banner shows is what is said.
         const kind = { action: cancelling ? 'cancel' : 'raise', code: errorCode(err), status: errorStatus(err) } as const;
-        telemetry.refused(kind.action, kind.code, kind.status);
-        if (!cancelling) noteHelpRaise('failed');
+        // No answer at all: `fetch` itself threw (a `TypeError`). An answer that could not be read is not that.
+        telemetry.refused(kind.action, kind.code, kind.status, !(err instanceof ApiError) && err instanceof TypeError);
+        if (!cancelling) noteHelpRaise({ phase: 'failed' });
         const text = helpRefusedLine(kind);
         setRefusal(text);
         setRefusalKind(kind);
@@ -165,7 +181,7 @@ export function useStationHelp({
         busyRef.current = false;
         setBusy(false);
       });
-  }, [offered, sessionId, tenantId, accountId, raisable, agentState, helpRef, noticeRef, setHelp, noteHelpRaise, say, telemetry]);
+  }, [offered, sessionId, tenantId, accountId, raisable, agentState, helpRef, noticeRef, setHelp, noteHelpRaise, say, telemetry, clockRef]);
 
   /*
     What the station says. While a request is open: that it is waiting, until a supervisor answers

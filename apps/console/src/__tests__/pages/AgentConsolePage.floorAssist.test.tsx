@@ -144,12 +144,16 @@ const frame = async (f: unknown) => {
   });
 };
 
+/** A campaign call as the dialler sends it: `reserved`, then `bridged` (never an `agent_state` of `on_call`). */
 async function onCall() {
   await mounted();
+  await bridgedCall();
+}
+
+async function bridgedCall() {
   await frame({ event: 'reserved', attempt: ATTEMPT });
   await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T09:59:00.000Z' });
   await frame({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-19T09:59:04.000Z' });
-  await frame({ event: 'agent_state', state: 'on_call', since: '2026-11-19T09:59:04.000Z' });
 }
 
 const helpButton = () => screen.getByTestId('need-help-button');
@@ -514,11 +518,12 @@ describe('telemetry (LF39)', () => {
       .filter((call: unknown[]) => /^agency_(help_|supervisor_message_)/.test(String(call[0])))
       .map((call: unknown[]) => [String(call[0]), call[1]]);
 
-  it('a raise on the campaign’s screen is `station`, on a call or not', async () => {
+  it('a raise on the campaign’s screen is `station`: on a call once bridged, not after the call', async () => {
     await onCall();
     await pressHelp();
     await pressHelp();
     await frame({ event: 'help_cleared', raised_at: R1, reason: 'cancelled' });
+    await frame({ event: 'released', attempt_id: 'att-1', reason: 'customer_hangup', requires_disposition: false });
     await frame({ event: 'agent_state', state: 'available', since: '2026-11-19T10:05:00.000Z' });
     mocks.raiseHelp.mockResolvedValueOnce({ session_id: 'sess-1', help: { raised_at: '2026-11-19T10:20:00.000Z', call_id: null } });
     await pressHelp();
@@ -526,6 +531,51 @@ describe('telemetry (LF39)', () => {
       ['agency_help_raised', { surface: 'station', on_call: true }],
       ['agency_help_cancelled', { wait_bucket: expect.any(String) }],
       ['agency_help_raised', { surface: 'station', on_call: false }],
+    ]);
+  });
+
+  it('on the campaign’s screens “on a call” is what the screen shows: not while ringing, yes bridged, yes owing the outcome', async () => {
+    await mounted();
+    await frame({ event: 'agent_state', state: 'available', since: '2026-11-19T09:58:00.000Z' });
+    await frame(message('m-ready', 'Ready'));
+    await frame({ event: 'reserved', attempt: ATTEMPT });
+    await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T09:59:00.000Z' });
+    await frame(message('m-ringing', 'Ringing'));
+    await frame({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-19T09:59:04.000Z' });
+    await frame(message('m-bridged', 'Bridged'));
+    await frame({ event: 'released', attempt_id: 'att-1', reason: 'customer_hangup', requires_disposition: true });
+    await frame({ event: 'agent_state', state: 'wrapup', since: '2026-11-19T10:02:00.000Z' });
+    await frame(message('m-wrapup', 'What happened?'));
+    expect(events()).toEqual([
+      ['agency_supervisor_message_shown', { on_call: false }],
+      ['agency_supervisor_message_shown', { on_call: false }],
+      ['agency_supervisor_message_shown', { on_call: true }],
+      ['agency_supervisor_message_shown', { on_call: true }],
+    ]);
+  });
+
+  it('a raise while owing the outcome is on a call', async () => {
+    await onCall();
+    await frame({ event: 'released', attempt_id: 'att-1', reason: 'customer_hangup', requires_disposition: true });
+    await frame({ event: 'agent_state', state: 'wrapup', since: '2026-11-19T10:02:00.000Z' });
+    await pressHelp();
+    expect(events()).toEqual([['agency_help_raised', { surface: 'station', on_call: true }]]);
+  });
+
+  it('an inbound call: not on a call while it is offered, on one once connected', async () => {
+    mocks.getInboundCall.mockReturnValue(new Promise(() => {}));
+    await mounted();
+    await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T10:03:00.000Z' });
+    await frame({ event: 'inbound_call', call: inboundCall() });
+    expect(screen.getByTestId('station-inbound')).toBeTruthy();
+    await frame(message('m-offered', 'Offered'));
+    await pressHelp();
+    await frame({ event: 'inbound_call', call: inboundCall({ state: 'connected', connects_at: null, bridged_at: '2026-11-19T10:03:01.500Z' }) });
+    await frame(message('m-connected', 'Connected'));
+    expect(events()).toEqual([
+      ['agency_supervisor_message_shown', { on_call: false }],
+      ['agency_help_raised', { surface: 'inbound', on_call: false }],
+      ['agency_supervisor_message_shown', { on_call: true }],
     ]);
   });
 
@@ -551,7 +601,7 @@ describe('telemetry (LF39)', () => {
   it('a message is counted once per id as it arrives, with whether the agent was on a call', async () => {
     await mounted();
     await frame(message('m-1', 'Ready when you are'));
-    await onCallAgain();
+    await bridgedCall();
     await frame(message('m-2', 'Offer the plan'));
     await frame(message('m-1', 'Ready when you are'));
     fireEvent.click(screen.getByTestId('supervisor-message-ok'));
@@ -561,12 +611,6 @@ describe('telemetry (LF39)', () => {
     ]);
   });
 
-  async function onCallAgain() {
-    await frame({ event: 'reserved', attempt: ATTEMPT });
-    await frame({ event: 'agent_state', state: 'reserved', since: '2026-11-19T09:59:00.000Z' });
-    await frame({ event: 'bridged', attempt_id: 'att-1', bridged_at: '2026-11-19T09:59:04.000Z' });
-    await frame({ event: 'agent_state', state: 'on_call', since: '2026-11-19T09:59:04.000Z' });
-  }
 });
 
 describe('supervisor messages on a phone', () => {

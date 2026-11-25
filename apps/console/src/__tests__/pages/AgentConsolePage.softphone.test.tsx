@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   saveAttemptNotes: vi.fn(),
   hangupAttempt: vi.fn(),
   leaveAgencySession: vi.fn(),
+  raiseHelp: vi.fn(),
+  cancelHelp: vi.fn(),
   switchToSoftphone: vi.fn(),
   returnFromSoftphone: vi.fn(),
   getSoftphoneBootstrap: vi.fn(),
@@ -34,6 +36,8 @@ vi.mock('../../api/agency', () => ({
   saveAttemptNotes: mocks.saveAttemptNotes,
   hangupAttempt: mocks.hangupAttempt,
   leaveAgencySession: mocks.leaveAgencySession,
+  raiseHelp: mocks.raiseHelp,
+  cancelHelp: mocks.cancelHelp,
 }));
 vi.mock('../../api/softphone', () => ({
   switchToSoftphone: mocks.switchToSoftphone,
@@ -54,6 +58,7 @@ vi.mock('../../contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ isEnabled: (flag: string) => mocks.flags.has(flag) }),
 }));
 
+import * as posthog from '../../analytics/posthog';
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
 import { stubStationMicrophone } from '../helpers/stationDevices';
 import { FakeSocket, latestSocket } from '../helpers/fakeSocket';
@@ -153,6 +158,40 @@ describe('that a supervisor may listen (LS2)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
     expect(screen.queryByTestId('listen-first-notice')).toBeNull();
     window.localStorage.clear();
+  });
+});
+
+describe('floor assist telemetry on the station’s soft phone (LF39)', () => {
+  it('a raise there is `softphone`; on a call only once the call is connected or owes its outcome', async () => {
+    const capture = vi.spyOn(posthog, 'captureEvent').mockImplementation(() => {});
+    mocks.flags.add('agency_floor_assist_enabled');
+    mocks.switchToSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-1', state: 'break', break_reason: 'soft_phone' } });
+    mocks.raiseHelp.mockResolvedValue({ session_id: 'sess-1', help: { raised_at: '2026-11-19T10:00:00.000Z', call_id: null } });
+    await mounted();
+    await frame({ event: 'agent_state', state: 'available', since: SINCE });
+    await dialMyself();
+    await frame({ event: 'agent_state', state: 'break', break_reason: 'soft_phone', since: SINCE });
+    expect(screen.getByTestId('station-softphone')).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('need-help-button'));
+    });
+    const message = (id: string) => ({ event: 'supervisor_message', id, text: 'Note', from_name: 'Priya N', sent_at: SINCE });
+    await frame({ event: 'manual_call', call: step(manualCall(), 1, { state: 'dialing' }) });
+    await frame(message('m-dialing'));
+    await frame({ event: 'manual_call', call: step(manualCall(), 2, { state: 'ringing' }) });
+    await frame(message('m-ringing'));
+    await frame({ event: 'manual_call', call: step(manualCall(), 9, { state: 'bridged', bridged_at: '2026-10-30T10:00:09Z' }) });
+    await frame(message('m-bridged'));
+    const events = capture.mock.calls
+      .filter((call: unknown[]) => /^agency_(help_|supervisor_message_)/.test(String(call[0])))
+      .map((call: unknown[]) => [String(call[0]), call[1]]);
+    expect(events).toEqual([
+      ['agency_help_raised', { surface: 'softphone', on_call: false }],
+      ['agency_supervisor_message_shown', { on_call: false }],
+      ['agency_supervisor_message_shown', { on_call: false }],
+      ['agency_supervisor_message_shown', { on_call: true }],
+    ]);
+    capture.mockRestore();
   });
 });
 

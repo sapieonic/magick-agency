@@ -76,10 +76,15 @@ describe('Need help on the station', () => {
 
   it('ignores an answer or a clear about any other request than the one on screen', () => {
     const open = raised(R2);
-    // A late frame about the earlier request R1 must not touch R2.
-    expect(answered(open, R1)).toBe(open);
-    expect(cleared(open, R1, 'expired')).toBe(open);
-    expect(cleared(open, R1, 'answered')).toBe(open);
+    // A late frame about the earlier request R1 must not touch R2 on screen. The station still
+    // hears it (`helpFrames`, out of scope, for Need help's telemetry: a request the agent pressed
+    // Cancel for still ends there, LF39), so only the fields the screen reads are held equal here.
+    const screenOf = (state: typeof open) => ({ help: state.help, helpNotice: state.helpNotice, helpEndedAt: state.helpEndedAt });
+    for (const late of [answered(open, R1), cleared(open, R1, 'expired'), cleared(open, R1, 'answered')]) {
+      expect(screenOf(late)).toEqual(screenOf(open));
+      expect(late.help).toBe(open.help);
+      expect(late.helpFrames.at(-1)).toMatchObject({ frame: { raised_at: R1 }, inScope: false });
+    }
     // With nothing open there is nothing to close, and nothing to say about a lapse.
     const lapsed = cleared(INITIAL_STATION_STATE, R1, 'expired');
     expect(lapsed.help).toBeNull();

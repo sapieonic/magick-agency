@@ -13,8 +13,9 @@ import { secondsInStateBucket } from '../agencyAgentFloor';
 
 /**
  * Need help's telemetry (LF39 and its amendment 2): `agency_help_raised`, `_cancelled`,
- * `_answered`, `_expired` and `_refused`, each at most once per request (`raised_at`) on a page.
- * The mobile app sends the same names and properties, by the same rules.
+ * `_answered` and `_expired`, each at most once per request (`raised_at`) on a page, and
+ * `_refused` once per refused or failed press. The mobile app sends the same names and properties,
+ * by the same rules.
  *
  *  - **raised**: the first raise answer (`POST /help`'s reply with a request) naming a `raised_at`
  *    this page has not reported, whether or not it is on screen when it lands. A `ready.help` or a
@@ -22,10 +23,14 @@ import { secondsInStateBucket } from '../agencyAgentFloor';
  *  - **The end events** come from the frames alone ({@link HelpTelemetry.frameSeen}), and only for a
  *    request in scope when the frame landed: the one on screen; with nothing on screen, any request
  *    while a raise is in flight (pressed, its reply not back: the frame may be about it), but not
- *    the request the station last saw end; or one the agent pressed Cancel for (noted at the press,
- *    {@link HelpTelemetry.cancelSent}). The reducer decides the first two as the frame lands
- *    (`StationState.helpFrame`). A raise whose reply failed is no longer in flight, so an answer
- *    for it afterwards sends nothing, though the screen still shows it (LF24).
+ *    the request the station last saw end nor one raised more than 60 s before the press
+ *    (`HELP_IN_FLIGHT_WINDOW_MS`, server-aligned); or one the agent pressed Cancel for (noted at
+ *    the press, {@link HelpTelemetry.cancelSent}), even after the cancel's reply and a new raise
+ *    put another request on screen. The reducer decides the first two as the frame lands and keeps
+ *    every frame it hears, about the request on screen or not (`StationState.helpFrames`, read in
+ *    order past the last `seq` read, so frames landing in one render all count). A raise whose
+ *    reply failed is no longer in flight, so an answer for it afterwards sends nothing, though the
+ *    screen still shows it (LF24).
  *    - **answered**: `help_answered` (`how` from the frame), or `help_cleared { answered }` when no
  *      `help_answered` was sent for it (`how: 'unknown'`). A cancel that lost the race to an answer
  *      is that answer, on either side of the cancel's reply.
@@ -42,11 +47,11 @@ export interface HelpWhere {
 }
 
 /** The refusal's code as the event carries it: the server's code when it is one of the named ones, else a 404, no answer, or other. */
-export function helpRefusedCode(code: string | null, status: number | null): AgencyHelpRefusedCode {
+export function helpRefusedCode(code: string | null, status: number | null, noResponse: boolean): AgencyHelpRefusedCode {
   if (code === 'floor_assist_disabled' || code === 'help_not_on_call' || code === 'session_ended') return code;
   if (status === 404) return 'not_found';
-  // `apiFetch` throws an `ApiError` with the status for every answer; a fetch that got none throws without one.
-  if (status === null) return 'network';
+  // No response came back at all (`fetch` threw); an answer that could not be read is `other`.
+  if (noResponse) return 'network';
   return 'other';
 }
 
@@ -78,7 +83,7 @@ export class HelpTelemetry {
     this.cancelling.add(raisedAt);
   }
 
-  /** A Need help frame the station heard (`StationState.helpFrame`), each time one lands. */
+  /** A Need help frame the station heard (an entry of `StationState.helpFrames`), once each, in order. */
   frameSeen(
     heard: { frame: { event: 'help_answered'; raised_at: string; how: 'listen' | 'message' } | { event: 'help_cleared'; raised_at: string; reason: string }; inScope: boolean } | null,
   ): void {
@@ -107,8 +112,8 @@ export class HelpTelemetry {
   }
 
   /** A raise or a cancel was refused, or failed. */
-  refused(action: 'raise' | 'cancel', code: string | null, status: number | null): void {
-    trackAgencyHelpRefused({ action, code: helpRefusedCode(code, status) });
+  refused(action: 'raise' | 'cancel', code: string | null, status: number | null, noResponse: boolean): void {
+    trackAgencyHelpRefused({ action, code: helpRefusedCode(code, status, noResponse) });
   }
 
   /** Sends `send` once for the request: its first end wins. */

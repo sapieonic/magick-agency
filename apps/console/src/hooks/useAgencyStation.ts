@@ -218,7 +218,7 @@ export function useAgencyStation(
     dialActivity,
     help,
     helpNotice,
-    helpFrame,
+    helpFrames,
     supervisorMessages,
   } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
@@ -1681,7 +1681,8 @@ export function useAgencyStation(
   // dismissals). `dispatch` is stable, so these are too.
   const setHelp = useCallback((next: AgencySessionHelp | null) => dispatch({ type: 'help_set', help: next }), []);
   const noteHelpRaise = useCallback(
-    (phase: 'started' | 'failed') => dispatch({ type: phase === 'started' ? 'help_raise_started' : 'help_raise_failed' }),
+    (raise: { phase: 'started'; at: number } | { phase: 'failed' }) =>
+      dispatch(raise.phase === 'started' ? { type: 'help_raise_started', at: raise.at } : { type: 'help_raise_failed' }),
     [],
   );
   const dismissHelpNotice = useCallback(() => dispatch({ type: 'help_notice_dismissed' }), []);
@@ -1766,7 +1767,7 @@ export function useAgencyStation(
     dialActivity,
     help,
     helpNotice,
-    helpFrame,
+    helpFrames,
     supervisorMessages,
     setHelp,
     noteHelpRaise,

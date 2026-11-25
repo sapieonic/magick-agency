@@ -25,15 +25,26 @@ import type { AgencyStationReadyFrame } from '../../types/agency';
 const R1 = '2026-11-19T10:00:00.000Z';
 const R0 = '2026-11-19T09:30:00.000Z';
 const R2 = '2026-11-19T10:30:00.000Z';
-/** The server-aligned clock the hook is handed: now is two minutes after R1 unless a test moves it. */
+/**
+ * The server-aligned clock the hook is handed (offset 0). Two instants, so a test can say both: when
+ * Need help is pressed (`pressNow`, 5 s after R1, as a raise's own request is raised as it is
+ * pressed: read at the press for the 60 s rule) and when the frames land (`now`, two minutes after
+ * R1 unless a test moves it: read for how long a request was open).
+ */
 let now = Date.parse(R1) + 2 * 60_000;
-const clock = { since: (anchor: string | number | null | undefined) => (typeof anchor === 'string' ? Math.max(0, now - Date.parse(anchor)) : null) };
+let pressNow = Date.parse(R1) + 5_000;
+const clock = {
+  offsetMs: 0,
+  now: () => pressNow,
+  since: (anchor: string | number | null | undefined) => (typeof anchor === 'string' ? Math.max(0, now - Date.parse(anchor)) : null),
+};
 
 const ON_CALL: HelpWhere = { surface: 'softphone', onCall: true };
 
 let capture: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   now = Date.parse(R1) + 2 * 60_000;
+  pressNow = Date.parse(R1) + 5_000;
   mocks.raiseHelp.mockReset().mockResolvedValue({ session_id: 'sess-1', help: { raised_at: R1, call_id: 'call-1' } });
   mocks.cancelHelp.mockReset().mockResolvedValue({ session_id: 'sess-1', help: null });
   capture = vi.spyOn(posthog, 'captureEvent').mockImplementation(() => {});
@@ -47,14 +58,18 @@ function useHarness() {
   const [state, dispatch] = useReducer(stationReducer, INITIAL_STATION_STATE);
   const setHelp = useCallback((help: typeof state.help) => dispatch({ type: 'help_set', help }), []);
   const dismissHelpNotice = useCallback(() => dispatch({ type: 'help_notice_dismissed' }), []);
-  const noteHelpRaise = useCallback((phase: 'started' | 'failed') => dispatch({ type: phase === 'started' ? 'help_raise_started' : 'help_raise_failed' }), []);
+  const noteHelpRaise = useCallback(
+    (raise: { phase: 'started'; at: number } | { phase: 'failed' }) =>
+      dispatch(raise.phase === 'started' ? { type: 'help_raise_started', at: raise.at } : { type: 'help_raise_failed' }),
+    [],
+  );
   const help = useStationHelp({
     offered: true,
     everywhere: true,
     sessionId: 'sess-1',
     tenantId: 't-1',
     accountId: 'a-1',
-    station: { agentState: state.agentState, help: state.help, helpNotice: state.helpNotice, helpFrame: state.helpFrame, setHelp, noteHelpRaise, dismissHelpNotice },
+    station: { agentState: state.agentState, help: state.help, helpNotice: state.helpNotice, helpFrames: state.helpFrames, setHelp, noteHelpRaise, dismissHelpNotice },
     clock,
   });
   return { help, state, dispatch };
@@ -356,6 +371,35 @@ describe('agency_help_cancelled', () => {
   });
 });
 
+describe('frames that land in one render', () => {
+  const both = (t: ReturnType<typeof mount>, first: StationAction, second: StationAction) =>
+    act(async () => {
+      t.hook.result.current.dispatch(first);
+      t.hook.result.current.dispatch(second);
+    });
+  const answeredFrame = (raisedAt: string, how: 'listen' | 'message'): StationAction =>
+    ({ type: 'help_answered', frame: { event: 'help_answered', raised_at: raisedAt, by_name: 'Priya N', how } });
+  const clearedFrame = (raisedAt: string, reason: 'answered' | 'expired' | 'cancelled'): StationAction =>
+    ({ type: 'help_cleared', frame: { event: 'help_cleared', raised_at: raisedAt, reason } });
+
+  it.each(['listen', 'message'] as const)('help_answered (%s) then its clear, back to back: answered with that how', async (how) => {
+    const t = mount();
+    await t.press(ON_CALL);
+    await both(t, answeredFrame(R1, how), clearedFrame(R1, 'answered'));
+    expect(helpEvents()).toEqual([
+      ['agency_help_raised', { surface: 'softphone', on_call: true }],
+      ['agency_help_answered', { how, wait_bucket: '1_5m' }],
+    ]);
+  });
+
+  it('an in-scope frame followed by a frame about another request: the first still counts, the second does not', async () => {
+    const t = mount();
+    await t.press(ON_CALL);
+    await both(t, clearedFrame(R1, 'expired'), answeredFrame(R0, 'listen'));
+    expect(names()).toEqual(['agency_help_raised', 'agency_help_expired']);
+  });
+});
+
 describe('which request a frame counts for (amendment 2)', () => {
   /** Press Need help with its reply held; the returned function lands the reply. */
   async function raiseHeld(t: ReturnType<typeof mount>, raisedAt: string) {
@@ -368,6 +412,58 @@ describe('which request a frame counts for (amendment 2)', () => {
       });
     };
   }
+
+  it('the 60 s rule: a lapse of a request raised long before the press, landing before a slow raise’s reply, sends nothing', async () => {
+    const t = mount();
+    // Request A was never shown in this page load; a ready says none is open.
+    await t.ready();
+    const A = new Date(pressNow - 14 * 60_000).toISOString();
+    const reply = await raiseHeld(t, R1);
+    // The server expires A (past its 15 minutes) before it answers the new raise.
+    await t.cleared(A, 'expired');
+    await reply();
+    expect(names()).toEqual(['agency_help_raised']);
+  });
+
+  it('the 60 s rule’s edge: a request raised 60 s before the press counts, 61 s does not', async () => {
+    const t = mount();
+    const atEdge = new Date(pressNow - 60_000).toISOString();
+    const past = new Date(pressNow - 61_000).toISOString();
+    const reply = await raiseHeld(t, R1);
+    await t.cleared(past, 'expired');
+    await t.cleared(atEdge, 'expired');
+    await reply();
+    expect(names()).toEqual(['agency_help_expired', 'agency_help_raised']);
+  });
+
+  it('a raise’s answer ends the raise in flight: a late frame about an older request then sends nothing', async () => {
+    const t = mount();
+    await t.press(ON_CALL);
+    await t.cleared(R1, 'expired');
+    // Raised 10 s before R1: within 60 s of the press, so only the ended raise keeps it out.
+    const older = new Date(Date.parse(R1) - 10_000).toISOString();
+    await t.answered(older, 'listen');
+    await t.cleared(older, 'expired');
+    expect(names()).toEqual(['agency_help_raised', 'agency_help_expired']);
+  });
+
+  it('a cancelled request still ends after the cancel’s reply and a new raise put another on screen', async () => {
+    const t = mount();
+    await t.press(ON_CALL);
+    await t.press(ON_CALL);
+    expect(mocks.cancelHelp).toHaveBeenCalledTimes(1);
+    mocks.raiseHelp.mockResolvedValueOnce({ session_id: 'sess-1', help: { raised_at: R2, call_id: null } });
+    await t.press({ surface: 'station', onCall: false });
+    expect(t.hook.result.current.state.help?.raised_at).toBe(R2);
+    await t.cleared(R1, 'cancelled');
+    expect(t.hook.result.current.state.help?.raised_at).toBe(R2);
+    expect(t.hook.result.current.help.open).toBe(true);
+    expect(helpEvents()).toEqual([
+      ['agency_help_raised', { surface: 'softphone', on_call: true }],
+      ['agency_help_raised', { surface: 'station', on_call: false }],
+      ['agency_help_cancelled', { wait_bucket: '1_5m' }],
+    ]);
+  });
 
   it('a lapse landing before a slow raise’s reply counts for the request it names: expired, then raised', async () => {
     const t = mount();
@@ -430,6 +526,8 @@ describe('agency_help_refused', () => {
     ['raise', new ApiError(409, { code: 'session_ended', message: 'raw' }), 'session_ended'],
     ['raise', new ApiError(404, { error: 'Not Found', message: 'Session not found' }), 'not_found'],
     ['raise', new TypeError('Failed to fetch'), 'network'],
+    // A 2xx whose body was not JSON: an answer came back.
+    ['raise', new SyntaxError('Unexpected token < in JSON'), 'other'],
     ['raise', new ApiError(500, { message: 'boom' }), 'other'],
     ['raise', new ApiError(400, { code: 'account_scope_required', message: 'raw' }), 'other'],
   ] as const)('%s refused: %s → %s', async (action, error, code) => {
@@ -457,13 +555,15 @@ describe('agency_help_refused', () => {
 
 describe('the rules the events are cut by', () => {
   it('helpRefusedCode: the named codes, then a 404, then no answer, then other', () => {
-    expect(helpRefusedCode('floor_assist_disabled', 403)).toBe('floor_assist_disabled');
-    expect(helpRefusedCode('help_not_on_call', 409)).toBe('help_not_on_call');
-    expect(helpRefusedCode('session_ended', 409)).toBe('session_ended');
-    expect(helpRefusedCode(null, 404)).toBe('not_found');
-    expect(helpRefusedCode(null, null)).toBe('network');
-    expect(helpRefusedCode('account_scope_required', 400)).toBe('other');
-    expect(helpRefusedCode(null, 500)).toBe('other');
+    expect(helpRefusedCode('floor_assist_disabled', 403, false)).toBe('floor_assist_disabled');
+    expect(helpRefusedCode('help_not_on_call', 409, false)).toBe('help_not_on_call');
+    expect(helpRefusedCode('session_ended', 409, false)).toBe('session_ended');
+    expect(helpRefusedCode(null, 404, false)).toBe('not_found');
+    expect(helpRefusedCode(null, null, true)).toBe('network');
+    // An answer came back but could not be read: not the network.
+    expect(helpRefusedCode(null, null, false)).toBe('other');
+    expect(helpRefusedCode('account_scope_required', 400, false)).toBe('other');
+    expect(helpRefusedCode(null, 500, false)).toBe('other');
   });
 
   it('helpWaitBucket: agency_floor_intervention’s thresholds', () => {

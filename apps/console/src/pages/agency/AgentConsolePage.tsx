@@ -74,7 +74,6 @@ import { hasWrapup, wrapupView } from '../../utils/agencyWrapup';
 import { findDisposition } from '../../utils/agencyDispositionForm';
 import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
-import { helpRaisable } from '../../utils/agency/stationHelp';
 import { brand } from '../../brand';
 import {
   STATION_BLOCK_COPY,
@@ -411,12 +410,14 @@ function StationScreen({
 
   // ── Where Need help is pressed, and whether on a call: an inbound call and the soft phone have
   //    their own screens (below), else the campaign's (LF39's telemetry). Messages are counted with it.
+  //    On the campaign's screens "on a call" is what the screen shows: the call bridged (the dialler
+  //    sends `bridged`, never an `agent_state` of `on_call`) or its outcome owed. Ringing is not.
   const spPhaseNow = softphone.sp.phase;
   const helpWhere: HelpWhere = inbound.call
-    ? { surface: 'inbound', onCall: inbound.phase !== 'offered' }
+    ? { surface: 'inbound', onCall: inbound.phase === 'connected' || inbound.phase === 'outcome' }
     : softphone.active && !finishOpen
       ? { surface: 'softphone', onCall: spPhaseNow === 'on_call' || spPhaseNow === 'outcome' }
-      : { surface: 'station', onCall: helpRaisable(agentState) || outcomeOwed };
+      : { surface: 'station', onCall: (live !== null && live.bridgedAt !== null) || outcomeOwed };
   useSupervisorMessageShown(station.supervisorMessages, helpWhere.onCall);
   const { stop: stopReading } = readAloud;
   useEffect(() => {

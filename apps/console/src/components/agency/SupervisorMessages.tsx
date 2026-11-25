@@ -59,8 +59,9 @@ export function useFloorAssistAnnouncer(
  * `agency_supervisor_message_shown` (LF39): once per message id, as it is first queued for the agent,
  * with whether they were on a call or owed an outcome then (`onCall`). Never the text, the sender or
  * the id. A dismissal, the next message coming up and a reconnect send nothing; the reducer already
- * keeps each id once, and this remembers every id it counted, dismissed ones included. Held by the
- * page above its views, as {@link useFloorAssistAnnouncer} is.
+ * keeps each id once, and this remembers every id it counted, dismissed ones included. Held above
+ * the screens that come and go (on the station `StationScreen`, which stays mounted through its
+ * inbound and soft phone views; on `/dialer/phone` the page), so a move between them counts nothing again.
  */
 export function useSupervisorMessageShown(messages: readonly AgencyStationSupervisorMessageFrame[], onCall: boolean): void {
   const counted = useRef(new Set<string>());

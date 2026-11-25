@@ -741,7 +741,8 @@ export function trackAgencySoftphoneSwitch(props: EventCatalog['agency_softphone
 // sender's or answerer's name (`from_name`, `by_name`), no session, call or message id, and no
 // code a person typed. A supervisor's send names the kind of message, never the agent it went to.
 //
-// Each Need help event fires at most once per request (its `raised_at`) on a page, through
+// `agency_help_refused` fires once per refused or failed press. Each other Need help event fires
+// at most once per request (its `raised_at`) on a page, through
 // reconnects, duplicate frames, a raise's answer landing after the frames that ended it and a
 // cancel that lost the race to an answer (`utils/agency/helpTelemetry`, LF24's races). Raised is
 // the raise's answer, never a `ready.help`; the end events are the frames about a request in scope

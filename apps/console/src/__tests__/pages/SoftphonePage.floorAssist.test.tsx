@@ -247,6 +247,35 @@ describe('/dialer/phone: supervisors’ messages', () => {
     ]);
   });
 
+  it('on a call only once the call is connected or owes its outcome: never while dialling or ringing', async () => {
+    await mount();
+    await frame({ event: 'manual_call', call: step(manualCall(), 1, { state: 'dialing' }) });
+    await frame(message('m-dialing', 'Dialling'));
+    await frame({ event: 'manual_call', call: step(manualCall(), 2, { state: 'ringing' }) });
+    await frame(message('m-ringing', 'Ringing'));
+    await frame({ event: 'manual_call', call: step(manualCall(), 9, { state: 'bridged', bridged_at: '2026-10-30T10:00:09Z' }) });
+    await frame(message('m-connected', 'Connected'));
+    await frame({
+      event: 'manual_call',
+      call: step(manualCall(), 60, { state: 'ended', bridged_at: '2026-10-30T10:00:09Z', ended_at: '2026-10-30T10:01:00Z', requires_disposition: true }),
+    });
+    expect(screen.getByTestId('band-title').textContent).toBe('What happened?');
+    await frame(message('m-outcome', 'Outcome'));
+    expect(events()).toEqual([
+      ['agency_supervisor_message_shown', { on_call: false }],
+      ['agency_supervisor_message_shown', { on_call: false }],
+      ['agency_supervisor_message_shown', { on_call: true }],
+      ['agency_supervisor_message_shown', { on_call: true }],
+    ]);
+  });
+
+  it('a raise while dialling is not on a call', async () => {
+    await mount();
+    await frame({ event: 'manual_call', call: step(manualCall(), 2, { state: 'ringing' }) });
+    await press();
+    expect(events()).toEqual([['agency_help_raised', { surface: 'softphone', on_call: false }]]);
+  });
+
   it('while ready to dial, a message is shown off a call, and floor assist’s flag does not hide it', async () => {
     mocks.flags.delete(FLOOR_ASSIST);
     await mount();
