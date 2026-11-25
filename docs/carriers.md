@@ -1,7 +1,7 @@
 # Carriers: service accounts, tenant accounts, and adding a carrier
 
 How a carrier (VoiceLink, Plivo, a future one) plugs into the voice engine, which carrier
-**accounts** a call may be placed on, and the rulings CR1–CR14 that let VoiceLink run on a
+**accounts** a call may be placed on, and the rulings CR1–CR15 that let VoiceLink run on a
 tenant's own account (bring-your-own-carrier, BYOC) as Plivo does. Amends B18 (VoiceLink was the
 service's account only). Rulings are **default, pending Manas** until he ratifies them.
 
@@ -99,6 +99,7 @@ in `SERVICE_ADAPTERS`. `webhook-url-builder.ts` reads `descriptor.webhookBaseUrl
 | CR12 | Recordings of a call pinned to a credential always go through the recording proxy, which first resolves the credential for `recording`, so revoking it ends playback and analysis on every carrier (B21). On a carrier whose recordings are public (`recordingsArePublic`: VoiceLink), the proxy then sends the viewer to the stored URL if its host is on `VOICELINK_RECORDING_ALLOWED_HOSTS`, and never fetches it, since our egress cannot reach VoiceLink's recording host while the viewer's browser can. That means a `302` (`no-store`) for an `<audio src>`, or `{ redirect_url }` for a request that asks for JSON (the console's own fetches). Any other host gets the proxy's usual refusal. Analysis fetches the file server-side, as for the service account. Service-account VoiceLink recordings still go to the client directly | default, pending Manas |
 | CR13 | Concurrency (B22): a VoiceLink call on a tenant account takes the same global, account and per-account provider slots as one on the service account. A tenant carrier credential may also carry its own cap, `max_concurrent_calls` (`0077_credential_concurrency_cap.sql`; null is none): at most that many live calls on that carrier account at once, across all the tenant's accounts (a credential serves every account of its tenant, B20). It is in addition to the other scopes, never instead of them, and taken in the same admission (one Redis transaction in provider mode; after global and account on a legacy account). Calls on the service's account take no credential scope. A full cap refuses `carrier_account_concurrency_limit` (429), which every caller treats as `provider_concurrency_limit`: the contact goes back uncharged, nothing pauses, PL11 does not count it, the soft phone says all lines are busy, an inbound call hears busy. With Redis unavailable a capped call is refused. Lowering the cap ends no live call. Set by super-admins (create, or `PATCH …/:id/concurrency`), audited with the previous cap | **Decided** (Manas, 2026-11-25: a cap per credential) |
 | CR14 | Adding a carrier means: a folder `telephony/<carrier>/` with its capabilities (catalogue entry), carrier module, adapter(s), credential spec when it takes tenant accounts, callback routes, recording access per mode, and one line in each registry list. Any piece missing for a declared mode fails `test/unit/telephony/carrier-conformance.test.ts`. No code outside `telephony/` and the carrier's own routes branches on its name | default, pending Manas |
+| CR15 | Pacing plans no more new dials than the tightest scope its dials will be admitted against: the account cap; the account's share of the campaign's carrier in `provider_breakdown` mode (no share is 0, PL14); and a carrier account's own cap less the live calls on it, shared by every campaign of the tenant on that credential (CR13). Live counts are the guards' own Redis counters. Each grant is charged to one ledger per process at the moment the split makes it, so accounts sharing a credential never spend its room twice in one process. Within an account the split respects each campaign's scopes, and a full campaign's share goes to the others (MC1). An unreadable limit or counter plans 0 for that campaign that tick, the same direction admission fails. With two leading processes (MC3), a brief over-grant is refused at admission as back-pressure | **Decided** (Manas, 2026-11-25: "fix it") |
 
 ## 4. Conformance (the guard that makes a new carrier fall into place)
 
@@ -147,7 +148,7 @@ Answered:
   number, so a write overlapping a move to a tenant's account (CR6) can leave a now-pinned number on a
   service-account campaign. Accepted as is; running the clean-up script again catches it.
 - **CR13, pacing:** pacing must not dial past a credential's cap (or an account's carrier share).
-  Being fixed.
+  Fixed (CR15); the pinned `it.fails` for the carrier share is now a passing test.
 
 Still open:
 

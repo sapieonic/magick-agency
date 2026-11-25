@@ -313,7 +313,10 @@ The super-admin credential routes use the same seam for a credential's own cap (
 CR13): `PATCH /super-admin/telephony-credentials/:id/concurrency` writes the cap, then calls
 `invalidateCredentialLimit` (the guard's 5 s cap cache, and media workers through the IPC event
 `concurrency.invalidate_credential`); the credential list's `concurrent_calls_in_use` is read with
-`getCredentialCounts`.
+`getCredentialCounts`. Pacing reads the live counts the dial will be admitted against through the same seam
+(`getProviderCount` for an account's carrier share, `getCredentialCounts` for a carrier account's cap;
+CR15), and `withPacingInvalidation` also publishes `credential_limit_changed` on the pacing bus when a
+cap changes.
 
 ### 3.4 Super-admin credential routes → carrier credential service
 
