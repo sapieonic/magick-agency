@@ -1285,9 +1285,10 @@ API user disabled for dialling). The credential is not marked invalid, since the
 verdict on it. Each campaign on it is paused `carrier_refusing_calls` after 10 such refusals in a
 row; the audit row says `cause: carrier_api_refused`.
 
-**Check:** the `VoiceLink add_lead refused after a fresh login` warnings for the provider, and which
-credentials and campaigns they name; whether the same account's login works in VoiceLink's own
-console.
+**Check:** the `WebRTC outbound initiation failed` ERROR lines whose `err.name` is
+`CarrierApiRefusedError` (their `callId` leads to the call row, its credential and campaign), and the
+`agency_campaign.auto_paused` audit rows with `cause: carrier_api_refused`; whether the same
+account's login and dialling work in VoiceLink's own console.
 
 **Do:** the fix is at the carrier: the tenant (through support) restores the account's API access.
 Then supervisors resume the paused campaigns. A super-admin's Verify on the credential only checks
