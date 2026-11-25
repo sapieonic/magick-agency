@@ -17,16 +17,17 @@ test('an answered call reaches the agent, carries audio both ways and is filed',
     agents: [world.agents[0]],
   });
 
-  await signIn(page, world.agents[0]);
   const station = new Station(page);
+  await signIn(page, world.agents[0]);
   await station.startWork();
   await station.expectOnCallWith('Anil Kumar');
   await expect(page.getByText('Pune').first()).toBeVisible();
 
   // The carrier placed one call to the contact, answered it, and hears the agent's microphone;
-  // the agent's side receives the customer's audio (the bridge relays it to the station).
+  // the agent's browser receives the customer's audio on the station socket.
   await expect.poll(async () => (await sim.calls(phone))[0]?.state).toBe('answered');
   await expect.poll(async () => (await sim.calls(phone))[0]?.nonSilentFramesFromServer ?? 0, { timeout: 20_000 }).toBeGreaterThan(10);
+  await expect.poll(() => station.audioFramesReceived, { timeout: 20_000 }).toBeGreaterThan(25);
   // The add_lead named the campaign's caller ID and the contact's number.
   const lead = (await sim.carrierRequests()).find((r) => r.route === 'add_lead' && r.body?.['customer_number'] === phone);
   expect(lead?.body?.['did_number']).toBe(world.callerIds[0]!.replace('+', ''));

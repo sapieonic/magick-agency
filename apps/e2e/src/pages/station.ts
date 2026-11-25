@@ -5,7 +5,18 @@
 import { expect, type Page } from '@playwright/test';
 
 export class Station {
-  constructor(readonly page: Page) {}
+  /** Binary frames (call audio) the station socket delivered to this browser. */
+  audioFramesReceived = 0;
+
+  /** Create it before the station opens (before signing in) so its socket is watched. */
+  constructor(readonly page: Page) {
+    page.on('websocket', (ws) => {
+      if (!ws.url().includes('/proxy/agency/station/')) return;
+      ws.on('framereceived', (f) => {
+        if (typeof f.payload !== 'string') this.audioFramesReceived += 1;
+      });
+    });
+  }
 
   async dismissNotices(): Promise<void> {
     const gotIt = this.page.getByRole('button', { name: 'Got it' });
