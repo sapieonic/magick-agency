@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
+import type { RecordingRedirectBody } from '@magick-agency/contracts/api/agency/webrtc-call';
 import { trackRecordingFetchFailure, type RecordingFetchFailureReason } from '@magick-agency/observability/metrics/voice';
 import { recordingRedirectsToCarrier } from './recording-url-resolver.js';
 import {
@@ -225,6 +226,25 @@ export function recordingUpstreamStatusReason(status: number): RecordingFetchFai
  */
 export const RECORDING_PROXY_HEADERS_TIMEOUT_MS = 20_000;
 
+/**
+ * Whether the request's `Accept` names `application/json` itself (not through a wildcard), with
+ * a non-zero quality. A script that fetches a recording to make a blob asks this way: it cannot
+ * follow a cross-origin redirect to a carrier that sends no CORS headers, so it is told the URL
+ * instead (CR12). An `<audio src>` asks for audio or for anything (a wildcard), and keeps the 302.
+ */
+export function acceptsJsonRedirect(accept: string | string[] | undefined): boolean {
+  const value = Array.isArray(accept) ? accept.join(',') : accept;
+  if (!value) return false;
+  return value.split(',').some((part) => {
+    const [type, ...params] = part.split(';').map((p) => p.trim().toLowerCase());
+    if (type !== 'application/json') return false;
+    const q = params.find((p) => p.startsWith('q='));
+    if (q === undefined) return true;
+    const quality = Number(q.slice(2));
+    return Number.isFinite(quality) && quality > 0;
+  });
+}
+
 /** The call-row fields the proxy reads. */
 export type ProxiedRecordingCall = RecordingCallRef & {
   id: string;
@@ -242,6 +262,9 @@ export type ProxiedRecordingCall = RecordingCallRef & {
  * (`resolveAccess`). A call pinned to a credential on a carrier whose recordings are public
  * (`recordingRedirectsToCarrier`, CR12) is answered 302 to its URL once the access is resolved
  * and the URL's host passes the allow-list, with `Cache-Control: no-store`; nothing is fetched.
+ * When the request's `Accept` names `application/json` ({@link acceptsJsonRedirect}), the same
+ * answer is `200 { redirect_url }` (`RecordingRedirectBody`), still `no-store`: the console's
+ * blob fetchers cannot follow a cross-origin redirect to a host that sends no CORS headers.
  * A refused access (a revoked credential, a BYOC call with none, an
  * unknown provider) is a 404 `recording_unavailable`, before any fetch. A URL, or a
  * redirect hop, whose host is off the allow-list is a 502, rather than fetching
@@ -324,8 +347,13 @@ export async function proxyCallRecording(
       });
     }
     // `no-store`: the redirect is this request's answer, after this check, never a cached one
-    // that would outlive the credential's revocation.
-    return reply.code(302).header('Location', callRecord.recording_url).header('Cache-Control', 'no-store').send();
+    // that would outlive the credential's revocation. `Vary: Accept`: the two answers differ by it.
+    if (acceptsJsonRedirect(request.headers['accept'])) {
+      const body: RecordingRedirectBody = { redirect_url: callRecord.recording_url };
+      return reply.code(200).header('Cache-Control', 'no-store').header('Vary', 'Accept').send(body);
+    }
+    return reply.code(302).header('Location', callRecord.recording_url).header('Cache-Control', 'no-store')
+      .header('Vary', 'Accept').send();
   }
 
   const headers: Record<string, string> = { ...access.headers };

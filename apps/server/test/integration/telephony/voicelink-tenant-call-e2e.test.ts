@@ -157,6 +157,18 @@ describe('a call on the tenant`s own VoiceLink login, through the real server', 
     expect(played.headers['cache-control']).toBe('no-store');
     expect(played.body).not.toContain(TENANT_PASSWORD.trim());
     expect(upstream).not.toHaveBeenCalled();
+    // A script that cannot follow that redirect (the console's blob fetchers) asks for JSON and
+    // is told the URL instead: 200 { redirect_url }, no-store, still nothing fetched.
+    const JSON_ACCEPT = 'application/json, audio/*;q=0.9, */*;q=0.1';
+    const asJson = await r.app.inject({
+      method: 'GET', url: signRecordingUrl({ callId: call.callId, tenantId: TENANT, accountId: ACCOUNT }).path,
+      headers: { accept: JSON_ACCEPT },
+    });
+    expect(asJson.statusCode).toBe(200);
+    expect(asJson.json()).toEqual({ redirect_url: REC_URL });
+    expect(asJson.headers['cache-control']).toBe('no-store');
+    expect(asJson.headers['location']).toBeUndefined();
+    expect(upstream).not.toHaveBeenCalled();
 
     // Revoking the credential ends playback (B21): no redirect, nothing fetched.
     await getTestPool().query(`UPDATE agency_campaigns SET status = 'stopped' WHERE id = $1`, [campaignId]);
@@ -166,6 +178,12 @@ describe('a call on the tenant`s own VoiceLink login, through the real server', 
     expect(gone.statusCode).toBe(404);
     expect(gone.json()).toMatchObject({ code: 'recording_unavailable' });
     expect(gone.headers['location']).toBeUndefined();
+    const goneJson = await r.app.inject({
+      method: 'GET', url: signRecordingUrl({ callId: call.callId, tenantId: TENANT, accountId: ACCOUNT }).path,
+      headers: { accept: JSON_ACCEPT },
+    });
+    expect(goneJson.statusCode).toBe(404);
+    expect(goneJson.body).not.toContain(REC_URL);
     expect(upstream).not.toHaveBeenCalled();
     expect(r.bridge.getActiveCount()).toBe(0);
   }, 60_000);

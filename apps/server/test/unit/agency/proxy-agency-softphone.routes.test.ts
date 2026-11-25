@@ -492,6 +492,32 @@ describe('the recording route', () => {
   });
 });
 
+describe('the recording route — a recording the internal handler points at (docs/carriers.md CR12)', () => {
+  const CARRIER_URL = 'https://recordings.voicelink.test/a/b.mp3';
+
+  it('forwards the 302 with its Location and no-store, never dressed as audio', async () => {
+    const app = await appAs('account_admin');
+    mocks.callCore.mockResolvedValue(plain(Buffer.alloc(0), 302, { location: CARRIER_URL, 'cache-control': 'no-store' }));
+    const res = await app.inject({ method: 'GET', url: `${P}/softphone/calls/${CALL}/recording` });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers['location']).toBe(CARRIER_URL);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.headers['content-type']).toBeUndefined();
+  });
+
+  it('sends the viewer’s Accept (and Range) on, and forwards { redirect_url } as JSON, no-store', async () => {
+    const app = await appAs('account_admin');
+    mocks.callCore.mockResolvedValue(plain(Buffer.from(JSON.stringify({ redirect_url: CARRIER_URL })), 200,
+      { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }));
+    const accept = 'application/json, audio/*;q=0.9, */*;q=0.1';
+    const res = await app.inject({ method: 'GET', url: `${P}/softphone/calls/${CALL}/recording`, headers: { accept, range: 'bytes=0-' } });
+    expect(lastCore()).toMatchObject({ rawResponse: true, headers: { accept, range: 'bytes=0-' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.json()).toEqual({ redirect_url: CARRIER_URL });
+  });
+});
+
 describe('the audit rows', () => {
   const base = { tenant_id: TENANT, account_id: ACCOUNT, actor_type: 'human' };
 

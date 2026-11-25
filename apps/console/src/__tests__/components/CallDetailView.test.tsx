@@ -297,6 +297,17 @@ describe('a recording the provider serves directly', () => {
     expect(dl.getAttribute('rel')).toBe('noopener noreferrer');
   });
 
+  it('plays the carrier URL a fetcher hands back (CR12) and opens its download in a new tab', async () => {
+    const carrierUrl = 'https://recordings.voicelink.example/a/b.mp3';
+    renderView({ fetchRecording: vi.fn().mockResolvedValue({ status: 'ready', url: carrierUrl, mimeType: null }) });
+
+    expect((await screen.findByTestId('waveform')).getAttribute('data-src')).toBe(carrierUrl);
+    const dl = await screen.findByRole('link', { name: /Download/i });
+    expect(dl.getAttribute('href')).toBe(carrierUrl);
+    expect(dl.getAttribute('target')).toBe('_blank');
+    expect(dl.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
   it('keeps a proxied download in-tab, where `download` is honoured', async () => {
     renderView();
 

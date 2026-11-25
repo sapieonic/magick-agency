@@ -272,11 +272,48 @@ export function decodeRawErrorBody(body: unknown): unknown {
  */
 function sendRecording(reply: FastifyReply, result: { status: number; headers: Headers; body: unknown }): FastifyReply {
   if (result.status >= 400) return reply.code(result.status).send(decodeRawErrorBody(result.body));
+  const pointer = sendRecordingPointer(reply, result);
+  if (pointer) return pointer;
   reply.header('Content-Type', result.headers.get('content-type') || 'audio/mpeg');
   const contentLength = result.headers.get('content-length');
   if (contentLength) reply.header('Content-Length', contentLength);
   reply.header('Cache-Control', 'private, max-age=3600');
   return reply.send(result.body);
+}
+
+/**
+ * The viewer's `Accept`, for a recording read's `callCore` headers: the internal proxy answers a
+ * script that names `application/json` with the carrier URL as JSON rather than a redirect
+ * (`acceptsJsonRedirect`, docs/carriers.md CR12). Empty when the viewer sent none.
+ */
+export function recordingAcceptHeader(request: FastifyRequest): Record<string, string> {
+  const accept = request.headers['accept'];
+  return typeof accept === 'string' && accept.length > 0 ? { accept } : {};
+}
+
+/**
+ * Pass on a recording the internal handler answered with a POINTER rather than bytes: a call on
+ * a tenant's own account on a carrier whose recordings are public (CR12) is a 3xx to the
+ * carrier's URL, or `200 { redirect_url }` when the viewer asked for JSON. Forwarded as such,
+ * `Cache-Control: no-store` (never the audio's hour: the answer must not outlive a revoked
+ * credential) and `Vary: Accept`; never dressed as audio, which would play an empty file. Null
+ * for any other answer (bytes). A redirect with no `Location` is an upstream error, not audio.
+ */
+export function sendRecordingPointer(
+  reply: FastifyReply,
+  result: { status: number; headers: Headers; body: unknown },
+): FastifyReply | null {
+  if (result.status >= 300 && result.status < 400) {
+    const location = result.headers.get('location');
+    if (!location) return reply.code(502).send({ error: 'Upstream Error', message: 'The recording could not be returned.' });
+    return reply.code(result.status).header('Location', location).header('Cache-Control', 'no-store')
+      .header('Vary', 'Accept').send();
+  }
+  if (result.headers.get('content-type')?.includes('application/json')) {
+    return reply.code(result.status).header('Cache-Control', 'no-store').header('Vary', 'Accept')
+      .send(decodeRawErrorBody(result.body));
+  }
+  return null;
 }
 
 /** The envelope the internal handler's attempt read answers with. */
@@ -600,6 +637,7 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         tenantId,
         accountId: request.accountId,
         rawResponse: true,
+        headers: recordingAcceptHeader(request),
       });
 
       return sendRecording(reply, result);
@@ -691,6 +729,7 @@ export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void
         tenantId: request.tenantId!,
         accountId: request.accountId,
         rawResponse: true,
+        headers: recordingAcceptHeader(request),
       });
       return sendRecording(reply, result);
     },
