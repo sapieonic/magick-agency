@@ -4,6 +4,11 @@ import type { TelephonyCredential } from '@magick-agency/contracts/api/platform/
 
 const mocks = vi.hoisted(() => ({
   listTelephonyCredentials: vi.fn(),
+  // The page reads the list with the live calls each capped credential counts (CR13): the
+  // rows come from `listTelephonyCredentials` above, so every test sets those as before.
+  listTelephonyCredentialsWithUsage: vi.fn(),
+  inUse: {} as Record<string, number>,
+  setTelephonyCredentialConcurrency: vi.fn(),
   listTelephonyCredentialProviders: vi.fn(),
   getTelephonyCredential: vi.fn(),
   createTelephonyCredential: vi.fn(),
@@ -33,7 +38,7 @@ function makeCred(over: Partial<TelephonyCredential> = {}): TelephonyCredential 
   return {
     id: 'cred-1', tenant_id: TENANT.id, provider: 'plivo', label: 'Acme main', status: 'active',
     account_ref: 'MAXXXXXXXXXXXXXXXXXX', public_config: { auth_id: 'MAXXXXXXXXXXXXXXXXXX' },
-    secret_version: 2, secret_hint: 'ab12', verified_at: '2026-10-10T00:00:00Z', last_error: null,
+    secret_version: 2, secret_hint: 'ab12', verified_at: '2026-10-10T00:00:00Z', last_error: null, max_concurrent_calls: null,
     created_by: null, updated_by: null, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-10T00:00:00Z',
     revoked_at: null, shredded_at: null, ...over,
   };
@@ -59,6 +64,11 @@ const VL_CRED = { id: 'cred-vl', provider: 'voicelink', label: 'Acme direct', ac
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.inUse = {};
+  mocks.listTelephonyCredentialsWithUsage.mockImplementation(async (filters: unknown) => ({
+    credentials: await mocks.listTelephonyCredentials(filters),
+    concurrent_calls_in_use: mocks.inUse,
+  }));
   mocks.listTenants.mockResolvedValue({ tenants: [TENANT] });
   mocks.listTelephonyCredentials.mockResolvedValue([makeCred()]);
   mocks.listTelephonyCredentialProviders.mockResolvedValue({
@@ -105,6 +115,7 @@ describe('SATelephonyCredentialsPage', () => {
     fireEvent.change(token, { target: { value: 'secret-token-value-123' } });
     fireEvent.click(screen.getByRole('button', { name: /verify and save/i }));
 
+    // No cap typed: none is sent (CR13).
     await waitFor(() => expect(mocks.createTelephonyCredential).toHaveBeenCalledWith({
       tenant_id: TENANT.id, provider: 'plivo', label: 'Acme main',
       fields: { auth_id: 'MAXXXXXXXXXXXXXXXXXX', auth_token: 'secret-token-value-123' },
@@ -397,5 +408,93 @@ describe('what the page says while an action runs, and before one', () => {
     fireEvent.click(await screen.findByRole('button', { name: /add credential/i }));
     expect(screen.getByRole('option', { name: 'Pravah (Plivo)' })).toBeTruthy();
     expect((screen.getByLabelText('Label') as HTMLInputElement).placeholder).toBe('e.g. Acme main account');
+  });
+});
+
+describe('a carrier account\'s own concurrency cap (CR13)', () => {
+  it('shows "No limit of its own", or the calls in use against the cap', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([
+      makeCred(), makeCred({ id: 'cred-2', label: 'Acme capped', max_concurrent_calls: 5 }),
+      makeCred({ id: 'cred-3', label: 'Acme unread', max_concurrent_calls: 4 }),
+    ]);
+    mocks.inUse = { 'cred-2': 2 };
+    render(<SATelephonyCredentialsPage />);
+    expect(await screen.findByText('Acme capped')).toBeTruthy();
+    expect(screen.getByTestId('concurrency-cred-1').textContent).toBe('No limit of its own');
+    expect(screen.getByTestId('concurrency-cred-2').textContent).toBe('2 of 5 in use');
+    // The count could not be read: the cap alone.
+    expect(screen.getByTestId('concurrency-cred-3').textContent).toBe('Up to 4');
+  });
+
+  async function fillCreate(limit: string) {
+    mocks.listTelephonyCredentials.mockResolvedValue([]);
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /add credential/i }));
+    const picker = screen.getByLabelText('Tenant');
+    fireEvent.focus(picker);
+    fireEvent.change(picker, { target: { value: 'Acme' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Acme/ }));
+    fireEvent.change(screen.getByLabelText('Label'), { target: { value: 'Acme main' } });
+    fireEvent.change(screen.getByLabelText('Auth ID'), { target: { value: 'MAXXXXXXXXXXXXXXXXXX' } });
+    fireEvent.change(screen.getByLabelText('Auth Token'), { target: { value: 'secret-token-value-123' } });
+    fireEvent.change(screen.getByLabelText('Concurrent calls (optional)'), { target: { value: limit } });
+    fireEvent.click(screen.getByRole('button', { name: /verify and save/i }));
+  }
+
+  it('create sends the cap typed, and explains what it caps', async () => {
+    await fillCreate('3');
+    await waitFor(() => expect(mocks.createTelephonyCredential).toHaveBeenCalledWith(expect.objectContaining({ max_concurrent_calls: 3 })));
+  });
+
+  it('create refuses a cap that is not a whole number from 1 to 1,000, without sending', async () => {
+    await fillCreate('0');
+    expect(await screen.findByText(/Enter a number from 1 to 1,000/)).toBeTruthy();
+    expect(screen.getAllByText(/across all of the tenant’s accounts/).length).toBeGreaterThan(0);
+    expect(mocks.createTelephonyCredential).not.toHaveBeenCalled();
+  });
+
+  it('"Set limit" sets the cap and updates the row', async () => {
+    mocks.setTelephonyCredentialConcurrency.mockResolvedValue(makeCred({ max_concurrent_calls: 4 }));
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    fireEvent.click(await screen.findByRole('button', { name: /set limit/i }));
+    expect(screen.getByText(/Lowering it does not end calls in progress/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Concurrent calls'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(mocks.setTelephonyCredentialConcurrency).toHaveBeenCalledWith('cred-1', { max_concurrent_calls: 4 }));
+    await waitFor(() => expect(screen.getByTestId('concurrency-cred-1').textContent).toBe('Up to 4'));
+  });
+
+  it('"Set limit" with the field emptied clears the cap', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([makeCred({ max_concurrent_calls: 2 })]);
+    mocks.setTelephonyCredentialConcurrency.mockResolvedValue(makeCred());
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    fireEvent.click(await screen.findByRole('button', { name: /set limit/i }));
+    const field = screen.getByLabelText('Concurrent calls') as HTMLInputElement;
+    expect(field.value).toBe('2');
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(mocks.setTelephonyCredentialConcurrency).toHaveBeenCalledWith('cred-1', { max_concurrent_calls: null }));
+  });
+
+  it('"Set limit" shows the server\'s refusal and keeps the dialog open', async () => {
+    mocks.setTelephonyCredentialConcurrency.mockRejectedValue(new Error('A revoked credential cannot be changed'));
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    fireEvent.click(await screen.findByRole('button', { name: /set limit/i }));
+    fireEvent.change(screen.getByLabelText('Concurrent calls'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(await screen.findByText('A revoked credential cannot be changed')).toBeTruthy();
+  });
+
+  it('the expanded row shows the live calls the detail read', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([makeCred({ max_concurrent_calls: 3 })]);
+    mocks.getTelephonyCredential.mockResolvedValue({
+      credential: makeCred({ max_concurrent_calls: 3 }), usage: { campaigns: 1, in_flight_calls: 1, concurrent_calls_in_use: 1 },
+    });
+    render(<SATelephonyCredentialsPage />);
+    fireEvent.click(await screen.findByText('Acme main'));
+    expect(await screen.findByText('1 of 3 in use')).toBeTruthy();
   });
 });

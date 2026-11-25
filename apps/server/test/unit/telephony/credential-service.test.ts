@@ -66,6 +66,7 @@ class FakeRepo implements CredentialRepo {
       id: i.id, tenant_id: i.tenant_id, provider: i.provider, label: i.label, status: 'active',
       account_ref: i.account_ref, public_config: i.public_config, secret_version: 1,
       secret_hint: i.sealed.secret_hint, verified_at: i.verified_at, last_error: null,
+      max_concurrent_calls: i.max_concurrent_calls ?? null,
       created_by: i.created_by, updated_by: i.created_by, created_at: now, updated_at: now,
       revoked_at: null, shredded_at: null,
     };
@@ -90,6 +91,10 @@ class FakeRepo implements CredentialRepo {
   async list() { return [...this.rows.values()]; }
   async updateLabel(id: string, label: string) {
     const r = this.rows.get(id); if (!r || r.status === 'revoked') return null; r.label = label; return { ...r };
+  }
+  async setConcurrencyCap(id: string, cap: number | null, updatedBy: string) {
+    const r = this.rows.get(id); if (!r || r.status === 'revoked') return null;
+    r.max_concurrent_calls = cap; r.updated_by = updatedBy; return { ...r };
   }
   async rotateSecret(id: string, expected: number, s: SealedSecretInput, o: { verifiedAt: Date | null }) {
     const r = this.rows.get(id);
@@ -250,6 +255,32 @@ describe('create', () => {
     const r = await noStore.create({ tenantId: TENANT, provider: 'plivo', label: 'x', fields: { auth_id: AUTH_ID, auth_token: CANARY }, adminId: ADMIN });
     expect(!r.ok && r.code).toBe('credential_store_unavailable');
     await expect(noStore.resolve(row.id, 'call_control')).rejects.toBeInstanceOf(CredentialUnavailableError);
+  });
+});
+
+describe('a carrier account\'s own concurrency cap (CR13)', () => {
+  it('create stores the cap when given, and none when not', async () => {
+    const none = await createOk();
+    expect(none.max_concurrent_calls).toBeNull();
+    const r = await svc.create({
+      tenantId: TENANT, provider: 'plivo', label: 'Capped', fields: { auth_id: 'MAZDQ1ZJIYMDZKMTIZBL', auth_token: CANARY2 },
+      adminId: ADMIN, maxConcurrentCalls: 2,
+    });
+    expect(r.ok && r.value.max_concurrent_calls).toBe(2);
+  });
+
+  it('setConcurrencyCap sets and clears it, and refuses a revoked or unknown credential', async () => {
+    const row = await createOk();
+    const set = await svc.setConcurrencyCap(row.id, 3, ADMIN);
+    expect(set.ok && set.value.max_concurrent_calls).toBe(3);
+    const cleared = await svc.setConcurrencyCap(row.id, null, ADMIN);
+    expect(cleared.ok && cleared.value.max_concurrent_calls).toBeNull();
+
+    const unknown = await svc.setConcurrencyCap(crypto.randomUUID(), 3, ADMIN);
+    expect(!unknown.ok && unknown.code).toBe('not_found');
+    repo.rows.get(row.id)!.status = 'revoked';
+    const revoked = await svc.setConcurrencyCap(row.id, 3, ADMIN);
+    expect(!revoked.ok && revoked.code).toBe('invalid_transition');
   });
 });
 

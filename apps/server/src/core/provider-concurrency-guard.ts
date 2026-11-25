@@ -2,9 +2,11 @@ import type Redis from 'ioredis';
 import { providerConcurrencyRepository } from '@magick-agency/db/repositories/provider-concurrency.repository';
 import { logger, Traced } from '@magick-agency/observability';
 import {
+  trackCredentialConcurrencyAdmission,
   trackProviderConcurrencyAdmission,
   trackProviderConcurrencyReconciliation,
 } from '@magick-agency/observability/metrics/voice';
+import { credentialScopeKeys, type CredentialScope } from './credential-concurrency-guard.js';
 
 const ACQUIRE_SCRIPT = `
 if redis.call('EXISTS', KEYS[2]) == 1 then
@@ -42,58 +44,58 @@ end
 return 1
 `;
 
-// Provider-mode telephony admission owns all three scopes in one Redis
-// transaction. KEYS are global counter/lock, account counter/lock, provider
-// counter/lock/generation for each scope. Return codes are documented below.
+// Provider-mode telephony admission owns every scope in one Redis transaction.
+// KEYS are triples (counter, lock, generation): global, account, provider and,
+// when the call is on a carrier account with a cap of its own (CR13), the
+// credential scope as a fourth triple. ARGV: global limit, account limit,
+// provider limit, lease TTL, then the credential cap when that triple is present.
+// Returns: 1 acquired, 2 global full, 3 account full, 4 provider full, 5 every
+// lease already owned, 6 a partial lease was found and released (the caller
+// repairs the counters and tries again), 7 the carrier account's cap is full.
 const COMPOSITE_ACQUIRE_SCRIPT = `
-local g_lock = redis.call('EXISTS', KEYS[2])
-local a_lock = redis.call('EXISTS', KEYS[5])
-local p_lock = redis.call('EXISTS', KEYS[8])
-if g_lock == 1 and a_lock == 1 and p_lock == 1 then return 5 end
-if g_lock + a_lock + p_lock > 0 then
+local scopes = #KEYS / 3
+local limits = { ARGV[1], ARGV[2], ARGV[3], ARGV[5] }
+local full = { 2, 3, 4, 7 }
+local held = 0
+for i = 1, scopes do
+  held = held + redis.call('EXISTS', KEYS[3 * i - 1])
+end
+if held == scopes then return 5 end
+if held > 0 then
   -- A previous non-atomic teardown or partial TTL extension may have left only
   -- some scopes owned. Remove surviving leases in this transaction; the caller
   -- then generation-fences a counter rebuild before attempting fresh admission.
-  local function release_partial(lock_key, counter_key, generation_key)
-    if redis.call('DEL', lock_key) == 1 then
-      local val = redis.call('DECR', counter_key)
-      if val < 0 then redis.call('SET', counter_key, '0') end
-      redis.call('INCR', generation_key)
+  for i = 1, scopes do
+    if redis.call('DEL', KEYS[3 * i - 1]) == 1 then
+      local val = redis.call('DECR', KEYS[3 * i - 2])
+      if val < 0 then redis.call('SET', KEYS[3 * i - 2], '0') end
+      redis.call('INCR', KEYS[3 * i])
     end
   end
-  release_partial(KEYS[2], KEYS[1], KEYS[3])
-  release_partial(KEYS[5], KEYS[4], KEYS[6])
-  release_partial(KEYS[8], KEYS[7], KEYS[9])
   return 6
 end
-if tonumber(redis.call('GET', KEYS[1]) or '0') >= tonumber(ARGV[1]) then return 2 end
-if tonumber(redis.call('GET', KEYS[4]) or '0') >= tonumber(ARGV[2]) then return 3 end
-if tonumber(redis.call('GET', KEYS[7]) or '0') >= tonumber(ARGV[3]) then return 4 end
-redis.call('INCR', KEYS[1])
-redis.call('INCR', KEYS[4])
-redis.call('INCR', KEYS[7])
-redis.call('SET', KEYS[2], '1', 'EX', tonumber(ARGV[4]))
-redis.call('SET', KEYS[5], '1', 'EX', tonumber(ARGV[4]))
-redis.call('SET', KEYS[8], '1', 'EX', tonumber(ARGV[4]))
-redis.call('INCR', KEYS[3])
-redis.call('INCR', KEYS[6])
-redis.call('INCR', KEYS[9])
+for i = 1, scopes do
+  if tonumber(redis.call('GET', KEYS[3 * i - 2]) or '0') >= tonumber(limits[i]) then return full[i] end
+end
+for i = 1, scopes do
+  redis.call('INCR', KEYS[3 * i - 2])
+  redis.call('SET', KEYS[3 * i - 1], '1', 'EX', tonumber(ARGV[4]))
+  redis.call('INCR', KEYS[3 * i])
+end
 return 1
 `;
 
+// KEYS are the same triples as the acquire's: three, or four with the credential scope.
 const COMPOSITE_RELEASE_SCRIPT = `
 local released = 0
-local function release_scope(lock_key, counter_key, generation_key)
-  if redis.call('DEL', lock_key) == 1 then
-    local val = redis.call('DECR', counter_key)
-    if val < 0 then redis.call('SET', counter_key, '0') end
-    redis.call('INCR', generation_key)
+for i = 1, #KEYS / 3 do
+  if redis.call('DEL', KEYS[3 * i - 1]) == 1 then
+    local val = redis.call('DECR', KEYS[3 * i - 2])
+    if val < 0 then redis.call('SET', KEYS[3 * i - 2], '0') end
+    redis.call('INCR', KEYS[3 * i])
     released = released + 1
   end
 end
-release_scope(KEYS[2], KEYS[1], KEYS[3])
-release_scope(KEYS[5], KEYS[4], KEYS[6])
-release_scope(KEYS[8], KEYS[7], KEYS[9])
 return released
 `;
 
@@ -143,7 +145,11 @@ export type TelephonyAdmissionResult =
   | { result: 'legacy_mode'; providerScoped: false }
   | { result: 'global_full' | 'account_full'; providerScoped: boolean }
   | { result: 'provider_full'; providerScoped: true }
-  | { result: 'provider_unallocated' | 'redis_unavailable' | 'allocation_unavailable'; providerScoped: true };
+  /** The carrier account's own cap is full (CR13); either allocation mode. */
+  | { result: 'credential_full'; providerScoped: boolean }
+  | { result: 'provider_unallocated'; providerScoped: true }
+  /** Fail-closed refusals. `providerScoped: false` only from a legacy account's credential scope (CR13). */
+  | { result: 'redis_unavailable' | 'allocation_unavailable'; providerScoped: boolean };
 
 interface CachedLimit {
   mode: 'legacy_total' | 'provider_breakdown';
@@ -181,14 +187,17 @@ export class ProviderConcurrencyGuard {
   }
 
   /** Atomically acquire global + account + provider leases for provider-mode
-   * telephony. Legacy accounts are explicitly handed back to the caller so the
-   * established degraded/local behavior remains unchanged during migration. */
+   * telephony, plus the carrier account's own scope when `credential` is given (CR13:
+   * every scope or none). Legacy accounts are explicitly handed back to the caller so the
+   * established degraded/local behavior remains unchanged during migration; the caller
+   * then takes `credential` itself. */
   async tryAcquireAll(
     callId: string,
     tenantId: string,
     accountId: string,
     provider: string,
     ttlSecondsOverride?: number,
+    credential?: CredentialScope | null,
   ): Promise<TelephonyAdmissionResult> {
     const canonicalProvider = provider.toLowerCase();
     let allocation: CachedLimit;
@@ -223,15 +232,17 @@ export class ProviderConcurrencyGuard {
         providerCounter,
         this.providerLockKey(tenantId, accountId, canonicalProvider, callId),
         this.providerGenerationKey(tenantId, accountId, canonicalProvider),
+        ...(credential ? [credential.counter, credential.lock, credential.generation] : []),
       ];
       const acquire = () => this.redis!.eval(
         COMPOSITE_ACQUIRE_SCRIPT,
-        9,
+        keys.length,
         ...keys,
         this.globalLimit,
         allocation.total,
         providerLimit,
         ttl,
+        ...(credential ? [credential.cap] : []),
       );
       let result = await acquire();
       let repairedPartial = false;
@@ -244,6 +255,7 @@ export class ProviderConcurrencyGuard {
             providerCounter,
             this.providerGenerationKey(tenantId, accountId, canonicalProvider),
           ),
+          ...(credential ? [this.reconcileCounterFromLocks(credential.counter, credential.generation)] : []),
         ]);
         result = await acquire();
         repairedPartial = result !== 6;
@@ -251,6 +263,7 @@ export class ProviderConcurrencyGuard {
       if (result === 1 || result === 5) {
         const metricResult = repairedPartial ? 'partial_repaired' : result === 1 ? 'acquired' : 'already_owned';
         trackProviderConcurrencyAdmission(canonicalProvider, metricResult);
+        if (credential) trackCredentialConcurrencyAdmission(canonicalProvider, metricResult);
         return { result: 'acquired', providerScoped: true, newlyAcquired: result !== 5 };
       }
       if (result === 2) {
@@ -264,6 +277,11 @@ export class ProviderConcurrencyGuard {
       if (result === 4) {
         trackProviderConcurrencyAdmission(canonicalProvider, 'provider_full');
         return { result: 'provider_full', providerScoped: true };
+      }
+      if (result === 7 && credential) {
+        trackProviderConcurrencyAdmission(canonicalProvider, 'credential_full');
+        trackCredentialConcurrencyAdmission(canonicalProvider, 'credential_full');
+        return { result: 'credential_full', providerScoped: true };
       }
       logger.error({ callId, tenantId, accountId, provider: canonicalProvider, redisResult: result }, 'Unexpected composite concurrency admission result');
       return { result: 'redis_unavailable', providerScoped: true };
@@ -364,27 +382,31 @@ export class ProviderConcurrencyGuard {
    * decide whether a fallback release is required and to label the teardown
    * metric. See {@link CompositeReleaseResult}. */
   async releaseAll(
-    callId: string, tenantId: string, accountId: string, provider: string,
+    callId: string, tenantId: string, accountId: string, provider: string, credentialId?: string | null,
   ): Promise<CompositeReleaseResult> {
     if (!this.redis || !provider) return { status: 'unavailable' };
     const canonicalProvider = provider.toLowerCase();
     const globalCounter = `${this.keyPrefix}active_calls`;
     const accountCounter = `${this.keyPrefix}active_calls:account:${tenantId}:${accountId}`;
     const providerCounter = this.providerCounterKey(tenantId, accountId, canonicalProvider);
+    // A call on a carrier account (CR13) also hands back its credential lease when it holds
+    // one; a credential with no cap had none, and the absent lease is ignored like a legacy
+    // account's provider lease.
+    const credential = credentialId ? credentialScopeKeys(this.keyPrefix, credentialId, callId) : null;
+    const keys = [
+      globalCounter,
+      `${globalCounter}:lock:${callId}`,
+      `${globalCounter}:generation`,
+      accountCounter,
+      `${accountCounter}:lock:${callId}`,
+      `${accountCounter}:generation`,
+      providerCounter,
+      this.providerLockKey(tenantId, accountId, canonicalProvider, callId),
+      this.providerGenerationKey(tenantId, accountId, canonicalProvider),
+      ...(credential ? [credential.counter, credential.lock, credential.generation] : []),
+    ];
     try {
-      const released = await this.redis.eval(
-        COMPOSITE_RELEASE_SCRIPT,
-        9,
-        globalCounter,
-        `${globalCounter}:lock:${callId}`,
-        `${globalCounter}:generation`,
-        accountCounter,
-        `${accountCounter}:lock:${callId}`,
-        `${accountCounter}:generation`,
-        providerCounter,
-        this.providerLockKey(tenantId, accountId, canonicalProvider, callId),
-        this.providerGenerationKey(tenantId, accountId, canonicalProvider),
-      );
+      const released = await this.redis.eval(COMPOSITE_RELEASE_SCRIPT, keys.length, ...keys);
       // Tested with `typeof`, NOT `Number(...)`: `Number(null)`, `Number('')`,
       // `Number(false)` and `Number([])` are all a finite 0, so coercing would
       // turn "we cannot read the reply" into "Redis authoritatively held no
@@ -436,6 +458,7 @@ export class ProviderConcurrencyGuard {
     accountId: string,
     provider: string,
     ttlSeconds: number,
+    credential?: { credentialId: string; capped: boolean } | null,
   ): Promise<boolean> {
     if (!this.redis || !provider || ttlSeconds <= 0) return false;
     const canonicalProvider = provider.toLowerCase();
@@ -443,17 +466,26 @@ export class ProviderConcurrencyGuard {
     const accountCounter = `${this.keyPrefix}active_calls:account:${tenantId}:${accountId}`;
     try {
       const allocation = await this.resolveLimit(tenantId, accountId, canonicalProvider);
-      const expectedLocks = allocation.mode === 'provider_breakdown' ? 3 : 2;
-      const extended = await this.redis.eval(
-        COMPOSITE_EXTEND_SCRIPT,
-        3,
+      // The leases the call must hold, every one of which is extended or none (CR13: a
+      // carrier account with a cap of its own adds its lease to the set).
+      const locks = [
         `${globalCounter}:lock:${callId}`,
         `${accountCounter}:lock:${callId}`,
-        this.providerLockKey(tenantId, accountId, canonicalProvider, callId),
+        ...(allocation.mode === 'provider_breakdown'
+          ? [this.providerLockKey(tenantId, accountId, canonicalProvider, callId)]
+          : []),
+        ...(credential?.capped
+          ? [credentialScopeKeys(this.keyPrefix, credential.credentialId, callId).lock]
+          : []),
+      ];
+      const extended = await this.redis.eval(
+        COMPOSITE_EXTEND_SCRIPT,
+        locks.length,
+        ...locks,
         Math.floor(ttlSeconds),
-        expectedLocks,
+        locks.length,
       );
-      return Number(extended) === expectedLocks;
+      return Number(extended) === locks.length;
     } catch (err) {
       logger.warn({ err, callId, tenantId, accountId, provider: canonicalProvider }, 'Failed to extend composite telephony concurrency lease');
       return false;

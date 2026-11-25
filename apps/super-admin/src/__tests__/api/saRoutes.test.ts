@@ -79,6 +79,8 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   getTenantPhoneNumbers: () => api.getTenantPhoneNumbers('t1'),
   listTelephonyCredentialProviders: () => api.listTelephonyCredentialProviders(),
   listTelephonyCredentials: () => api.listTelephonyCredentials({ tenant_id: 't1', include_revoked: true }),
+  listTelephonyCredentialsWithUsage: () => api.listTelephonyCredentialsWithUsage({ tenant_id: 't1' }),
+  setTelephonyCredentialConcurrency: () => api.setTelephonyCredentialConcurrency('c1', { max_concurrent_calls: 2 }),
   getTelephonyCredential: () => api.getTelephonyCredential('c1'),
   createTelephonyCredential: () => api.createTelephonyCredential({ tenant_id: 't1', provider: 'plivo', label: 'l', fields: {} }),
   renameTelephonyCredential: () => api.renameTelephonyCredential('c1', { label: 'l' }),

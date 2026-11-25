@@ -6,7 +6,7 @@ import type { ConcurrencyControl } from '../seams/concurrency-control.js';
 import type { TelephonyGuardHost } from './telephony-guard-host.js';
 
 export function createConcurrencyControl(
-  host: Pick<TelephonyGuardHost, 'accountConcurrencyGuard' | 'providerConcurrencyGuard'>,
+  host: Pick<TelephonyGuardHost, 'accountConcurrencyGuard' | 'providerConcurrencyGuard' | 'credentialConcurrencyGuard'>,
 ): ConcurrencyControl {
   return {
     invalidateAccountLimit: (tenantId, accountId) =>
@@ -19,5 +19,9 @@ export function createConcurrencyControl(
       host.accountConcurrencyGuard.getAccountCount(tenantId, accountId),
     getDistributedAccountCount: (tenantId, accountId) =>
       host.accountConcurrencyGuard.getDistributedAccountCount(tenantId, accountId),
+    invalidateCredentialLimit: async (credentialId) =>
+      host.credentialConcurrencyGuard.invalidateCap(credentialId),
+    getCredentialCounts: (credentialIds) =>
+      host.credentialConcurrencyGuard.getCounts(credentialIds),
   };
 }

@@ -941,6 +941,7 @@ describe('seat time on the paths that never reach the settle site', () => {
   it.each([
     'global_concurrency_limit', 'account_concurrency_limit',
     'provider_concurrency_limit', 'provider_concurrency_unavailable',
+    'carrier_account_concurrency_limit',
   ] as const)('returns the contact at once, uncharged, when the bridge refused admission (%s)', async (code) => {
     const bridge = fakeBridge();
     bridge.createBridgedCall.mockRejectedValue(new WebRtcCallError('full', code, 429));

@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { KeyRound, Plus, RefreshCw, ShieldCheck, Pencil, Ban, RotateCcw, Trash2, PhoneIncoming } from 'lucide-react';
+import { KeyRound, Plus, RefreshCw, ShieldCheck, Pencil, Ban, RotateCcw, Trash2, PhoneIncoming, Gauge } from 'lucide-react';
 import type {
   TelephonyCredential,
   TelephonyCredentialNumberSync,
@@ -12,8 +12,9 @@ import {
   createTelephonyCredential,
   getTelephonyCredential,
   listTelephonyCredentialProviders,
-  listTelephonyCredentials,
+  listTelephonyCredentialsWithUsage,
   renameTelephonyCredential,
+  setTelephonyCredentialConcurrency,
   rotateTelephonyCredentialSecret,
   verifyTelephonyCredential,
   disableTelephonyCredential,
@@ -35,6 +36,7 @@ import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { operatorCarrierName } from '../../utils/carrierName';
 import { CredentialInboundSection } from './telephony-credentials/CredentialInboundSection';
 import { formatDateTime as fmt, refusalCopy } from '../../utils/operatorCopy';
+import { CONCURRENCY_HELP, concurrencyLimitText, parseConcurrencyLimit } from '../../utils/credentialConcurrency';
 import styles from './SATelephonyCredentialsPage.module.css';
 
 /**
@@ -48,6 +50,10 @@ import styles from './SATelephonyCredentialsPage.module.css';
  * numbers" only where the carrier lists an account's numbers (`number_source: 'sync'`; where
  * they are added by hand the row says so), and the inbound section only where the carrier
  * takes inbound calls (`supports_inbound`).
+ *
+ * A credential may carry its own concurrency cap (CR13): the most calls live at once on that
+ * carrier account, across every account of the tenant. Set on create or with "Set limit" on the
+ * row; the table shows the calls it counts now when the server could read them.
  */
 
 type FieldValues = Record<string, string>;
@@ -96,6 +102,8 @@ export default function SATelephonyCredentialsPage() {
   const tenantName = useMemo(() => new Map(tenants.map((t) => [t.id, t.name])), [tenants]);
 
   const [credentials, setCredentials] = useState<TelephonyCredential[]>([]);
+  /** Live calls each capped credential's own cap counts now, by id (CR13; best effort). */
+  const [inUse, setInUse] = useState<Record<string, number>>({});
   const [providers, setProviders] = useState<TelephonyCredentialProvider[]>([]);
   const [storeAvailable, setStoreAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -109,8 +117,8 @@ export default function SATelephonyCredentialsPage() {
 
   // Create
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState<{ tenant_id: string; provider: string; label: string; fields: FieldValues }>(
-    { tenant_id: '', provider: '', label: '', fields: {} },
+  const [createForm, setCreateForm] = useState<{ tenant_id: string; provider: string; label: string; fields: FieldValues; limit: string }>(
+    { tenant_id: '', provider: '', label: '', fields: {}, limit: '' },
   );
   const [createError, setCreateError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -120,6 +128,8 @@ export default function SATelephonyCredentialsPage() {
   const [rotateFields, setRotateFields] = useState<FieldValues>({});
   const [renameTarget, setRenameTarget] = useState<TelephonyCredential | null>(null);
   const [renameLabel, setRenameLabel] = useState('');
+  const [limitTarget, setLimitTarget] = useState<TelephonyCredential | null>(null);
+  const [limitText, setLimitText] = useState('');
   const [modalError, setModalError] = useState<string | null>(null);
 
   // Status actions
@@ -141,11 +151,12 @@ export default function SATelephonyCredentialsPage() {
     setError(null);
     try {
       const [creds, provs] = await Promise.all([
-        listTelephonyCredentials({ tenant_id: filterTenant || undefined, include_revoked: showRevoked }),
+        listTelephonyCredentialsWithUsage({ tenant_id: filterTenant || undefined, include_revoked: showRevoked }),
         listTelephonyCredentialProviders(),
       ]);
       if (seq !== loadSeq.current) return;
-      setCredentials(creds);
+      setCredentials(creds.credentials);
+      setInUse(creds.concurrent_calls_in_use);
       setProviders(provs.providers);
       setStoreAvailable(provs.store_available);
     } catch (err) {
@@ -192,7 +203,7 @@ export default function SATelephonyCredentialsPage() {
 
   const openCreate = () => {
     const first = providers[0]?.provider ?? '';
-    setCreateForm({ tenant_id: filterTenant, provider: first, label: '', fields: {} });
+    setCreateForm({ tenant_id: filterTenant, provider: first, label: '', fields: {}, limit: '' });
     setCreateError(null);
     setShowCreate(true);
   };
@@ -200,11 +211,13 @@ export default function SATelephonyCredentialsPage() {
   // Closing without saving drops what was typed, so a secret never lingers in state.
   const closeCreate = () => {
     setShowCreate(false);
-    setCreateForm({ tenant_id: '', provider: '', label: '', fields: {} });
+    setCreateForm({ tenant_id: '', provider: '', label: '', fields: {}, limit: '' });
   };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    const limit = parseConcurrencyLimit(createForm.limit);
+    if ('error' in limit) { setCreateError(limit.error); return; }
     setSaving(true);
     setCreateError(null);
     try {
@@ -213,9 +226,10 @@ export default function SATelephonyCredentialsPage() {
         provider: createForm.provider,
         label: createForm.label,
         fields: createForm.fields,
+        ...(limit.cap !== null ? { max_concurrent_calls: limit.cap } : {}),
       });
       // Drop the typed secret from memory as soon as it is sent.
-      setCreateForm({ tenant_id: '', provider: '', label: '', fields: {} });
+      setCreateForm({ tenant_id: '', provider: '', label: '', fields: {}, limit: '' });
       setShowCreate(false);
       await load();
     } catch (err) {
@@ -253,6 +267,29 @@ export default function SATelephonyCredentialsPage() {
       setRenameTarget(null);
     } catch (err) {
       setModalError(err instanceof Error ? err.message : 'Failed to rename credential');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openLimit = (c: TelephonyCredential) => {
+    setLimitTarget(c);
+    setLimitText(c.max_concurrent_calls === null ? '' : String(c.max_concurrent_calls));
+    setModalError(null);
+  };
+
+  const handleLimit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!limitTarget) return;
+    const limit = parseConcurrencyLimit(limitText);
+    if ('error' in limit) { setModalError(limit.error); return; }
+    setSaving(true);
+    setModalError(null);
+    try {
+      replaceRow(await setTelephonyCredentialConcurrency(limitTarget.id, { max_concurrent_calls: limit.cap }));
+      setLimitTarget(null);
+    } catch (err) {
+      setModalError(err instanceof Error ? err.message : 'Failed to set the limit');
     } finally {
       setSaving(false);
     }
@@ -353,6 +390,7 @@ export default function SATelephonyCredentialsPage() {
                 <th>Secret</th>
                 <th>Status</th>
                 <th>Verified</th>
+                <th>Concurrent calls</th>
               </tr>
             </thead>
             <tbody>
@@ -381,14 +419,21 @@ export default function SATelephonyCredentialsPage() {
                       <StatusBadge label={saStatusLabel(c.status)} color={saStatusColor(c.status)} status={c.status} />
                     </td>
                     <td className={styles.muted}>{fmt(c.verified_at)}</td>
+                    <td className={c.max_concurrent_calls === null ? styles.muted : undefined} data-testid={`concurrency-${c.id}`}>
+                      {concurrencyLimitText(c.max_concurrent_calls, inUse[c.id])}
+                    </td>
                   </tr>
                   {expandedId === c.id && (
                     <tr id={`credential-detail-${c.id}`}>
-                      <td colSpan={7} className={styles.detailCell}>
+                      <td colSpan={8} className={styles.detailCell}>
                         <dl className={styles.detailGrid}>
                           <div className={styles.detailItem}><dt>ID</dt><dd className={styles.mono}>{c.id}</dd></div>
                           <div className={styles.detailItem}><dt>Campaigns using it (not finished)</dt><dd>{usage ? usage.campaigns : '…'}</dd></div>
                           <div className={styles.detailItem}><dt>Calls in flight</dt><dd>{usage ? usage.in_flight_calls : '…'}</dd></div>
+                          <div className={styles.detailItem}>
+                            <dt>Concurrent calls</dt>
+                            <dd>{concurrencyLimitText(c.max_concurrent_calls, usage?.concurrent_calls_in_use ?? inUse[c.id])}</dd>
+                          </div>
                           <div className={styles.detailItem}><dt>Last error</dt><dd>{c.last_error ?? 'None'}</dd></div>
                           <div className={styles.detailItem}><dt>Updated</dt><dd>{fmt(c.updated_at)}</dd></div>
                           {c.revoked_at && <div className={styles.detailItem}><dt>Revoked</dt><dd>{fmt(c.revoked_at)}{c.shredded_at ? ' (secret destroyed)' : ''}</dd></div>}
@@ -408,6 +453,9 @@ export default function SATelephonyCredentialsPage() {
                             </button>
                             <button className="btn-secondary" onClick={() => { setRenameTarget(c); setRenameLabel(c.label); setModalError(null); }}>
                               <Pencil size={14} /> Rename
+                            </button>
+                            <button className="btn-secondary" onClick={() => openLimit(c)}>
+                              <Gauge size={14} /> Set limit
                             </button>
                             {c.status === 'disabled' ? (
                               <button className={`btn-secondary ${styles.successBtn}`} disabled={busyWith(c.id)} onClick={() => void runAction(c, 'enable')}>
@@ -503,6 +551,17 @@ export default function SATelephonyCredentialsPage() {
               {field.help && <p className={styles.help}>{field.help}</p>}
             </div>
           ))}
+          <div className={styles.field}>
+            <label htmlFor="credential-limit">Concurrent calls (optional)</label>
+            <input
+              id="credential-limit"
+              inputMode="numeric"
+              value={createForm.limit}
+              onChange={(e) => setCreateForm((f) => ({ ...f, limit: e.target.value }))}
+              placeholder="No limit of its own"
+            />
+            <p className={styles.help}>{CONCURRENCY_HELP}</p>
+          </div>
         </form>
       </Modal>
 
@@ -555,6 +614,34 @@ export default function SATelephonyCredentialsPage() {
           <div className={styles.field}>
             <label htmlFor="rename-label">Label</label>
             <input id="rename-label" value={renameLabel} onChange={(e) => setRenameLabel(e.target.value)} maxLength={100} required />
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={limitTarget !== null}
+        onClose={() => setLimitTarget(null)}
+        title="Limit concurrent calls"
+        subtitle={limitTarget ? `${limitTarget.label} · ${limitTarget.account_ref}. Lowering it does not end calls in progress: new calls wait until enough have ended.` : ''}
+        footer={
+          <>
+            <button type="button" className="btn-secondary" onClick={() => setLimitTarget(null)}>Cancel</button>
+            <button type="submit" form="limit-credential-form" className="btn-primary" disabled={saving}>Save</button>
+          </>
+        }
+      >
+        <form id="limit-credential-form" onSubmit={handleLimit} className={styles.form}>
+          {modalError && <div className={styles.error} role="alert">{modalError}</div>}
+          <div className={styles.field}>
+            <label htmlFor="limit-value">Concurrent calls</label>
+            <input
+              id="limit-value"
+              inputMode="numeric"
+              value={limitText}
+              onChange={(e) => setLimitText(e.target.value)}
+              placeholder="No limit of its own"
+            />
+            <p className={styles.help}>{CONCURRENCY_HELP}</p>
           </div>
         </form>
       </Modal>

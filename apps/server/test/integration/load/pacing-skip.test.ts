@@ -246,6 +246,8 @@ describe('pacing rounds: skip, wake, share (load)', () => {
         getAccountProviderCounts: async () => ({ status: 'available', counts: new Map() }),
         getAccountCount: async () => 0,
         getDistributedAccountCount: async () => ({ status: 'available', count: 0 }),
+        invalidateCredentialLimit: async () => {},
+        getCredentialCounts: async () => ({ status: 'available', counts: new Map() }),
       }));
 
       // What the super-admin settings write does: the row, then the seam.

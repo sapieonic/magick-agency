@@ -34,6 +34,7 @@ describe('classifyDialRefusal', () => {
   it('reads every admission and calls-per-second refusal as capacity', () => {
     expect([...CAPACITY_REFUSAL_CODES].sort()).toEqual([
       'account_concurrency_limit',
+      'carrier_account_concurrency_limit',
       'carrier_rate_limited',
       'global_concurrency_limit',
       'provider_concurrency_limit',

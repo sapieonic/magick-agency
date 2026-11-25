@@ -577,6 +577,7 @@ describe('PacingEngine rounds: the cached account limit', () => {
       invalidateAccountLimit: vi.fn().mockResolvedValue(undefined),
       invalidateProviderLimits: vi.fn().mockResolvedValue(undefined),
       getAccountProviderCounts: vi.fn(), getAccountCount: vi.fn(), getDistributedAccountCount: vi.fn(),
+      invalidateCredentialLimit: vi.fn(), getCredentialCounts: vi.fn(),
     }, (e) => bus.publish(e));
     await control.invalidateAccountLimit('t1', 'a1');
     bus.publish({ type: 'account_capacity_freed', tenantId: 't1', accountId: 'a1' });

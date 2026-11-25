@@ -75,6 +75,7 @@ import {
 import { ACCOUNT_NAME_MAX_LENGTH, CREATE_ACCOUNT_ERROR_CODES, SESSION_REFUSAL_CODES } from '../src/api/platform/auth';
 import {
   TELEPHONY_CREDENTIAL_ERROR_CODES,
+  TELEPHONY_CREDENTIAL_MAX_CONCURRENT_CALLS,
   type TelephonyCredentialErrorCode,
 } from '../src/api/platform/super-admin-telephony-credentials';
 import { PIN_PHONE_NUMBER_ERROR_CODES, type PinPhoneNumberErrorCode } from '../src/api/platform/super-admin';
@@ -194,6 +195,10 @@ describe('package surface', () => {
       'inbound_not_supported',
     ]);
     expect(new Set(TELEPHONY_CREDENTIAL_ERROR_CODES).size).toBe(TELEPHONY_CREDENTIAL_ERROR_CODES.length);
+  });
+
+  it('bounds a carrier account\'s own concurrency cap as the account limits are bounded (CR13)', () => {
+    expect(TELEPHONY_CREDENTIAL_MAX_CONCURRENT_CALLS).toBe(1000);
   });
 
   it('declares the refusals of moving a service number onto a tenant`s account, distinct (SNAPSHOT, written out by hand)', () => {

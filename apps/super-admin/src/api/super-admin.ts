@@ -43,6 +43,7 @@ import type { UsageCountsQuery, UsageCountsResponse } from '@magick-agency/contr
 import type {
   CreateTelephonyCredentialBody,
   RotateTelephonyCredentialSecretBody,
+  SetTelephonyCredentialConcurrencyBody,
   TelephonyCredential,
   TelephonyCredentialDetailResponse,
   TelephonyCredentialProvidersResponse,
@@ -494,13 +495,34 @@ export async function listTelephonyCredentialProviders(): Promise<TelephonyCrede
 export async function listTelephonyCredentials(filters?: {
   tenant_id?: string; provider?: string; include_revoked?: boolean;
 }): Promise<TelephonyCredential[]> {
+  return (await listTelephonyCredentialsWithUsage(filters)).credentials;
+}
+
+/**
+ * The credentials with the live calls each one's own cap counts now (CR13,
+ * `concurrent_calls_in_use`, by id; best effort).
+ */
+export async function listTelephonyCredentialsWithUsage(filters?: {
+  tenant_id?: string; provider?: string; include_revoked?: boolean;
+}): Promise<TelephonyCredentialsResponse> {
   const params = new URLSearchParams();
   if (filters?.tenant_id) params.set('tenant_id', filters.tenant_id);
   if (filters?.provider) params.set('provider', filters.provider);
   if (filters?.include_revoked) params.set('include_revoked', 'true');
   const qs = params.toString();
   const res = await saFetch<TelephonyCredentialsResponse>(`${SA_BASE}/telephony-credentials${qs ? `?${qs}` : ''}`);
-  return res.credentials;
+  return { credentials: res.credentials, concurrent_calls_in_use: res.concurrent_calls_in_use ?? {} };
+}
+
+/** Set (or clear, with null) the carrier account's own concurrency cap (CR13). */
+export async function setTelephonyCredentialConcurrency(
+  id: string, data: SetTelephonyCredentialConcurrencyBody,
+): Promise<TelephonyCredential> {
+  const res = await saFetch<TelephonyCredentialResponse>(`${SA_BASE}/telephony-credentials/${id}/concurrency`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+  return res.credential;
 }
 
 export async function getTelephonyCredential(id: string): Promise<TelephonyCredentialDetailResponse> {

@@ -10,6 +10,7 @@ import { createRng, scaled, type Rng } from '../../helpers/load-scale.js';
 import { ConcurrencyGuard } from '../../../src/core/concurrency-guard.js';
 import { AccountConcurrencyGuard } from '../../../src/core/account-concurrency-guard.js';
 import { ProviderConcurrencyGuard } from '../../../src/core/provider-concurrency-guard.js';
+import { CredentialConcurrencyGuard } from '../../../src/core/credential-concurrency-guard.js';
 import { releaseTelephonyLease } from '../../../src/core/telephony-release.js';
 
 /**
@@ -432,6 +433,97 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
       expect(await readInt(accountCounter(a.id))).toBe(0);
       for (const p of a.providers) expect(await readInt(providerCounter(a.id, p.provider))).toBe(0);
     }
+    expect(await countKeys(`${PREFIX}active_calls*:lock:*`)).toBe(0);
+  });
+
+  it('a carrier account\'s own cap (CR13) holds across two accounts under a mixed storm with sweeps', async () => {
+    // Two provider-mode accounts of one tenant, each with room for 6 on plivo, dialling on ONE credential
+    // capped at 4, beside calls on the service's account (no credential). Every admission is the
+    // four-scope composite; every teardown the four-scope release, sometimes twice at once; the
+    // four reconciles run throughout. The credential cap is the binding one.
+    const CAP = 4;
+    await getTestPool().query(`INSERT INTO tenants (id, name, slug) VALUES ($1, 'Storm', $2) ON CONFLICT (id) DO NOTHING`, [TENANT, `storm-${TENANT.slice(0, 8)}`]);
+    await getTestPool().query(`INSERT INTO telephony_providers (name, display_name, status) VALUES ('plivo', 'Plivo', 'active') ON CONFLICT (name) DO NOTHING`);
+    const { rows: [cred] } = await getTestPool().query<{ id: string }>(
+      `INSERT INTO telephony_credentials (tenant_id, provider, label, account_ref, max_concurrent_calls)
+       VALUES ($1, 'plivo', 'Storm', 'MASTORMSTORMSTORMST', $2) RETURNING id`, [TENANT, CAP]);
+    const credentialId = cred!.id;
+    const accounts = [uuidFor('load-cred-a'), uuidFor('load-cred-b')];
+    for (const id of accounts) {
+      await providerConcurrencyRepository.replaceProviderBreakdown({
+        tenant_id: TENANT, account_id: id, expected_version: 1,
+        // Room enough on the service's account that only the credential's cap can refuse.
+        providers: [{ provider: 'plivo', max_concurrent_calls: 6 }, { provider: 'voicelink', max_concurrent_calls: 40 }],
+      });
+    }
+    const actors = clients.map((c) => ({
+      provider: new ProviderConcurrencyGuard(c, PREFIX, TIMEOUT_S, 1000),
+      global: new ConcurrencyGuard(c, PREFIX, 1000, TIMEOUT_S),
+      account: new AccountConcurrencyGuard(c, PREFIX, TIMEOUT_S),
+      credential: new CredentialConcurrencyGuard(c, PREFIX, TIMEOUT_S),
+    }));
+    const heldOnCredential = new Set<string>();
+    const results = new Map<string, number>();
+    const violations: string[] = [];
+    let stop = false;
+
+    const sweeps = (async () => {
+      const r = getTestRedis();
+      const p = new ProviderConcurrencyGuard(r, PREFIX, TIMEOUT_S, 1000);
+      const g = new ConcurrencyGuard(r, PREFIX, 1000, TIMEOUT_S);
+      const a = new AccountConcurrencyGuard(r, PREFIX, TIMEOUT_S);
+      const c = new CredentialConcurrencyGuard(r, PREFIX, TIMEOUT_S);
+      while (!stop) {
+        await Promise.all([p.reconcileAll(), g.reconcile(), a.reconcileAll(), c.reconcileAll()]);
+        await new Promise((res) => setImmediate(res));
+      }
+    })();
+
+    const ITERATIONS = scaled(60);
+    const storm = Promise.all(actors.map(async (guards, a) => {
+      const rng = createRng(createRng().seed + 400 + a);
+      for (let i = 0; i < ITERATIONS; i++) {
+        const accountId = rng.pick(accounts);
+        const onCredential = rng.chance(0.75);
+        const provider = onCredential ? 'plivo' : 'voicelink';
+        const key = `cred-${a}-${i}`;
+        const scope = onCredential ? await guards.credential.scopeFor(credentialId, key) : null;
+        const admission = await guards.provider.tryAcquireAll(key, TENANT, accountId, provider, undefined, scope);
+        results.set(`${provider}:${admission.result}`, (results.get(`${provider}:${admission.result}`) ?? 0) + 1);
+        if (admission.result !== 'acquired') {
+          violated(violations, onCredential, `a service-account call was refused: ${admission.result}`);
+          await jitter(rng);
+          continue;
+        }
+        if (onCredential) {
+          heldOnCredential.add(key);
+          violated(violations, heldOnCredential.size <= CAP, `credential cap exceeded: ${heldOnCredential.size}`);
+        }
+        await jitter(rng);
+        heldOnCredential.delete(key);
+        const teardowns = rng.chance(0.3) ? 2 : 1;
+        const outcomes = await Promise.all(Array.from({ length: teardowns }, (_, k) => {
+          const other = actors[(a + k) % ACTORS]!;
+          return releaseTelephonyLease({
+            concurrencyGuard: other.global,
+            accountConcurrencyGuard: other.account,
+            providerConcurrencyGuard: other.provider,
+            credentialConcurrencyGuard: other.credential,
+          }, { concurrencyKey: key, tenantId: TENANT, accountId, provider, source: 'webrtc', credentialId: onCredential ? credentialId : null });
+        }));
+        violated(violations, outcomes.filter((o) => o === 'composite').length === 1
+          && outcomes.filter((o) => o !== 'composite').every((o) => o === 'noop'), `teardown outcomes ${outcomes.join(',')}`);
+      }
+    }));
+    try { await storm; } finally { stop = true; await sweeps; }
+    expect(violations).toEqual([]);
+    // The cap bound (somebody was refused by it), and the service-account calls never were.
+    expect(results.get('plivo:credential_full') ?? 0).toBeGreaterThan(0);
+    expect(results.get('plivo:acquired') ?? 0).toBeGreaterThan(0);
+    expect([...results.keys()].filter((k) => k.startsWith('voicelink:') && k !== 'voicelink:acquired')).toEqual([]);
+    expect(await readInt(`${PREFIX}active_calls:credential:${credentialId}`)).toBe(0);
+    expect(await readInt(GLOBAL)).toBe(0);
+    for (const id of accounts) expect(await readInt(accountCounter(id))).toBe(0);
     expect(await countKeys(`${PREFIX}active_calls*:lock:*`)).toBe(0);
   });
 

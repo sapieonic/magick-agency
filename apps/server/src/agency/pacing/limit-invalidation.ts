@@ -43,5 +43,9 @@ export function withPacingInvalidation(
     getAccountProviderCounts: (tenantId, accountId) => inner.getAccountProviderCounts(tenantId, accountId),
     getAccountCount: (tenantId, accountId) => inner.getAccountCount(tenantId, accountId),
     getDistributedAccountCount: (tenantId, accountId) => inner.getDistributedAccountCount(tenantId, accountId),
+    // A carrier account's own cap (CR13) is no account's limit: pacing does not cache it, so
+    // there is nothing to announce. Its refusals are back-pressure the next tick absorbs.
+    invalidateCredentialLimit: (credentialId) => inner.invalidateCredentialLimit(credentialId),
+    getCredentialCounts: (credentialIds) => inner.getCredentialCounts(credentialIds),
   };
 }

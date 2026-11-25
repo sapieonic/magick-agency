@@ -10,6 +10,7 @@
  *  - `GET    /telephony-credentials/:id`                 → `TelephonyCredentialDetailResponse`
  *  - `POST   /telephony-credentials`                     `CreateTelephonyCredentialBody` → 201 `TelephonyCredentialResponse`
  *  - `PATCH  /telephony-credentials/:id`                 `UpdateTelephonyCredentialBody` → `TelephonyCredentialResponse`
+ *  - `PATCH  /telephony-credentials/:id/concurrency`     `SetTelephonyCredentialConcurrencyBody` → `TelephonyCredentialResponse`
  *  - `PUT    /telephony-credentials/:id/secret`          `RotateTelephonyCredentialSecretBody` → `TelephonyCredentialResponse`
  *  - `POST   /telephony-credentials/:id/verify`          → `TelephonyCredentialResponse`
  *  - `POST   /telephony-credentials/:id/disable`         → `TelephonyCredentialResponse`
@@ -25,6 +26,13 @@
  * the inventory on another credential or on the service's own account is reported as a
  * conflict and left alone; the credential's numbers the account no longer lists are
  * retired, never deleted. Only an `active` credential syncs.
+ *
+ * Concurrency (docs/carriers.md CR13): a credential may carry its own cap,
+ * `max_concurrent_calls`: at most that many live calls on the carrier account at once,
+ * across every account of the tenant (a credential serves them all, B20). It is in addition
+ * to the global, account and per-account carrier limits, never instead of them. Null is no
+ * cap of its own. Lowering it below the calls live now ends none of them; new calls wait
+ * until enough have ended.
  *
  * Errors are `{ error: TelephonyCredentialErrorCode, message, details? }`; `details`
  * lists field paths and messages, never submitted values.
@@ -49,6 +57,11 @@ export interface TelephonyCredential {
   secret_hint: string | null;
   verified_at: string | null;
   last_error: string | null;
+  /**
+   * The carrier account's own concurrency cap (CR13): at most this many live calls on it at
+   * once, across every account of the tenant. Null: no cap of its own.
+   */
+  max_concurrent_calls: number | null;
   created_by: string | null;
   updated_by: string | null;
   created_at: string;
@@ -62,6 +75,11 @@ export interface TelephonyCredentialUsage {
   campaigns: number;
   /** Calls still in flight on it. */
   in_flight_calls: number;
+  /**
+   * The live calls its own cap counts now (CR13), read from the admission's counter. Null when
+   * it has no cap of its own (nothing is counted) or the count could not be read.
+   */
+  concurrent_calls_in_use: number | null;
 }
 
 /** One field of a provider's credential form. */
@@ -100,6 +118,12 @@ export interface TelephonyCredentialProvidersResponse {
 
 export interface TelephonyCredentialsResponse {
   credentials: TelephonyCredential[];
+  /**
+   * The live calls each capped credential's own cap counts now (CR13), by credential id. A
+   * credential with no cap of its own is absent, and so is every one when the count could not
+   * be read (best effort).
+   */
+  concurrent_calls_in_use: Record<string, number>;
 }
 
 export interface TelephonyCredentialResponse {
@@ -117,11 +141,21 @@ export interface CreateTelephonyCredentialBody {
   label: string;
   /** Every field of the provider's form, public and secret, keyed by `field.key`. */
   fields: Record<string, string>;
+  /** CR13: the carrier account's own concurrency cap, 1 to 1000; absent or null is none. */
+  max_concurrent_calls?: number | null;
 }
 
 export interface UpdateTelephonyCredentialBody {
   label: string;
 }
+
+/** Set (1 to 1000) or clear (null) a credential's own concurrency cap (CR13). Audited. */
+export interface SetTelephonyCredentialConcurrencyBody {
+  max_concurrent_calls: number | null;
+}
+
+/** The largest cap a credential may carry (the account limits' bound). */
+export const TELEPHONY_CREDENTIAL_MAX_CONCURRENT_CALLS = 1000;
 
 export interface RotateTelephonyCredentialSecretBody {
   /** The provider's secret fields only, keyed by `field.key`. */

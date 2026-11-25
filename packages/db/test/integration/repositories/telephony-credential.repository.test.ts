@@ -77,6 +77,42 @@ describe('telephony credentials (integration)', () => {
     await closeTestPool();
   });
 
+  describe('the carrier account\'s own concurrency cap (CR13, 0077)', () => {
+    it('create stores the cap given, none by default, and every read carries it', async () => {
+      const none = await create();
+      expect(none.max_concurrent_calls).toBeNull();
+      const capped = await repo.create({
+        id: randomUUID(), tenant_id: tenantA, provider: 'plivo', label: 'Capped',
+        account_ref: 'MACAPPEDCAPPEDCAPPED', public_config: { auth_id: 'x' }, sealed: sealed('v1aa'),
+        created_by: admin, verified_at: new Date(), max_concurrent_calls: 3,
+      });
+      expect(capped.max_concurrent_calls).toBe(3);
+      expect((await repo.findById(capped.id))!.max_concurrent_calls).toBe(3);
+      expect((await repo.list({ tenantId: tenantA })).map((r) => r.max_concurrent_calls).sort()).toEqual([3, null]);
+      expect(await repo.getConcurrencyCap(capped.id)).toBe(3);
+      expect(await repo.getConcurrencyCap(none.id)).toBeNull();
+      expect(await repo.getConcurrencyCap(randomUUID())).toBeNull();
+    });
+
+    it('setConcurrencyCap sets and clears it, records who, and refuses a revoked credential', async () => {
+      const row = await create();
+      const set = await repo.setConcurrencyCap(row.id, 2, admin);
+      expect(set).toMatchObject({ max_concurrent_calls: 2, updated_by: admin });
+      expect((await repo.setConcurrencyCap(row.id, null, admin))!.max_concurrent_calls).toBeNull();
+      await repo.revoke(row.id, admin);
+      expect(await repo.setConcurrencyCap(row.id, 4, admin)).toBeNull();
+      expect(await repo.setConcurrencyCap(randomUUID(), 4, admin)).toBeNull();
+    });
+
+    it('the CHECK refuses a cap that is not positive', async () => {
+      const row = await create();
+      for (const cap of [0, -1]) {
+        const err = await pgError(repo.setConcurrencyCap(row.id, cap, admin));
+        expect(err).toMatchObject({ code: '23514', constraint: 'chk_telephony_credentials_max_concurrent_calls' });
+      }
+    });
+  });
+
   describe('create and read', () => {
     it('stores the row and its first secret version together; reads carry no secret material', async () => {
       const row = await create({ label: 'Main' });

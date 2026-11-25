@@ -44,7 +44,7 @@ const OPEN_CACHE_MAX = 256;
 export type CredentialRepo = Pick<TelephonyCredentialRepository,
   | 'create' | 'findById' | 'findOpenableSecrets' | 'findOpenableVersions' | 'list' | 'updateLabel' | 'rotateSecret'
   | 'setStatus' | 'enable' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'liveCampaigns' | 'distinctKekIds'
-  | 'findRevokedUnshredded' | 'pruneRetiredSecrets' | 'findInbound'>;
+  | 'findRevokedUnshredded' | 'pruneRetiredSecrets' | 'findInbound' | 'setConcurrencyCap'>;
 
 export interface TenantLookup {
   findById(id: string): Promise<{ id: string } | null>;
@@ -204,6 +204,8 @@ export class TelephonyCredentialService {
 
   async create(input: {
     tenantId: string; provider: string; label: string; fields: Record<string, unknown>; adminId: string;
+    /** CR13: the carrier account's own concurrency cap; absent or null is none. */
+    maxConcurrentCalls?: number | null;
   }): Promise<ServiceResult<TelephonyCredentialRecord>> {
     const sealer = this.deps.sealer;
     if (!sealer) return fail('credential_store_unavailable', 'No credential keyring is configured');
@@ -245,6 +247,7 @@ export class TelephonyCredentialService {
         id, tenant_id: input.tenantId, provider: spec.provider, label: input.label,
         account_ref: accountRef, public_config: pubParsed.data,
         sealed, created_by: input.adminId, verified_at: new Date(),
+        max_concurrent_calls: input.maxConcurrentCalls ?? null,
       });
       return { ok: true, value: row };
     } catch (err) {
@@ -268,6 +271,17 @@ export class TelephonyCredentialService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Set or clear the carrier account's own concurrency cap (CR13): at most `cap` live calls on
+   * it at once, across every account of its tenant; null is no cap of its own. A revoked
+   * credential is refused. Calls already live are never ended by a lower cap: new ones wait.
+   * The caller drops the admission's cached cap (`ConcurrencyControl.invalidateCredentialLimit`).
+   */
+  async setConcurrencyCap(id: string, cap: number | null, adminId: string): Promise<ServiceResult<TelephonyCredentialRecord>> {
+    const row = await this.deps.repo.setConcurrencyCap(id, cap, adminId);
+    return row ? { ok: true, value: row } : this.missingOrRevoked(id);
   }
 
   /**

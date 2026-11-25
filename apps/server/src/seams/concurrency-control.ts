@@ -13,10 +13,19 @@
  * the provider-mode migration's drain check, and the provider guard for per-provider live
  * leases. The repositories are shared (packages/db); the guard calls go through this seam.
  *
+ * A carrier account's own cap (CR13, `telephony_credentials.max_concurrent_calls`) is written
+ * by the super-admin credential routes, which then call `invalidateCredentialLimit` so the
+ * next admission reads it, and read the live calls on each credential with
+ * `getCredentialCounts`.
+ *
  * `bootstrap/voice.ts` registers the implementation at boot (`setConcurrencyControl`). The
  * default throws, so a super-admin write before the voice engine is wired fails loudly
  * instead of leaving a stale cross-replica limit cached in Redis.
  */
+
+export type CredentialCounts =
+  | { status: 'available'; counts: Map<string, number> }
+  | { status: 'unavailable'; counts: Map<string, number> };
 
 export type AccountProviderCounts =
   | { status: 'available'; counts: Map<string, number> }
@@ -44,6 +53,13 @@ export interface ConcurrencyControl {
    * migration's drain check reads this, not the provider guard.
    */
   getDistributedAccountCount(tenantId: string, accountId: string): Promise<DistributedAccountCount>;
+  /** `credentialConcurrencyGuard.invalidateCap(credentialId)`: a carrier account's cap changed (CR13). */
+  invalidateCredentialLimit(credentialId: string): Promise<void>;
+  /**
+   * `credentialConcurrencyGuard.getCounts(credentialIds)`: the live calls on each carrier
+   * account with a cap of its own. `unavailable` is a Redis fault, never "zero calls".
+   */
+  getCredentialCounts(credentialIds: readonly string[]): Promise<CredentialCounts>;
 }
 
 export type DistributedAccountCount =
@@ -64,6 +80,12 @@ const UNWIRED: ConcurrencyControl = {
     throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
   async getDistributedAccountCount() {
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
+  },
+  async invalidateCredentialLimit() {
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
+  },
+  async getCredentialCounts() {
     throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
 };

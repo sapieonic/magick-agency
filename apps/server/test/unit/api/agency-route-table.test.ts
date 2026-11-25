@@ -99,6 +99,7 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /super-admin/telephony-credentials', 'carrier credential create, verified with the carrier (BYOC, B20)'],
   ['PATCH /super-admin/telephony-credentials/:_', 'carrier credential rename (BYOC, B20)'],
   ['PUT /super-admin/telephony-credentials/:_/secret', 'carrier credential secret rotation (BYOC, B20)'],
+  ['PATCH /super-admin/telephony-credentials/:_/concurrency', 'carrier account concurrency cap, set or cleared (CR13; audited)'],
   ['POST /super-admin/telephony-credentials/:_/disable', 'carrier credential disable (BYOC, B20)'],
   ['POST /super-admin/telephony-credentials/:_/enable', 'carrier credential enable (BYOC, B20)'],
   ['POST /super-admin/telephony-credentials/:_/revoke', 'carrier credential revoke (BYOC, B20)'],

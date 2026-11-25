@@ -897,3 +897,47 @@ describe('a Plivo call whose callbacks never arrive is ended soon after Plivo`s 
     });
   });
 });
+
+describe('the carrier account\'s own concurrency cap (CR13)', () => {
+  /** A host with the production entry point and the composite release, as `TelephonyGuardHost` has. */
+  function capHost(admission: { result: string; providerScoped: boolean; newlyAcquired?: boolean }) {
+    return {
+      ...makeGuardHost(),
+      tryAcquireTelephonyConcurrency: vi.fn().mockResolvedValue(admission),
+      providerConcurrencyGuard: {
+        releaseAll: vi.fn().mockResolvedValue({ status: 'released', scopes: 4 }),
+        release: vi.fn().mockResolvedValue(undefined),
+      },
+    };
+  }
+
+  it('admits the dial on the credential it dials on, and the lease names it', async () => {
+    const host = capHost({ result: 'acquired', providerScoped: true, newlyAcquired: true });
+    const mgr = await dial(new WebRtcBridgeManager(host as any, null));
+    expect(host.tryAcquireTelephonyConcurrency).toHaveBeenCalledWith(expect.any(String), 'tenant-a', 'a1', 'plivo', expect.any(Number), 'cred-1');
+    expect(mgr.heldLeases()).toEqual([expect.objectContaining({ callId: CALL_ID, provider: 'plivo', credentialId: 'cred-1' })]);
+  });
+
+  it('a slot released before the call is placed hands the credential\'s slot back too', async () => {
+    mockRepo.create.mockRejectedValueOnce(Object.assign(new Error('Telephony credential cred-1 is not active'), {
+      code: 'telephony_credential_not_active',
+    }));
+    const host = capHost({ result: 'acquired', providerScoped: true, newlyAcquired: true });
+    await new WebRtcBridgeManager(host as any, null).createBridgedCall({ ...PLIVO, browserSocket: fakeWs() as any }).catch(() => undefined);
+    expect(host.providerConcurrencyGuard.releaseAll).toHaveBeenCalledWith(expect.any(String), 'tenant-a', 'a1', 'plivo', 'cred-1');
+  });
+
+  it('the cap full: refused carrier_account_concurrency_limit (429) with nothing written, placed or held', async () => {
+    const host = capHost({ result: 'credential_full', providerScoped: true });
+    const mgr = new WebRtcBridgeManager(host as any, null);
+    mgr.onLifecycle((e) => lifecycle.push(e));
+    const err = await mgr.createBridgedCall({ ...PLIVO, browserSocket: fakeWs() as any }).catch((e) => e);
+    expect(err).toBeInstanceOf(WebRtcCallError);
+    expect(err).toMatchObject({ code: 'carrier_account_concurrency_limit', statusCode: 429 });
+    expect(classifyDialRefusal(err)).toEqual({ kind: 'capacity' });
+    expect(mockRepo.create).not.toHaveBeenCalled();
+    expect(plivoAdapter.initiateCall).not.toHaveBeenCalled();
+    expect(lifecycle).toHaveLength(0);
+    expect(mgr.heldLeases()).toEqual([]);
+  });
+});

@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => {
       getAccountProviderCounts: vi.fn(),
       getAccountCount: vi.fn(),
       getDistributedAccountCount: vi.fn(),
+      invalidateCredentialLimit: vi.fn(),
+      getCredentialCounts: vi.fn(),
     },
   };
 });

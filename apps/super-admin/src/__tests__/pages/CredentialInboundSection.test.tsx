@@ -17,7 +17,7 @@ import { CredentialInboundSection } from '../../pages/super-admin/telephony-cred
 const CRED: TelephonyCredential = {
   id: 'cred-1', tenant_id: 't-1', provider: 'plivo', label: 'Acme main', status: 'active',
   account_ref: 'MAXXXXXXXXXXXXXXXXXX', public_config: {}, secret_version: 1, secret_hint: 'ab12', verified_at: null,
-  last_error: null, created_by: null, updated_by: null, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
+  last_error: null, max_concurrent_calls: null, created_by: null, updated_by: null, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
   revoked_at: null, shredded_at: null,
 };
 

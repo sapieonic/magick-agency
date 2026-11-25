@@ -187,10 +187,11 @@ describe('body decoders', () => {
       'station.broadcast': { campaignId: 'c', frame: { event: 'campaign_state', campaign_id: 'c' } },
       'station.send': { sessionId: 's', frame: { event: 'queue', campaign_id: 'c', due: false, reason: 'queue_empty', next_due_at: null } },
       'concurrency.invalidate': { tenantId: 't', accountId: 'a' },
+      'concurrency.invalidate_credential': { credentialId: 'cred-1' },
       'dialable.invalidate': {},
       'reaper.forget_unrecorded': { attemptIds: ['a1', 'a2'] },
       'voice.wake_self_heal': {},
-      'call.lease': { op: 'held', lease: { callId: 'c', concurrencyKey: 'k', tenantId: 't', accountId: 'a', provider: 'voicelink' } },
+      'call.lease': { op: 'held', lease: { callId: 'c', concurrencyKey: 'k', tenantId: 't', accountId: 'a', provider: 'voicelink', credentialId: 'cred-1' } },
       'listen.revoke': { tenantId: 't', userId: 'u', reason: 'superseded', listenIds: ['l1'] },
     };
     for (const [type, decode] of Object.entries(IPC_EVENT_DECODERS)) {
@@ -198,6 +199,23 @@ describe('body decoders', () => {
       expect(sample, `a sample for ${type}`).toBeDefined();
       expect((decode as (r: unknown) => unknown)(roundTrip(sample))).toEqual(sample);
     }
+  });
+});
+
+describe('call.lease carries the carrier account the slots were admitted on (CR13)', () => {
+  const decode = IPC_EVENT_DECODERS['call.lease'];
+  const lease = { callId: 'c', concurrencyKey: 'k', tenantId: 't', accountId: 'a', provider: 'voicelink' };
+  it('reads a lease with no credential (the service\'s own account, or an older worker) as null', () => {
+    expect(decode({ op: 'held', lease })).toEqual({ op: 'held', lease: { ...lease, credentialId: null } });
+    expect(decode({ op: 'held', lease: { ...lease, credentialId: null } })).toEqual({ op: 'held', lease: { ...lease, credentialId: null } });
+  });
+  it('refuses a credential that is not an id', () => {
+    expect(decode({ op: 'held', lease: { ...lease, credentialId: 7 } })).toBeNull();
+    expect(decode({ op: 'held', lease: { ...lease, credentialId: '' } })).toBeNull();
+  });
+  it('the credential invalidation names one credential', () => {
+    expect(IPC_EVENT_DECODERS['concurrency.invalidate_credential']({ credentialId: 'cred-1' })).toEqual({ credentialId: 'cred-1' });
+    expect(IPC_EVENT_DECODERS['concurrency.invalidate_credential']({})).toBeNull();
   });
 });
 

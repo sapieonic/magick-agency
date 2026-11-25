@@ -57,6 +57,33 @@ export function trackProviderConcurrencyReconciliation(result: 'clean' | 'repair
   safeEmit('provider-concurrency-reconciliation', () => providerConcurrencyReconciliationTotal.inc({ result }));
 }
 
+// ── Carrier-account (credential) admissions, CR13 ──────────────────────
+// The scope of a tenant carrier account with a cap of its own. Labelled by carrier
+// only: a credential id (like a tenant or account id) is unbounded and would make a
+// series per customer. `result`: acquired | already_owned | partial_repaired |
+// credential_full | redis_unavailable | allocation_unavailable.
+const credentialConcurrencyAdmissionTotal = counter<
+  'provider' | 'result'
+>(meter, 'credential_concurrency_admission_total', {
+  description: 'Telephony admissions on a carrier account with its own cap, by outcome',
+});
+
+/** Record one admission that took (or was refused) a carrier account's own cap. */
+export function trackCredentialConcurrencyAdmission(provider: string, result: string): void {
+  safeEmit('credential-concurrency-admission', () => credentialConcurrencyAdmissionTotal.inc({ provider, result }));
+}
+
+const credentialConcurrencyReconciliationTotal = counter<
+  'result'
+>(meter, 'credential_concurrency_reconciliation_total', {
+  description: 'Carrier-account counter reconciliation passes by outcome',
+});
+
+/** Record one carrier-account counter reconciliation pass (`clean` | `repaired` | `failed`). */
+export function trackCredentialConcurrencyReconciliation(result: 'clean' | 'repaired' | 'failed'): void {
+  safeEmit('credential-concurrency-reconciliation', () => credentialConcurrencyReconciliationTotal.inc({ result }));
+}
+
 // ── Telephony concurrency lease release ────────────────────────────────
 // `composite` is the healthy path; `partial`/`failure` mean a lease is parked
 // until the self-heal sweep; `noop` arms the sweep but does not page. No

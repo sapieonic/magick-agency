@@ -35,6 +35,8 @@ export const CAPACITY_REFUSAL_CODES: ReadonlySet<WebRtcRejectReason> = new Set<W
   'account_concurrency_limit',
   'provider_concurrency_limit',
   'provider_concurrency_unavailable',
+  // The tenant carrier account's own cap (CR13): the same back-pressure.
+  'carrier_account_concurrency_limit',
   'carrier_rate_limited',
 ]);
 

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
+import { uuidFor } from '../setup/factories.js';
 import { scaled } from '../../helpers/load-scale.js';
 
 await vi.hoisted(async () => {
@@ -29,6 +30,7 @@ const { createFloorWorld, closeFloorPool, attemptRows, expectedDials } = await i
 const { TelephonyGuardHost } = await import('../../../src/core/telephony-guard-host.js');
 const { admitBridgeCall } = await import('../../../src/core/bridge/admission.js');
 const { releaseTelephonyLease } = await import('../../../src/core/telephony-release.js');
+const { phoneNumberRepository } = await import('@magick-agency/db/repositories/phone-number.repository');
 
 type World = Awaited<ReturnType<typeof createFloorWorld>>;
 type GuardHost = InstanceType<typeof TelephonyGuardHost>;
@@ -68,12 +70,15 @@ async function useProviderBreakdown(tenantId: string, accountId: string, provide
 function wireGuards(world: World): GuardHost {
   const host = new TelephonyGuardHost(world.redis as never);
   world.carrier.admission = {
+    // Exactly as the bridge: the carrier account the dial names takes its own cap too (CR13).
     admit: (c) => admitBridgeCall(host, {
       concurrencyKey: c.attemptId, tenantId: c.tenantId, accountId: c.accountId, provider: c.provider, slotTtlSeconds: 600,
+      telephonyCredentialId: c.credentialId,
     }),
     release: async (c) => {
       await releaseTelephonyLease(host, {
         concurrencyKey: c.attemptId, tenantId: c.tenantId, accountId: c.accountId, provider: c.provider, source: 'webrtc',
+        credentialId: c.credentialId,
       });
     },
   };
@@ -238,6 +243,92 @@ describe('concurrency caps under pressure (load)', () => {
     expect(audit, audit.slice(0, 20).join('\n')).toEqual([]);
     expect(await world.status('H')).toBe('completed');
     expect(await world.status('K')).toBe('completed');
+  }, 300_000);
+
+  /**
+   * CR13: a tenant's carrier account with a cap of its own. Two campaigns on two accounts of one
+   * tenant dial on the same credential (cap 2), each account with room for 4; a third campaign of
+   * the tenant dials on the service's own account. Asserted every round: the credential's counter
+   * equals the live calls on it and never exceeds the cap; the service-account campaign is paced
+   * exactly as if the others were idle and is never refused. Raising the cap frees the floor, and
+   * nothing is lost: every refused contact is dialled later and every slot comes back.
+   */
+  it('a carrier account\'s own cap binds across two accounts of its tenant; the service account dials on unaffected', async () => {
+    const CAP = 2;
+    const AGENTS = 4;
+    const db = getTestPool();
+    const tenantId = uuidFor('floor-tenant-t1');
+    await db.query(`INSERT INTO tenants (id, name, slug) VALUES ($1, 'Floor t1', 'floor-t1-cap') ON CONFLICT (id) DO NOTHING`, [tenantId]);
+    await db.query(
+      `INSERT INTO telephony_providers (name, display_name, status) VALUES ('voicelink', 'VoiceLink', 'active'), ('plivo', 'Plivo', 'active')
+       ON CONFLICT (name) DO UPDATE SET status = 'active'`);
+    const { rows: [cred] } = await db.query<{ id: string }>(
+      `INSERT INTO telephony_credentials (tenant_id, provider, label, account_ref, max_concurrent_calls)
+       VALUES ($1, 'plivo', 'Shared', 'MASHAREDSHAREDSHARED', $2) RETURNING id`, [tenantId, CAP]);
+    const credentialId = cred!.id;
+    // The credential's numbers, assigned to the tenant untagged: every account may dial from them (PL5).
+    const NUMBERS = ['+14155550101', '+14155550102'];
+    await phoneNumberRepository.syncForCredential(credentialId, NUMBERS.map((n) => ({ phone_number: n, label: null })), null);
+    const onCredential = { telephony_provider: 'plivo', telephony_credential_id: credentialId, caller_ids: NUMBERS };
+
+    world = await createFloorWorld({
+      campaigns: [
+        { label: 'A', tenant: 't1', account: 'cap-a', agents: AGENTS, contacts: scaled(60), maxConcurrentCalls: AGENTS, campaign: onCredential },
+        { label: 'B', tenant: 't1', account: 'cap-b', agents: AGENTS, contacts: scaled(60), maxConcurrentCalls: AGENTS, campaign: onCredential },
+        { label: 'S', tenant: 't1', account: 'cap-s', agents: AGENTS, contacts: scaled(60), maxConcurrentCalls: AGENTS },
+      ],
+    });
+    const a = world.campaign('A');
+    const b = world.campaign('B');
+    const svc = world.campaign('S');
+    const host = wireGuards(world);
+    const seed = world.seed;
+    const violations: string[] = [];
+    const counted = async () => {
+      const read = await host.credentialConcurrencyGuard.getCounts([credentialId]);
+      return read.counts.get(credentialId) ?? -1;
+    };
+
+    const check = async (round: number, cap: number) => {
+      violations.push(...await world.checkInvariants());
+      const live = (await liveAttempts(a.id)) + (await liveAttempts(b.id));
+      const count = await counted();
+      if (live > cap) violations.push(`[seed ${seed}, round ${round}] ${live} live calls on the carrier account over its cap ${cap}`);
+      if (count !== live) violations.push(`[seed ${seed}, round ${round}] credential counter ${count} != ${live} live calls on it`);
+      if (violations.length) throw new Error(violations.slice(0, 8).join('\n'));
+    };
+
+    for (let i = 0; i < 15; i++) {
+      const r = await world.round();
+      await check(r.round, CAP);
+      const s = r.campaigns['S']!;
+      expect(s.attemptsCreated, `seed ${seed}, round ${r.round}: the service-account campaign was held back`).toBe(expectedDials(s));
+    }
+    const refused = world.carrier.refusals.length;
+    expect(refused, `seed ${seed}: the cap never bound`).toBeGreaterThan(0);
+    expect(world.carrier.refusals.every((r) => r.code === 'carrier_account_concurrency_limit' && r.campaignId !== svc.id), `seed ${seed}`).toBe(true);
+    expect(world.carrier.peakLiveByCredential.get(credentialId), `seed ${seed}`).toBe(CAP);
+    // Two accounts shared the cap: each was refused below its own limit.
+    expect(new Set(world.carrier.refusals.map((r) => r.campaignId)), `seed ${seed}`).toEqual(new Set([a.id, b.id]));
+
+    // An operator raises the cap; the floor recovers by itself.
+    await db.query('UPDATE telephony_credentials SET max_concurrent_calls = $2 WHERE id = $1', [credentialId, AGENTS * 2]);
+    host.credentialConcurrencyGuard.invalidateCap(credentialId);
+    await world.runUntilDrained({ maxRounds: scaled(2000), onRound: async (r) => { await check(r.round, AGENTS * 2); } });
+    expect(world.carrier.refusals.length, `seed ${seed}: refusals after the cap was raised`).toBe(refused);
+    expect(world.carrier.peakLiveByCredential.get(credentialId), `seed ${seed}`).toBeGreaterThan(CAP);
+
+    const audit = await world.finalAudit();
+    expect(audit, audit.slice(0, 20).join('\n')).toEqual([]);
+    for (const label of ['A', 'B', 'S']) expect(await world.status(label), `seed ${seed}`).toBe('completed');
+    // Refused, not lost: each refused contact was dialled for real later.
+    const rows = await attemptRows([a.id, b.id]);
+    const refusedRows = rows.filter((r) => world.carrier.refusals.some((x) => x.attemptId === r.id));
+    for (const contactId of new Set(refusedRows.map((r) => r.contact_id))) {
+      expect(rows.some((r) => r.contact_id === contactId && r.webrtc_call_id !== null), `seed ${seed}: contact ${contactId} lost`).toBe(true);
+    }
+    expect(await counted()).toBe(0);
+    for (const c of [a, b, svc]) expect(await host.accountConcurrencyGuard.getAccountCount(c.tenantId, c.accountId)).toBe(0);
   }, 300_000);
 
   /**

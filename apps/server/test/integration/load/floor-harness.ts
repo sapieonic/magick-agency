@@ -149,6 +149,8 @@ interface FloorCall {
   tenantId: string;
   accountId: string;
   provider: string;
+  /** The tenant carrier account the dialer dialled on (null: the service's own account). */
+  credentialId: string | null;
   script: FloorScript;
   phase: 'ringing' | 'talking' | 'answered_unbridged';
   /** Advances spent in the current phase. */
@@ -162,10 +164,13 @@ interface FloorCall {
   parked: boolean;
 }
 
+/** One dial as admission sees it: `credentialId` is the carrier account it is placed on (CR13). */
+export interface AdmittedCall { attemptId: string; tenantId: string; accountId: string; provider: string; credentialId: string | null }
+
 /** Admission for one dial — the bridge's concurrency guards, when a scenario wires them. */
 export interface CarrierAdmission {
-  admit(call: { attemptId: string; tenantId: string; accountId: string; provider: string }): Promise<void>;
-  release(call: { attemptId: string; tenantId: string; accountId: string; provider: string }): Promise<void>;
+  admit(call: AdmittedCall): Promise<void>;
+  release(call: AdmittedCall): Promise<void>;
 }
 
 const BARRIER_TIMEOUT_MS = 10_000;
@@ -199,6 +204,8 @@ export class FloorCarrier {
   readonly barrierTimeouts: Array<{ attemptId: string; waitingFor: string; observed: string }> = [];
   /** Peak live calls the carrier held per account, over the run. */
   readonly peakLiveByAccount = new Map<string, number>();
+  /** Peak live calls the carrier held per tenant carrier account (credential), over the run. */
+  readonly peakLiveByCredential = new Map<string, number>();
 
   admission: CarrierAdmission | null = null;
   /** Per-campaign outcome mix; campaigns absent here use {@link mix}. */
@@ -241,16 +248,18 @@ export class FloorCarrier {
     tenantId: string;
     accountId: string;
     provider?: string;
+    telephonyCredentialId?: string | null;
     initiatedBy?: string;
     browserCloseGraceMs?: number;
   }): Promise<{ id: string }> {
     const attemptId = params.correlation.agencyAttemptId;
     if (this.live.has(attemptId) || this.ended.has(attemptId)) this.duplicateDials.push(attemptId);
     const provider = params.provider ?? 'voicelink';
+    const credentialId = params.telephonyCredentialId ?? null;
     const campaignId = params.correlation.campaignId;
     if (this.admission) {
       try {
-        await this.admission.admit({ attemptId, tenantId: params.tenantId, accountId: params.accountId, provider });
+        await this.admission.admit({ attemptId, tenantId: params.tenantId, accountId: params.accountId, provider, credentialId });
       } catch (err) {
         this.refusals.push({ attemptId, campaignId, code: (err as { code?: string }).code ?? 'unknown' });
         throw err;
@@ -268,6 +277,7 @@ export class FloorCarrier {
       tenantId: params.tenantId,
       accountId: params.accountId,
       provider,
+      credentialId,
       script,
       phase: 'ringing',
       rounds: 0,
@@ -281,6 +291,11 @@ export class FloorCarrier {
     let n = 0;
     for (const c of this.live.values()) if (`${c.tenantId}:${c.accountId}` === scope) n++;
     this.peakLiveByAccount.set(scope, Math.max(this.peakLiveByAccount.get(scope) ?? 0, n));
+    if (credentialId) {
+      let onCredential = 0;
+      for (const c of this.live.values()) if (c.credentialId === credentialId) onCredential++;
+      this.peakLiveByCredential.set(credentialId, Math.max(this.peakLiveByCredential.get(credentialId) ?? 0, onCredential));
+    }
     return { id: call.callId };
   }
 
@@ -387,6 +402,7 @@ export class FloorCarrier {
     if (this.admission) {
       await this.admission.release({
         attemptId: call.attemptId, tenantId: call.tenantId, accountId: call.accountId, provider: call.provider,
+        credentialId: call.credentialId,
       });
     }
     const bridged = call.phase === 'talking';

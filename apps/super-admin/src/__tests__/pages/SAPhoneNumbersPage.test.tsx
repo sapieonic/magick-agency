@@ -78,7 +78,7 @@ function makeCredential(over: Partial<TelephonyCredential>): TelephonyCredential
   return {
     id: 'cred-vl', tenant_id: 'tenant-acme', provider: 'voicelink', label: 'Acme direct', status: 'active',
     account_ref: 'acme-direct', public_config: { username: 'acme-direct' }, secret_version: 1, secret_hint: 'ab12',
-    verified_at: null, last_error: null, created_by: null, updated_by: null, created_at: AT.created_at, updated_at: AT.updated_at,
+    verified_at: null, last_error: null, max_concurrent_calls: null, created_by: null, updated_by: null, created_at: AT.created_at, updated_at: AT.updated_at,
     revoked_at: null, shredded_at: null, ...over,
   };
 }

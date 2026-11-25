@@ -200,7 +200,8 @@ function repo(): CredentialRepo {
       const row: TelephonyCredentialRecord = {
         id: i.id, tenant_id: i.tenant_id, provider: i.provider, label: i.label, status: 'active', account_ref: i.account_ref,
         public_config: i.public_config, secret_version: 1, secret_hint: i.sealed.secret_hint, verified_at: i.verified_at,
-        last_error: null, created_by: i.created_by, updated_by: i.created_by, created_at: now, updated_at: now,
+        last_error: null, max_concurrent_calls: i.max_concurrent_calls ?? null,
+        created_by: i.created_by, updated_by: i.created_by, created_at: now, updated_at: now,
         revoked_at: null, shredded_at: null,
       };
       rows.set(i.id, row);
