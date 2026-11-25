@@ -7,8 +7,8 @@ import { HelpTooltip } from '@magick-agency/web-ui/components/HelpTooltip';
 import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { operatorCarrierName } from '../../../utils/carrierName';
 import {
+  activeAccountChoices,
   carrierModes,
-  credentialAccountName,
   numbersAddedByHand,
   takesTenantNumbersByHand,
 } from '../../../utils/carrierModes';
@@ -80,12 +80,7 @@ export function PhoneNumberCreateModal({ open, providers, credentials, tenantNam
   const chosen = offered.find(p => p.id === form.provider_id);
   const asksAccount = chosen !== undefined && takesTenantNumbersByHand(chosen);
   const hasService = chosen !== undefined && carrierModes(chosen).service;
-  const accounts = asksAccount
-    ? (credentials ?? [])
-      .filter(c => c.status === 'active' && c.provider.toLowerCase() === chosen.name.toLowerCase())
-      .map(c => ({ id: c.id, name: credentialAccountName(c, tenantName) }))
-      .sort((a, b) => a.name.localeCompare(b.name))
-    : [];
+  const accounts = asksAccount ? activeAccountChoices(credentials, chosen.name, tenantName) : [];
 
   const chooseProvider = (providerId: string) => {
     const next = offered.find(p => p.id === providerId);

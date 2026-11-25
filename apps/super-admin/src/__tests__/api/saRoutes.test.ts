@@ -73,6 +73,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   retirePhoneNumber: () => api.retirePhoneNumber('p1'),
   reactivatePhoneNumber: () => api.reactivatePhoneNumber('p1'),
   deletePhoneNumber: () => api.deletePhoneNumber('p1'),
+  pinPhoneNumber: () => api.pinPhoneNumber('p1', { telephony_credential_id: 'c1' }),
   assignPhoneNumber: () => api.assignPhoneNumber('p1', { tenant_id: 't1' }),
   unassignPhoneNumber: () => api.unassignPhoneNumber('p1', 't1'),
   getTenantPhoneNumbers: () => api.getTenantPhoneNumbers('t1'),

@@ -62,3 +62,19 @@ export function credentialAccountName(
 ): string {
   return `${tenantName.get(credential.tenant_id) ?? credential.tenant_id} · ${credential.label}`;
 }
+
+/**
+ * The tenant accounts a number on `providerName` can be put on: that carrier's ACTIVE
+ * credentials, named "Tenant · label", in name order (Add number and Move to a tenant's
+ * account offer the same list).
+ */
+export function activeAccountChoices(
+  credentials: readonly { id: string; tenant_id: string; label: string; provider: string; status: string }[] | null,
+  providerName: string,
+  tenantName: ReadonlyMap<string, string>,
+): Array<{ id: string; name: string }> {
+  return (credentials ?? [])
+    .filter(c => c.status === 'active' && c.provider.toLowerCase() === providerName.toLowerCase())
+    .map(c => ({ id: c.id, name: credentialAccountName(c, tenantName) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}

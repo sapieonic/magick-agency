@@ -30,6 +30,8 @@ import type {
   TenantPhoneAssignment,
   PhoneNumberDetailResponse,
   CreatePhoneNumberBody,
+  PinPhoneNumberBody,
+  PinPhoneNumberResponse,
   UpdatePhoneNumberBody,
   AssignPhoneNumberBody,
 } from '@magick-agency/contracts/api/platform/super-admin';
@@ -447,6 +449,18 @@ export async function reactivatePhoneNumber(id: string): Promise<void> {
 
 export async function deletePhoneNumber(id: string): Promise<void> {
   await saFetch(`${SA_BASE}/phone-numbers/${id}/delete`, { method: 'POST' });
+}
+
+/**
+ * Move a number on the service's own carrier account onto a tenant's own account of the same
+ * carrier (docs/carriers.md CR6): pinned to the credential and assigned to its tenant. One way.
+ * Refusals carry a `PinPhoneNumberErrorCode` in `details.code` (`PinPhoneNumberError`).
+ */
+export async function pinPhoneNumber(id: string, data: PinPhoneNumberBody): Promise<PinPhoneNumberResponse> {
+  return saFetch<PinPhoneNumberResponse>(`${SA_BASE}/phone-numbers/${id}/pin`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 export async function assignPhoneNumber(phoneNumberId: string, data: AssignPhoneNumberBody): Promise<void> {

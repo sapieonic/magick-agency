@@ -50,6 +50,7 @@ export const SA_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'DELETE', path: '/super-admin/phone-numbers/:id' },
   { method: 'POST', path: '/super-admin/phone-numbers/:id/reactivate' },
   { method: 'POST', path: '/super-admin/phone-numbers/:id/delete' },
+  { method: 'POST', path: '/super-admin/phone-numbers/:id/pin' },
   { method: 'POST', path: '/super-admin/phone-numbers/:id/assign' },
   { method: 'DELETE', path: '/super-admin/phone-numbers/:id/assign/:tenantId' },
   { method: 'GET', path: '/super-admin/tenants/:id/phone-numbers' },

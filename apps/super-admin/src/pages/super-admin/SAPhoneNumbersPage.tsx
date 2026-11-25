@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
-import { Phone, Plus, Trash2, Pencil, Search, RotateCcw } from 'lucide-react';
+import { Phone, Plus, Trash2, Pencil, Search, RotateCcw, KeyRound } from 'lucide-react';
 import {
   listPhoneNumbers,
   listTelephonyProviders,
@@ -22,12 +22,13 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { StatCard } from '../../components/common';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { operatorCarrierName } from '../../utils/carrierName';
-import { carrierModes } from '../../utils/carrierModes';
+import { carrierModes, takesTenantNumbersByHand } from '../../utils/carrierModes';
 import { useSuperAdminTenants } from '../../hooks/useSuperAdminTenants';
 import { PhoneNumberCreateModal } from './phone-numbers/PhoneNumberCreateModal';
 import { PhoneNumberEditModal } from './phone-numbers/PhoneNumberEditModal';
 import { usePhoneNumberBulk } from './phone-numbers/usePhoneNumberBulk';
 import { PhoneNumberInboundPanel } from './phone-numbers/PhoneNumberInboundPanel';
+import { PhoneNumberPinDialog } from './phone-numbers/PhoneNumberPinDialog';
 import styles from './SAPhoneNumbersPage.module.css';
 
 interface PhoneNumberAssignment {
@@ -86,6 +87,8 @@ export default function SAPhoneNumbersPage() {
   // Create / edit modals
   const [showCreate, setShowCreate] = useState(false);
   const [editPhone, setEditPhone] = useState<PhoneNumber | null>(null);
+  // "Move to a tenant's account" (CR6 amended): the number it is open for.
+  const [pinPhone, setPinPhone] = useState<PhoneNumber | null>(null);
 
   // Detail expansion
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -180,10 +183,33 @@ export default function SAPhoneNumbersPage() {
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
   useEffect(() => { void loadCredentials(); }, [loadCredentials]);
 
+  const providerOf = (pn: PhoneNumber) => providers.find(p => p.id === pn.provider_id);
+
   /** Whether the number's carrier takes inbound calls on a tenant's account (CR11); false until the catalogue is in. */
   const supportsInbound = (pn: PhoneNumber) => {
-    const provider = providers.find(p => p.id === pn.provider_id);
+    const provider = providerOf(pn);
     return provider !== undefined && carrierModes(provider).inbound;
+  };
+
+  /**
+   * Whether the number can be moved onto a tenant's own account (CR6 amended): active, on the
+   * service's own account, on a carrier that takes tenant numbers by hand.
+   */
+  const canPin = (pn: PhoneNumber) => {
+    const provider = providerOf(pn);
+    return pn.status === 'active' && !pn.telephony_credential_id && provider !== undefined && takesTenantNumbersByHand(provider);
+  };
+
+  /** After a move: the rows again and the open row's assignments (now the credential's tenant). */
+  const afterPin = async (id: string) => {
+    setPinPhone(null);
+    await refreshRows();
+    if (expandedId !== id) return;
+    try {
+      setAssignments((await getPhoneNumberDetail(id)).assignments);
+    } catch {
+      // The rows are fresh; the assignments show again on the next expand.
+    }
   };
 
   /** Which carrier account the number is on: the service's own, or a tenant's, by its label (CR6, CR7). */
@@ -491,6 +517,14 @@ export default function SAPhoneNumbersPage() {
                             <Pencil size={14} /> Edit
                           </button>
                         )}
+                        {canPin(pn) && (
+                          <button
+                            className="btn-secondary"
+                            onClick={e => { e.stopPropagation(); setPinPhone(pn); void loadCredentials(); }}
+                          >
+                            <KeyRound size={14} /> Move to a tenant’s account
+                          </button>
+                        )}
                         {pn.status === 'active' && (
                           <button
                             className={`btn-secondary ${styles.dangerBtn}`}
@@ -546,6 +580,17 @@ export default function SAPhoneNumbersPage() {
         tenantName={tenantName}
         onClose={() => setShowCreate(false)}
         onCreated={() => { setShowCreate(false); load(); }}
+        onAccountsStale={() => { void loadCredentials(); }}
+      />
+
+      <PhoneNumberPinDialog
+        key={pinPhone?.id ?? 'closed'}
+        phone={pinPhone}
+        provider={pinPhone ? providerOf(pinPhone) : undefined}
+        credentials={credentials}
+        tenantName={tenantName}
+        onClose={() => setPinPhone(null)}
+        onPinned={() => { if (pinPhone) void afterPin(pinPhone.id); }}
         onAccountsStale={() => { void loadCredentials(); }}
       />
 
