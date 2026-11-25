@@ -15,7 +15,7 @@ class LocalPreferences {
   /// Ring and call tones (incoming call, connected, call ended).
   final bool sounds;
 
-  /// A buzz when a call arrives and when it connects.
+  /// A buzz when a call arrives, when it connects and when a supervisor's message arrives (LF39).
   final bool haptics;
 
   /// Dark or light, as the agent chose in the Me tab. Null until they choose:

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  HELP_CANCELS_HELD,
   INITIAL_STATION_STATE,
   SUPERVISOR_MESSAGES_HELD,
   stationReducer,
@@ -76,10 +77,15 @@ describe('Need help on the station', () => {
 
   it('ignores an answer or a clear about any other request than the one on screen', () => {
     const open = raised(R2);
-    // A late frame about the earlier request R1 must not touch R2.
-    expect(answered(open, R1)).toBe(open);
-    expect(cleared(open, R1, 'expired')).toBe(open);
-    expect(cleared(open, R1, 'answered')).toBe(open);
+    // A late frame about the earlier request R1 must not touch R2 on screen. The station still
+    // hears it (`helpFrames`, out of scope, for Need help's telemetry: a request the agent pressed
+    // Cancel for still ends there, LF39), so only the fields the screen reads are held equal here.
+    const screenOf = (state: typeof open) => ({ help: state.help, helpNotice: state.helpNotice, helpEndedAt: state.helpEndedAt });
+    for (const late of [answered(open, R1), cleared(open, R1, 'expired'), cleared(open, R1, 'answered')]) {
+      expect(screenOf(late)).toEqual(screenOf(open));
+      expect(late.help).toBe(open.help);
+      expect(late.helpFrames.at(-1)).toMatchObject({ frame: { raised_at: R1 }, inScope: false });
+    }
     // With nothing open there is nothing to close, and nothing to say about a lapse.
     const lapsed = cleared(INITIAL_STATION_STATE, R1, 'expired');
     expect(lapsed.help).toBeNull();
@@ -190,6 +196,36 @@ describe('Need help on the station', () => {
   it('dismisses the notice', () => {
     const lapsed = cleared(raised(), R1, 'expired');
     expect(stationReducer(lapsed, { type: 'help_notice_dismissed' }).helpNotice).toBeNull();
+  });
+});
+
+describe('Need help presses (telemetry scope, LF39)', () => {
+  it('a frame about a request the agent pressed Cancel for is in scope, even with another on screen', () => {
+    let state = stationReducer(raised(R2), { type: 'help_cancel_pressed', raisedAt: R1 });
+    state = cleared(state, R1, 'cancelled');
+    expect(state.help?.raised_at).toBe(R2);
+    expect(state.helpFrames.at(-1)).toMatchObject({ frame: { raised_at: R1 }, inScope: true });
+  });
+
+  it(`remembers each pressed cancel once, at most ${HELP_CANCELS_HELD}, dropping the oldest`, () => {
+    let state = stationReducer(INITIAL_STATION_STATE, { type: 'help_cancel_pressed', raisedAt: R1 });
+    expect(stationReducer(state, { type: 'help_cancel_pressed', raisedAt: R1 })).toBe(state);
+    for (let i = 0; i < HELP_CANCELS_HELD; i++) {
+      state = stationReducer(state, { type: 'help_cancel_pressed', raisedAt: `r-${i}` });
+    }
+    expect(state.helpCancelsPressed).toHaveLength(HELP_CANCELS_HELD);
+    expect(state.helpCancelsPressed).not.toContain(R1);
+    expect(state.helpCancelsPressed.at(-1)).toBe(`r-${HELP_CANCELS_HELD - 1}`);
+  });
+
+  it('a raise in flight from its press until it ends', () => {
+    const pressed = stationReducer(INITIAL_STATION_STATE, { type: 'help_raise_started', at: Date.parse(R1) });
+    expect(pressed.helpRaisingSince).toBe(Date.parse(R1));
+    // Its answer alone does not end it: the press ends it once the answer is handled.
+    const answeredRaise = stationReducer(pressed, { type: 'help_set', help: { raised_at: R1, call_id: null } });
+    expect(answeredRaise.helpRaisingSince).toBe(Date.parse(R1));
+    expect(stationReducer(answeredRaise, { type: 'help_raise_ended' }).helpRaisingSince).toBeNull();
+    expect(stationReducer(INITIAL_STATION_STATE, { type: 'help_raise_ended' })).toBe(INITIAL_STATION_STATE);
   });
 });
 

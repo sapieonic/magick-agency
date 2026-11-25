@@ -25,6 +25,13 @@ import {
   trackWorkspaceInviteClaimSucceeded,
   trackWorkspaceInviteClaimFailed,
   trackWorkspaceInviteAddressMismatch,
+  trackAgencyHelpRaised,
+  trackAgencyHelpCancelled,
+  trackAgencyHelpAnswered,
+  trackAgencyHelpExpired,
+  trackAgencyHelpRefused,
+  trackAgencySupervisorMessageShown,
+  trackAgencySupervisorMessageSent,
   track,
   type AnalyticsPath,
 } from '../../analytics/events';
@@ -304,5 +311,39 @@ describe('analytics/events catalog', () => {
     });
     // @ts-expect-error — the refusal code is the closed agent-retry union
     trackAgencyAgentRetry({ campaign_id: 'c', scope: 'all', requested: 0, outcome: 'refused', reopened: 0, skipped_total: 0, code: 'nope' });
+  });
+
+  it('emits Need help and the supervisor message events under the names the mobile app shares (LF39), closed unions only', () => {
+    capture.mockClear();
+    trackAgencyHelpRaised({ surface: 'softphone', on_call: true });
+    trackAgencyHelpCancelled({ wait_bucket: 'under_60' });
+    trackAgencyHelpAnswered({ how: 'unknown', wait_bucket: '5_15m' });
+    trackAgencyHelpExpired();
+    trackAgencyHelpRefused({ action: 'cancel', code: 'network' });
+    trackAgencySupervisorMessageShown({ on_call: false });
+    trackAgencySupervisorMessageSent({ kind: 'coming_to_desk' });
+    expect(capture.mock.calls).toEqual([
+      ['agency_help_raised', { surface: 'softphone', on_call: true }],
+      ['agency_help_cancelled', { wait_bucket: 'under_60' }],
+      ['agency_help_answered', { how: 'unknown', wait_bucket: '5_15m' }],
+      ['agency_help_expired', {}],
+      ['agency_help_refused', { action: 'cancel', code: 'network' }],
+      ['agency_supervisor_message_shown', { on_call: false }],
+      ['agency_supervisor_message_sent', { kind: 'coming_to_desk' }],
+    ]);
+
+    // Compile-time half: no names, ids or text ride along, and every value is from its closed set.
+    // @ts-expect-error — the answerer's name is never sent
+    trackAgencyHelpAnswered({ how: 'listen', wait_bucket: 'under_60', by_name: 'Priya N' });
+    // @ts-expect-error — nor the message's text
+    trackAgencySupervisorMessageShown({ on_call: true, text: 'Offer the plan' });
+    // @ts-expect-error — nor the agent a message went to
+    trackAgencySupervisorMessageSent({ kind: 'talk', agent_name: 'Arjun T' });
+    // @ts-expect-error — a surface is one of three
+    trackAgencyHelpRaised({ surface: 'phone_tab', on_call: false });
+    // @ts-expect-error — a raw server code is not a refusal code
+    trackAgencyHelpRefused({ action: 'raise', code: 'account_scope_required' });
+    // @ts-expect-error — a wait is a bucket, never a duration
+    trackAgencyHelpCancelled({ wait_bucket: 42 });
   });
 });

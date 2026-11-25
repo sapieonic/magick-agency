@@ -20,10 +20,18 @@ import 'station_view.dart' show HelpNoticeTone, HelpStage, HelpView, SupervisorM
 ///
 /// **A raise in flight.** The frames can beat the raise's answer: a supervisor may answer, and the
 /// request end, before the HTTP reply lands. While raising with nothing shown, `help_answered` is
-/// kept for its `raised_at` and `help_cleared` leaves its notice at once; the `raised_at` of the
+/// kept for its `raised_at` and `help_cleared` leaves its notice at once, for a request stamped no
+/// earlier than [inFlightSlack] before the press (an older request the raise expired is not the
+/// raise's: its `help_cleared {expired}` comes ahead of the reply); the `raised_at` of the
 /// last `help_cleared` (or the cancel's answer) is remembered, even with nothing shown, and a
 /// raise's answer or a `ready.help` naming it is ignored, so a late reply or a stale snapshot never
 /// re-opens a request that already ended (the server keeps no memory of what it cleared).
+///
+/// **Which request a frame counts for** ([holds], LF39's end events): the one shown, the one a raise
+/// in flight is opening ([onRaiseStarted] to [onRaiseEnded]), or one the agent pressed Cancel for
+/// ([onCancelPressed]: from the press, whatever the reply, a reconnect or a later request does to it
+/// on screen). These two memories are kept across every frame and answer, and go only with the
+/// session ([empty]).
 ///
 /// **A cancel that lost the race.** A supervisor may answer while the agent's cancel is on its
 /// way; the server's cancel then finds nothing open and answers `help: null`, and the frames can
@@ -44,6 +52,8 @@ final class FloorAssistState {
     this.cancelled,
     this.messages = const [],
     this.seen = const [],
+    this.raisingSince,
+    this.cancelsPressed = const [],
   });
 
   static const empty = FloorAssistState();
@@ -53,6 +63,10 @@ final class FloorAssistState {
 
   /// How many message ids are remembered, so a resent frame is not shown again.
   static const maxSeen = 200;
+
+  /// How many cancelled requests a session remembers ([cancelsPressed]); far more than one session
+  /// cancels.
+  static const cancelsRemembered = 16;
 
   /// The open request on screen; null for none.
   final SessionHelp? help;
@@ -82,6 +96,17 @@ final class FloorAssistState {
   /// The message ids already queued (most recent last).
   final List<String> seen;
 
+  /// When the raise in flight was pressed, on the server-aligned clock: from the press
+  /// ([onRaiseStarted]) until its reply lands or fails ([onRaiseEnded]); null with none in flight. A
+  /// frame counts for the raise only about a request stamped no earlier than [inFlightSlack] before
+  /// it. A raise whose reply failed is no longer in flight.
+  final DateTime? raisingSince;
+
+  /// The requests the agent pressed Cancel for this session (their `raised_at`, oldest first, at
+  /// most [cancelsRemembered]): their end frames count from the press on ([holds]). An earlier
+  /// request's `help_cleared {cancelled}` can land after the next one was raised and cancelled.
+  final List<DateTime> cancelsPressed;
+
   FloorAssistState _with({
     Object? help = _keep,
     Object? answer = _keep,
@@ -91,6 +116,8 @@ final class FloorAssistState {
     Object? cancelled = _keep,
     List<SupervisorMessageFrame>? messages,
     List<String>? seen,
+    Object? raisingSince = _keep,
+    List<DateTime>? cancelsPressed,
   }) => FloorAssistState(
     help: identical(help, _keep) ? this.help : help as SessionHelp?,
     answer: identical(answer, _keep) ? this.answer : answer as HelpAnswer?,
@@ -100,24 +127,69 @@ final class FloorAssistState {
     cancelled: identical(cancelled, _keep) ? this.cancelled : cancelled as DateTime?,
     messages: messages ?? this.messages,
     seen: seen ?? this.seen,
+    raisingSince: identical(raisingSince, _keep) ? this.raisingSince : raisingSince as DateTime?,
+    cancelsPressed: cancelsPressed ?? this.cancelsPressed,
   );
 
   static bool _same(DateTime? a, DateTime b) => a != null && a.isAtSameMomentAs(b);
 
   bool _shows(DateTime raisedAt) => help != null && help!.raisedAt.isAtSameMomentAs(raisedAt);
 
-  /// A frame about the request a raise in flight is opening: nothing shown yet, and not one that
-  /// already ended.
-  bool _inFlight(DateTime raisedAt, bool raising) => raising && help == null && !_same(ended, raisedAt);
+  /// How much earlier than the press a request a raise in flight is opening may be stamped: its
+  /// `raised_at` is the server's, the press is this phone's server-aligned clock, and the offset
+  /// estimate can be a little off. An older request (one never shown here, after a relaunch, that
+  /// the raise itself expired: at least [FloorAssistCopy.expiryMinutes] old) is well outside it.
+  static const inFlightSlack = Duration(seconds: 60);
+
+  /// A frame about the request a raise in flight is opening: a raise pressed at [raisingSince],
+  /// nothing shown yet, not one that already ended, and stamped no earlier than [inFlightSlack]
+  /// before the press. An older request the raise expired (its `help_cleared {expired}` comes ahead
+  /// of the reply) is not the raise's.
+  bool _inFlight(DateTime raisedAt) {
+    final since = raisingSince;
+    return since != null && help == null && !_same(ended, raisedAt) && !raisedAt.isBefore(since.subtract(inFlightSlack));
+  }
 
   /// The answer held for [raisedAt], if any.
   HelpAnswer? _answerOf(DateTime raisedAt) => _same(answerFor, raisedAt) ? answer : null;
 
+  /// Whether a `help_answered` or `help_cleared` for [raisedAt] is about a request this station
+  /// holds (LF39's "in scope", what its end events count): the one shown, the one a raise in flight
+  /// ([raisingSince]) is opening, the one the cancel's answer just ended, or one the agent pressed
+  /// Cancel for ([cancelsPressed], from the press). A frame about any other request (an earlier one,
+  /// or one seen to end already, a `ready` without it included) is not.
+  bool holds(DateTime raisedAt) =>
+      _shows(raisedAt) ||
+      _inFlight(raisedAt) ||
+      _cancelledFirst(raisedAt) ||
+      cancelsPressed.any((c) => c.isAtSameMomentAs(raisedAt));
+
+  /// Need help pressed at [at] (the server-aligned clock): a raise in flight until [onRaiseEnded].
+  FloorAssistState onRaiseStarted(DateTime at) => _with(raisingSince: at);
+
+  /// The raise's reply landed, or it failed: no raise in flight. After [onRaised], when it opened one.
+  FloorAssistState onRaiseEnded() => raisingSince == null ? this : _with(raisingSince: null);
+
+  /// Cancel pressed for the request shown: its end frames count from now on ([cancelsPressed]),
+  /// whatever the reply. Before the cancel's answer ([onCancelled]).
+  FloorAssistState onCancelPressed() {
+    final open = help;
+    if (open == null) return this;
+    final pressed = [...cancelsPressed, open.raisedAt];
+    return _with(
+      cancelsPressed: List.unmodifiable(
+        pressed.length > cancelsRemembered ? pressed.sublist(pressed.length - cancelsRemembered) : pressed,
+      ),
+    );
+  }
+
   /// `ready`: the server's whole view of the request ([ReadyFrame.help]). None open clears the
-  /// one shown, with no notice (the frame that ended it was missed; nothing says how). One this
-  /// station already saw end ([ended]) is stale and ignored.
+  /// one shown, with no notice (the frame that ended it was missed; nothing says how), and
+  /// remembers it as [ended]: a `help_cleared` about it that comes later (the server sends an older
+  /// request's expiry ahead of a new raise's reply) is about a request already over, never the one
+  /// a raise in flight is opening. One this station already saw end ([ended]) is stale and ignored.
   FloorAssistState onReady(SessionHelp? open) {
-    if (open == null) return help == null ? this : _with(help: null, answer: null, answerFor: null);
+    if (open == null) return help == null ? this : _with(help: null, answer: null, answerFor: null, ended: help!.raisedAt);
     if (_same(ended, open.raisedAt)) return this;
     if (_shows(open.raisedAt)) return help == open ? this : _with(help: open);
     return _open(open);
@@ -154,12 +226,13 @@ final class FloorAssistState {
     );
   }
 
-  /// `help_answered`: about the request shown, or ([raising]) the one a raise in flight is opening.
+  /// `help_answered`: about the request shown, or the one a raise in flight ([raisingSince]) is
+  /// opening.
   /// About the request the cancel's answer just ended ([_cancelledFirst]), the cancel lost the race:
   /// the notice says who answered at once.
-  FloorAssistState onAnswered(HelpAnsweredFrame f, {bool raising = false}) {
+  FloorAssistState onAnswered(HelpAnsweredFrame f) {
     final answer = HelpAnswer(byName: f.byName, how: f.how);
-    if (_shows(f.raisedAt) || _inFlight(f.raisedAt, raising)) return _with(answer: answer, answerFor: f.raisedAt);
+    if (_shows(f.raisedAt) || _inFlight(f.raisedAt)) return _with(answer: answer, answerFor: f.raisedAt);
     if (_cancelledFirst(f.raisedAt)) return _with(answer: answer, answerFor: f.raisedAt, notice: HelpNotice.answered(answer));
     return this;
   }
@@ -168,13 +241,13 @@ final class FloorAssistState {
   /// its frames came behind the reply.
   bool _cancelledFirst(DateTime raisedAt) => help == null && _same(cancelled, raisedAt);
 
-  /// `help_cleared`: ends the request shown, or ([raising]) the one a raise in flight is opening,
+  /// `help_cleared`: ends the request shown, or the one a raise in flight ([raisingSince]) is opening,
   /// whose answer then opens nothing. With nothing shown and no raise in flight it is only
   /// remembered as [ended], with no notice, so a stale `ready.help` naming it opens nothing;
   /// except `answered` for the request the cancel's answer just ended ([_cancelledFirst]): a
   /// supervisor got there first, and the notice says so (with the answer held for it, if any).
-  FloorAssistState onCleared(HelpClearedFrame f, {bool raising = false}) {
-    if (!_shows(f.raisedAt) && !_inFlight(f.raisedAt, raising)) {
+  FloorAssistState onCleared(HelpClearedFrame f) {
+    if (!_shows(f.raisedAt) && !_inFlight(f.raisedAt)) {
       if (_cancelledFirst(f.raisedAt)) {
         final told = f.reason == HelpClearedReason.answered ? HelpNotice.answered(_answerOf(f.raisedAt)) : this.notice;
         return _with(answer: null, answerFor: null, notice: told, cancelled: null);
@@ -246,10 +319,13 @@ final class FloorAssistState {
       other.ended == ended &&
       other.cancelled == cancelled &&
       const ListEquality<SupervisorMessageFrame>().equals(other.messages, messages) &&
-      const ListEquality<String>().equals(other.seen, seen);
+      const ListEquality<String>().equals(other.seen, seen) &&
+      other.raisingSince == raisingSince &&
+      const ListEquality<DateTime>().equals(other.cancelsPressed, cancelsPressed);
 
   @override
-  int get hashCode => Object.hash(help, answer, answerFor, notice, ended, cancelled, Object.hashAll(messages), seen.length);
+  int get hashCode =>
+      Object.hash(help, answer, answerFor, notice, ended, cancelled, Object.hashAll(messages), seen.length, raisingSince, cancelsPressed.length);
 }
 
 const _keep = Object();
@@ -324,25 +400,69 @@ abstract final class FloorAssistCopy {
   static const raiseFailed = 'Your request did not go through. Try again.';
   static const cancelFailed = 'Your request could not be cancelled. Try again.';
 
-  /// The words for a refused raise ([raising]) or cancel, from the error.
-  static String refusal(Object error, {required bool raising}) {
-    if (error is ApiNetworkError) return raising ? raiseOffline : cancelOffline;
-    if (error is ApiUnauthorized) return error.userMessage;
-    if (error is ApiHttpError) {
-      final body = errorBodyOf(error)!;
-      switch (body.floorAssistCode) {
-        case FloorAssistErrorCode.floorAssistDisabled:
-          return disabled;
-        case FloorAssistErrorCode.helpNotOnCall:
-          return notOnCall;
-        case FloorAssistErrorCode.agentNotLive || FloorAssistErrorCode.messageInvalid || FloorAssistErrorCode.unknown:
-          break;
-      }
-      if (body.code == AgencyErrorCode.sessionEnded) return sessionEnded;
-      if (body.codeRaw == 'account_scope_required') return accountScope;
-      if (error.status == 404) return notFound;
-      if (error.status == 403) return notAllowed;
+  /// The words for a refused raise ([raising]) or cancel, from the error ([HelpRefusal.of]).
+  static String refusal(Object error, {required bool raising}) => switch (HelpRefusal.of(error)) {
+    HelpRefusal.network => raising ? raiseOffline : cancelOffline,
+    HelpRefusal.unauthorized => (error as ApiUnauthorized).userMessage,
+    HelpRefusal.disabled => disabled,
+    HelpRefusal.notOnCall => notOnCall,
+    HelpRefusal.sessionEnded => sessionEnded,
+    HelpRefusal.accountScope => accountScope,
+    HelpRefusal.notFound => notFound,
+    HelpRefusal.notAllowed => notAllowed,
+    HelpRefusal.other => raising ? raiseFailed : cancelFailed,
+  };
+}
+
+/// Why a Need help raise or cancel failed, read from what the help routes threw: keyed on the
+/// floor-assist code, then the session's, then the status, never the server's sentence. The
+/// station's words ([FloorAssistCopy.refusal]) and LF39's `agency_help_refused` code
+/// (`FloorAssistTelemetry.refusalCode`) both map from it.
+enum HelpRefusal {
+  /// No answer (offline, a timeout).
+  network,
+
+  /// 401 after the token refresh: the sign-in is over.
+  unauthorized,
+
+  /// `floor_assist_disabled`: Need help is off for the account.
+  disabled,
+
+  /// `help_not_on_call`: this server takes a raise on a call or in wrap-up only.
+  notOnCall,
+
+  /// `session_ended`.
+  sessionEnded,
+
+  /// `account_scope_required` (a 400).
+  accountScope,
+
+  /// Any other 404.
+  notFound,
+
+  /// Any other 403.
+  notAllowed,
+
+  /// Anything else: another status or code, or an error that is not the server's answer.
+  other;
+
+  static HelpRefusal of(Object error) {
+    if (error is ApiNetworkError) return network;
+    if (error is ApiUnauthorized) return unauthorized;
+    if (error is! ApiHttpError) return other;
+    final body = errorBodyOf(error)!;
+    switch (body.floorAssistCode) {
+      case FloorAssistErrorCode.floorAssistDisabled:
+        return disabled;
+      case FloorAssistErrorCode.helpNotOnCall:
+        return notOnCall;
+      case FloorAssistErrorCode.agentNotLive || FloorAssistErrorCode.messageInvalid || FloorAssistErrorCode.unknown:
+        break;
     }
-    return raising ? raiseFailed : cancelFailed;
+    if (body.code == AgencyErrorCode.sessionEnded) return sessionEnded;
+    if (body.codeRaw == 'account_scope_required') return accountScope;
+    if (error.status == 404) return notFound;
+    if (error.status == 403) return notAllowed;
+    return other;
   }
 }

@@ -178,6 +178,8 @@ void main() {
     final c = await started(tester);
     await pumpScreen(tester, c, const MeScreen());
     await scrollTo(tester, find.text('Vibration'));
+    // A supervisor's message buzzes too (LF39).
+    expect(find.text('A buzz when a call arrives, when it connects and when your supervisor sends a message'), findsOneWidget);
     await tapVisible(tester, find.text('Vibration'));
     await tester.pumpAndSettle();
     expect(c.read(localPreferencesProvider).haptics, isFalse);

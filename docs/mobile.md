@@ -297,7 +297,8 @@ text the band scrolls with the content and the main action keeps its place.
   left as it is. The join is still a separate request; the server is never asked for `/available`
   before the socket is open.
 - **Need help** is in the top bar on every working screen (AS5, BE-9), and beside Return to campaign
-  on the station's soft phone, whose header replaces the top bar; an open request shows as
+  on the station's soft phone, whose header replaces the top bar (beside Close soft phone on the
+  Phone tab too, LF39: "Floor assist" below); an open request shows as
   "Help asked · 0:42", and pressing it again cancels. A server older than BE-9 refuses a raise off a
   call `409 help_not_on_call`: the button is then offered on a call and while finishing one only, for
   the rest of the session (`HelpView.onlyOnCall`). With no internet it says "Call your supervisor to
@@ -1384,12 +1385,26 @@ the flag is on). Break limits are not behind it.
   stage, never the station's busy state, so asking for help never holds up hanging up or saving the
   outcome. A request raised in wrap-up stays open after the outcome is saved (the server's rule): the
   button shows it, and cancels it, on the waiting screen too (LF35).
+  - **On the soft phone** (LF39): beside Return to campaign on the station switched to the soft
+    phone, and beside Close soft phone on the Phone tab, with its notice or refusal under the
+    header (`softphone_panel.dart`), the same controls and states as on the station. A soft-phone
+    session has no campaign view (`stationViewProvider` is null for it), so the request and its
+    actions are read from the hosted session's own seam, `sessionHelpProvider` and
+    `sessionHelpActionsProvider` (`station_view.dart`; the core publishes `StationHost.help` for
+    either kind of session, as it does the messages); on the Phone tab the soft phone says whether a
+    call is on screen and whether the socket is open (`NeedHelpButton.phoneTab`). The server takes a
+    raise on a soft-phone session in any state (AS5); were an older one to refuse one off a call
+    (`help_not_on_call`), the button is then offered with a call on screen only, as on the station.
   - **Which request.** One at a time, identified by its `raised_at`. It is open from the raise's
     answer, or `ready.help` after a reconnect or a relaunch, until the `help_cleared` that names that
     same instant, or the cancel's answer. A frame about another request never touches the one shown.
     A `ready` with no `help` clears the one shown, with nothing said (the frame that ended it was
     missed). The frames can beat the raise's own reply: while it is in flight, `help_answered` is
-    kept and `help_cleared` leaves its notice at once, and a reply naming a request already ended
+    kept and `help_cleared` leaves its notice at once, for a request stamped no earlier than a
+    minute before the press on the server-aligned clock (`FloorAssistState.inFlightSlack`): an
+    older request the raise itself expired (one never shown here, say after a relaunch, at least
+    15 minutes old), whose `help_cleared {expired}` the server sends ahead of the reply, is not the
+    raise's and says nothing. A reply naming a request already ended
     (its `help_cleared` or the cancel's answer) opens nothing, so a slow reply never re-opens it.
     A `help_cleared` with nothing shown and no raise in flight is remembered the same way, with
     nothing said, and a `ready.help` naming a request already ended is stale and opens nothing: the
@@ -1431,6 +1446,55 @@ the flag is on). Break limits are not behind it.
   message twice as it arrives and again on a second message or a dismissal, where nothing new
   arrived. A soft-phone session gets them too: the core publishes them beside the shell's signals
   (`StationHost.messages`, `supervisorMessagesProvider`), not in the campaign view.
+  - **One vibration, never a sound** (LF39): the phone vibrates once (`HapticFeedback.vibrate`)
+    when a new message arrives, on a call too (a tone could be heard by the customer; a vibration
+    cannot), only while Me → Vibration (also ⋮ More → Sound) is on. Once per message id, at
+    arrival, in the core where the id is first queued (`StationController._messageArrived`), not in
+    the banner: never again for the same id (a resent frame), nor when Dismiss brings the next one
+    up; messages arriving within 2 seconds of the one before are one burst and vibrate once
+    (`StationController.messageBuzzQuiet`). The preference and the vibration are the core's seams
+    `stationHapticsProvider` and `stationVibrateProvider` (`station_deps.dart`).
+  - **The Vibration switch** ("A buzz when a call arrives, when it connects and when your
+    supervisor sends a message"; on the station "Feel a call come and connect, and a message from
+    your supervisor.") gates exactly those three: the message's vibration above, and the station's
+    buzz when a call arrives (`reserved`) and when it connects (`on_call`, `station_screen.dart`
+    `_onPhase`), each reading the preference at that moment. The short buzz of a refused Save
+    (What happened? and an inbound call's outcome) is the form's feedback, not an alert, and does
+    not follow it.
+- **Telemetry** (LF39; `lib/core/telemetry/floor_assist_telemetry.dart`), the same names,
+  properties and rules as the console's, closed values, counts and booleans only (never a
+  message's text, a name, a number or who answered):
+  - `agency_help_raised` (`surface`: `station`, `inbound` or `softphone`, where the agent pressed
+    it; `on_call`; both as at the press) on the first raise answer (the `POST …/help` reply with a
+    request) naming a `raised_at` this phone has not reported, whether or not the request is still
+    on screen when it lands (the frames may have ended it, or a `ready.help` shown it, first). A
+    `ready.help` or a frame never sends it.
+  - The end events count a `help_answered` or `help_cleared` only for a request **in scope** when
+    it lands: the one on screen, the one a raise in flight is opening (stamped no earlier than 60 s
+    before the press, on the server-aligned clock; a raise whose reply failed is no longer in
+    flight), or one the agent pressed Cancel for this session (from the press, not the cancel's
+    reply; every such request, so an earlier one's late `help_cleared {cancelled}` still counts). A
+    request a reconnect's `ready` said is over is remembered as ended. Either way an older
+    request's `help_cleared {expired}`, which the server sends ahead of a new raise's reply, is
+    never taken for the new one (nor shown as its expiry).
+  - `agency_help_answered` (`how`: `listen` or `message` from the frame; `wait_bucket`) on
+    `help_answered`, a cancel that lost the race to the answer included; on `help_cleared
+    {answered}` only when no `help_answered` was seen for it (`how: unknown`).
+    `agency_help_expired` on `help_cleared {expired}`, `agency_help_cancelled` (`wait_bucket`) on
+    `help_cleared {cancelled}` (the cancel won), on either side of the cancel's reply. At most one
+    end event per request; `session_ended` sends none.
+  - `agency_help_refused` (`action`: `raise` or `cancel`; `code`: `floor_assist_disabled`,
+    `help_not_on_call`, `session_ended`, `not_found`, `network` or `other`), once per refusal; a 2xx
+    reply the app cannot read is `other` too (the screen treats it as before), and no sign-in token
+    offline is `network`.
+  - `agency_supervisor_message_shown` (`on_call`) once per message id.
+  - `on_call`: on a campaign or inbound call or in its wrap-up; on the soft phone only while its
+    call is connected or owes its outcome (dialling and ringing are not on a call).
+    `wait_bucket`: the time from the request's `raised_at` to the moment this phone learnt it
+    ended, on the server-aligned clock, in `agency_floor_intervention`'s buckets (`under_60`,
+    `1_5m`, `5_15m`, `over_15m`).
+  - Each raised and end event is sent at most once per `raised_at` in the process, across
+    reconnects and a repeated raise answered with the same request.
 - **Break countdown** (LF38): on a break whose reason has `limit_minutes` (the bootstrap's
   `break_reasons`, found by the break's code as its label is), On break counts from the
   `agent_state` frame's `since`: "4:18 / 15:00", a bar, "10:42 left of your 15 minutes." (rounded up,
@@ -1441,12 +1505,10 @@ the flag is on). Break limits are not behind it.
   reserved code (the app's own pauses, the soft phone), whatever a catalog says
   (`StationViewMapper.breakLimitMinutes`). A limit edited mid-shift reaches the agent at their next
   join (the server's rule).
-- Not done in the app (LF39): Need help on the soft phone's own screens (the Phone tab; the server
-  accepts a raise on a soft-phone call), a chime or vibration for a message, and telemetry events
-  for Need help (the console has none yet to match).
-
 Tests: `test/core/station/station_floor_assist_test.dart`,
-`test/features/station/station_floor_assist_test.dart`, `test/app/supervisor_message_banner_test.dart`,
+`test/core/station/station_floor_assist_events_test.dart` (the Phone tab's help state, the
+vibration, the events), `test/features/station/station_floor_assist_test.dart`,
+`test/features/softphone/softphone_need_help_test.dart`, `test/app/supervisor_message_banner_test.dart`,
 and the wire package's `station_test.dart`, `session_test.dart`, `platform_test.dart`. Not run on a
 phone (below).
 
@@ -1523,7 +1585,8 @@ packages/
   - Call events, named and shaped as the console's where it has them, so one dashboard reads both:
     `agency_attempt_bridged` and `agency_attempt_released` for campaign calls,
     `agency_softphone_call_placed` / `_refused` (as the console's), `_bridged`, `_ended` and
-    `agency_softphone_dial_failed` for the soft phone. Each call's end carries what the phone saw of
+    `agency_softphone_dial_failed` for the soft phone. Need help and a supervisor's messages send
+    the console's floor assist events ("Floor assist" above). Each call's end carries what the phone saw of
     its audio: A-law frames received, JSON `pcm16` frames received (on the app's `alaw8` socket,
     the sign of a server that ignored the format: the caller is heard as noise), microphone frames
     sent and refused by a closed socket.
@@ -1687,7 +1750,15 @@ from the browser or file manager it was opened from.
   banner and the break countdown are unit- and widget-tested with the contract's sample frames in the
   server's order (`flutter test`, `dart test`), and the server's side drives a simulated phone station
   declaring `caps=floor_assist` (`floor-assist-e2e.test.ts`); nothing has run on a phone or against a
-  running server with this app build.
+  running server with this app build. The message's vibration (LF39) has not been felt on a phone,
+  and has two known risks there. On iOS, the system mutes vibration while the call's
+  `.playAndRecord` audio session records, so a message on a call may not buzz; the fix would be
+  `setAllowHapticsAndSystemSoundsDuringRecording(true)` in `VoiceEngine.swift` `configureSession`
+  (`packages/agent_audio`). On Android, `HapticFeedback.vibrate` is
+  `performHapticFeedback(LONG_PRESS)`, which follows the system's touch feedback setting, so a
+  phone with it off does not buzz; the fix would be the `Vibrator` service through a platform
+  channel (`VIBRATE` is already in the manifest). Neither is made: there is no Android SDK here to
+  compile the Kotlin, and iOS does not build.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
 - **Inbound calls (2026-11-10) have run only against the fixtures.** The app's flow is tested
   with the contract's sample frames and answers, played in the server's own frame order, not

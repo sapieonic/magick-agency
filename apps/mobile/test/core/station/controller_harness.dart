@@ -185,6 +185,9 @@ class App {
         }),
         stationUnauthorizedSinkProvider.overrideWithValue(unauthorized.add),
         stationSoundsProvider.overrideWithValue(() => sounds),
+        // Me → Vibration, and the vibrations a supervisor's message asked for (LF39).
+        stationHapticsProvider.overrideWithValue(() => haptics),
+        stationVibrateProvider.overrideWithValue(() => vibrations++),
         // OS3: this install's device id, fixed so a test can read it off the requests.
         stationDeviceIdsProvider.overrideWithValue(
           StationDeviceIds(() => MemoryStore({StationDeviceIds.storeKey: testDeviceId})),
@@ -234,6 +237,10 @@ class App {
 
   /// Me → Sounds, as the inbound chime reads it.
   bool sounds = true;
+
+  /// Me → Vibration, as a supervisor's message reads it; and how many times the phone vibrated.
+  bool haptics = true;
+  int vibrations = 0;
 
   StationController get controller => container.read(stationControllerProvider.notifier);
   StationView? get view => container.read(stationControllerProvider);

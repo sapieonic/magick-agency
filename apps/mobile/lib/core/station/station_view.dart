@@ -1197,10 +1197,25 @@ class StationView {
   int get hashCode => Object.hashAll([campaignId, sessionId, link, phase, phaseSince, call, wrapup, busy, audio, notes, actionError, queue, inbound]);
 }
 
+/// Need help's actions (floor assist, LF4), on the hosted session of either kind: a campaign
+/// station, or a soft-phone session on the Phone tab (LF39). Refusals land in [HelpView.error].
+abstract interface class SessionHelpActions {
+  /// Need help (floor assist, LF4): asks every supervisor of the account for help with the call on
+  /// screen or its wrap-up (on any working screen, AS5). Refusals land in [HelpView.error].
+  Future<void> raiseHelp();
+
+  /// Withdraws the open Need help request. Refusals land in [HelpView.error].
+  Future<void> cancelHelp();
+
+  /// Puts away [HelpView.notice] and [HelpView.error].
+  void dismissHelpNotice();
+}
+
 /// Everything the station screens can ask for. Each returns when the server
 /// answered; refusals land in [StationView.actionError] (and the future
 /// completes normally), so a screen never needs try/catch for expected cases.
-abstract interface class StationActions {
+/// Need help's three are [SessionHelpActions]'.
+abstract interface class StationActions implements SessionHelpActions {
   Future<void> goAvailable();
   Future<void> takeBreak(String code);
   Future<void> cancelQueuedBreak();
@@ -1253,16 +1268,6 @@ abstract interface class StationActions {
   Future<void> dismiss();
   void dismissActionError();
   void dismissMissedRelease();
-
-  /// Need help (floor assist, LF4): asks every supervisor of the account for help with the call on
-  /// screen or its wrap-up. Refusals land in [HelpView.error].
-  Future<void> raiseHelp();
-
-  /// Withdraws the open Need help request. Refusals land in [HelpView.error].
-  Future<void> cancelHelp();
-
-  /// Puts away [HelpView.notice] and [HelpView.error].
-  void dismissHelpNotice();
 }
 
 /// How [StationActions.leave] ended.
@@ -1369,3 +1374,13 @@ final supervisorMessagesProvider = Provider<List<SupervisorMessageView>>((ref) =
 
 /// Dismisses the message with that id. Overridden by the station core.
 final dismissSupervisorMessageProvider = Provider<void Function(String id)>((ref) => (_) {});
+
+/// The agent's Need help on the hosted session, a campaign station or a soft-phone session alike
+/// (LF39: the Phone tab has no campaign view, so it reads this, not [StationView.help]). Overridden
+/// by the station core; the default is the campaign view's, so a screen test that fakes only the
+/// view still sees it.
+final sessionHelpProvider = Provider<HelpView>((ref) => ref.watch(stationViewProvider.select((v) => v?.help ?? const HelpView())));
+
+/// Need help's actions on the hosted session. Overridden by the station core; the default is the
+/// station's actions, as for [sessionHelpProvider].
+final sessionHelpActionsProvider = Provider<SessionHelpActions>((ref) => ref.watch(stationActionsProvider));

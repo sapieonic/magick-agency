@@ -440,6 +440,59 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   Every line it says is the station's own words keyed on a code (AS15): refusals, the dial pad's
   reasons, Save's blocks, announcements and the override dialog; a code the console has no words
   for gets "That did not go through. Try again in a moment.", never the server's sentence.
+- **Need help and supervisors' messages on `/dialer/phone` (LF39).** The page's socket is a station
+  socket like the station's (`/proxy/agency/station`). The console sends no `client` parameter, so
+  the server takes it as `web` (`DEFAULT_STATION_UPGRADE` in `apps/server/src/agency/
+  station-upgrade.ts`), and a `web` station has `floor_assist` without declaring it; so it hears `ready.help`, `help_answered`, `help_cleared` and
+  `supervisor_message`, and runs them through the station's reducer. The top bar has the station's
+  **Need help** after the agent nav and the listening notice (`SideNeedHelpButton`, the station's
+  soft phone and inbound views use the same): shown while `agency_floor_assist_enabled` is on and
+  the socket is open, raising in any state of the call (the server takes a raise on a soft-phone
+  session in any state, AS5) and cancelling with the same button; its states, words, refusals and
+  announcements are the station's (`useStationHelp`, LF24). The supervisor line under the band is
+  the station's too (`SupervisorBanner`): a message, one at a time with the rest counted and OK
+  showing the next, else what became of the request or why the press was refused; each message
+  and each change of the request is said once in the page's polite region (`FloorAssistAnnouncer`).
+  Messages show whatever the console's flag map says, as on the station (the server sends them
+  only while the account's flag is on).
+- **Telemetry for Need help and messages (LF39, amendment 2).** In `analytics/events.ts`, sent by
+  `utils/agency/helpTelemetry.ts`: raised, answered, expired and cancelled at most once per request
+  (`raised_at`), refused once per refused or failed press.
+  - `agency_help_raised` (`surface`: `softphone` on this page and the station's soft phone view,
+    `inbound` on an inbound call, `station` on the campaign's screens): the first raise answer
+    naming a `raised_at` not yet reported, on screen or not when it lands. A `ready.help` or a frame
+    never sends it.
+  - `on_call` (raised and `agency_supervisor_message_shown`) is what the screen shows: on the
+    campaign's screens, the call bridged (the dialler sends `reserved` then `bridged`, never an
+    `agent_state` of `on_call`) or its outcome owed; on an inbound call, connected or owing its
+    outcome, not while it is offered; on the soft phone, its call connected or owing its outcome,
+    never while dialling or ringing.
+  - The end events come from the frames, only for a request in scope when the frame landed: the one
+    on screen; with nothing on screen, a raise in flight (pressed, its reply not back), for any
+    request it names except the one the station last saw end (`helpEndedAt`) and one raised more
+    than 60 s before Need help was pressed on the server-aligned clock (`HELP_IN_FLIGHT_WINDOW_MS`:
+    a request this page never showed, which the server expires before answering the new raise);
+    or one the agent pressed Cancel for (from the press), even after the cancel's reply and a new
+    raise put another request on screen. The reducer hears every `help_answered` and `help_cleared`,
+    about the request on screen or not, without changing the screen, and keeps the last 32 in
+    `helpFrames` with a growing `seq` and the scope decided as each landed (`helpRaisingSince` holds
+    the raise in flight, `helpCancelsPressed` the last 16 requests the agent pressed Cancel for); `useStationHelp` reads every entry past the last `seq` it read, so frames
+    that land in one render (the server sends `help_answered` and `help_cleared` back to back) all
+    count, in order. A raise whose reply failed (no answer, 5xx) is no longer in flight, nor is one
+    whose answer came back, so a later frame for another request sends nothing, though the screen
+    still shows it (LF24).
+  - `agency_help_answered` on `help_answered` (`how` from the frame), or on `help_cleared
+    { answered }` with `how: 'unknown'` when no `help_answered` was sent; `agency_help_expired` on
+    `help_cleared { expired }`; `agency_help_cancelled` on `help_cleared { cancelled }`, never on the
+    cancel's reply (`help: null` whether it won or lost). One end event per request; a cancel that
+    lost the race to an answer sends answered. `session_ended` sends nothing.
+  - `agency_help_refused`, from the request's own failure only (never an error thrown while
+    handling its answer): `network` when no response came back (`fetch` threw, or the sign-in token
+    could not be had before any request went, as offline), `other` for an answer that could not be
+    read or a 2xx with no usable `help`, which the station treats as a failed press;
+    `agency_supervisor_message_shown` once per message id.
+
+  The app sends the same names by the same rules.
 - **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0` (also a
   bracketed `(0)` after a country code, `+44 (0)20…`), spaces and `tel:`; typing drops a leading
   trunk `0` (the field reads after the country-code chip) and turns `00` into `+`; Enter calls.
@@ -680,7 +733,8 @@ for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
   calls' Soft phone chip (the agent's own calls from `GET /proxy/agency/my-calls`, which carries
   no media; [`call-log.md`](call-log.md) §7); the contact's card on a
   tagged call, by the tagged campaign's `context_display` and its own `phone_display` (agent
-  station AS19 S3(b), S4).
+  station AS19 S3(b), S4); Need help and supervisors' messages on the Phone tab and the station's
+  soft phone alike, as on `/dialer/phone` (LF39 (a); [`mobile.md`](mobile.md) "Floor assist").
 - **Every call must belong to a campaign** in the app ([`call-log.md`](call-log.md) §5): with
   `campaign_required` the picker reads "Log to (required)", "Not logged to a campaign" is not
   offered, Call says "Choose a campaign to log this call to." until one is chosen, a redial of a
