@@ -139,19 +139,18 @@ Answered:
 - **CR9, older campaigns:** a one-off clean-up of service-account campaigns holding pinned caller IDs,
   not a dial-time filter. Built (CR9; the runbook is in `operations.md`).
 
-Still open:
-
-- **Production config:** `VOICELINK_USERNAME` and `VOICELINK_PASSWORD` are required in production
-  (`config/blocks/voice.ts`: the server refuses to boot without them, with `VOICELINK_BASE_URL` and
-  `VOICELINK_WEBHOOK_BASE_URL`). A deployment that runs VoiceLink only on tenant accounts would need
-  the service account made optional. Waiting on Manas.
+- **Production config:** unchanged. A number with no tenant credential runs on the service's
+  account, whose login comes from env, so `VOICELINK_USERNAME`, `VOICELINK_PASSWORD`,
+  `VOICELINK_BASE_URL` and `VOICELINK_WEBHOOK_BASE_URL` stay required in production (the server
+  refuses to boot without them, `config/blocks/voice.ts`). Decided.
 - **CR9 and a concurrent move:** a campaign write adding a caller ID checks CR9 without locking the
   number, so a write overlapping a move to a tenant's account (CR6) can leave a now-pinned number on a
-  service-account campaign. The clean-up script catches it when run again; locking the numbers in
-  the campaign write would close it.
+  service-account campaign. Accepted as is; running the clean-up script again catches it.
+- **CR13, pacing:** pacing must not dial past a credential's cap (or an account's carrier share).
+  Being fixed.
+
+Still open:
+
 - **CR4:** does VoiceLink cancel an account's earlier token when it logs in again? The shared login and
   the stale-token check are precautions; the mock does not cancel, so they are not proven necessary.
-- **CR13, pacing:** pacing does not read a credential's cap, so while one binds its ticks keep dialling
-  into `carrier_account_concurrency_limit` refusals (back-pressure, uncharged). The per-account carrier
-  scope has the same known defect, pinned as `it.fails` in `concurrency-cap.test.ts`.
 - Ratifying the rest of CR1–CR14.
