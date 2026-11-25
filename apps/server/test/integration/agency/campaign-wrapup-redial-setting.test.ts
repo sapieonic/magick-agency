@@ -22,6 +22,12 @@ vi.mock('@magick-agency/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/db')>()),
   getPool: () => getTestPool(),
 }));
+// The shared repositories read their own pool (`@magick-agency/db/connection`): the campaign
+// write's caller-ID check (CR9, `phoneNumberRepository.findPinnedAmong`) is one of them.
+vi.mock('@magick-agency/db/connection', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@magick-agency/db/connection')>()),
+  getPool: () => getTestPool(),
+}));
 
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
