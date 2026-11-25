@@ -1,8 +1,8 @@
-import 'package:agency_wire/agency_wire.dart';
+import 'package:agency_wire/agency_wire.dart' show HelpAnswerHow;
 import 'package:flutter/foundation.dart';
 
 import '../api/api_error.dart';
-import '../station/station_api.dart' show errorBodyOf;
+import '../station/floor_assist.dart' show HelpRefusal;
 import 'telemetry.dart';
 
 /// Where the agent pressed Need help (`surface`): the campaign station's screens, an inbound
@@ -84,36 +84,27 @@ final class FloorAssistTelemetry {
     Telemetry.event('agency_help_expired');
   }
 
-  /// A raise ([raising]) or a cancel was refused, or got no answer: [error] as the help routes threw it.
-  void refused(Object error, {required bool raising}) =>
-      Telemetry.event('agency_help_refused', {'action': raising ? 'raise' : 'cancel', 'code': refusalCode(error)});
-
-  /// A raise ([raising]) or a cancel answered 2xx with a body this build cannot read: `other`.
-  void refusedUnreadable({required bool raising}) =>
-      Telemetry.event('agency_help_refused', {'action': raising ? 'raise' : 'cancel', 'code': 'other'});
+  /// A raise ([raising]) or a cancel was refused or got no answer ([error], as the help routes threw
+  /// it), or answered 2xx with a body this build cannot read (no [error]: `other`).
+  void refused({required bool raising, Object? error}) =>
+      Telemetry.event('agency_help_refused', {'action': raising ? 'raise' : 'cancel', 'code': error == null ? 'other' : refusalCode(error)});
 
   /// A supervisor's message id first queued for the agent (the controller's once per id).
   void messageShown({required bool onCall}) => Telemetry.event('agency_supervisor_message_shown', {'on_call': onCall});
 
-  /// The refusal's closed code: the floor-assist code, the session's, a 404, no network, or `other`.
+  /// The refusal's closed code ([HelpRefusal.of]): the floor-assist code, the session's, a 404, no
+  /// network, or `other` (a sign-in that expired, a 403 or an account to choose included).
   @visibleForTesting
-  static String refusalCode(Object error) {
-    if (error is ApiNetworkError) return 'network';
-    final body = errorBodyOf(error);
-    if (body != null) {
-      switch (body.floorAssistCode) {
-        case FloorAssistErrorCode.floorAssistDisabled:
-          return 'floor_assist_disabled';
-        case FloorAssistErrorCode.helpNotOnCall:
-          return 'help_not_on_call';
-        case FloorAssistErrorCode.agentNotLive || FloorAssistErrorCode.messageInvalid || FloorAssistErrorCode.unknown:
-          break;
-      }
-      if (body.codeRaw != null && body.code == AgencyErrorCode.sessionEnded) return 'session_ended';
-    }
-    if (error is ApiHttpError && error.status == 404) return 'not_found';
-    return 'other';
-  }
+  static String refusalCode(Object error) => switch (HelpRefusal.of(error)) {
+    HelpRefusal.network => 'network',
+    HelpRefusal.disabled => 'floor_assist_disabled',
+    HelpRefusal.notOnCall => 'help_not_on_call',
+    HelpRefusal.sessionEnded => 'session_ended',
+    HelpRefusal.notFound => 'not_found',
+    // The server sends `account_scope_required` as a 400; one sent as a 404 counts as a 404.
+    HelpRefusal.accountScope => error is ApiHttpError && error.status == 404 ? 'not_found' : 'other',
+    HelpRefusal.unauthorized || HelpRefusal.notAllowed || HelpRefusal.other => 'other',
+  };
 
   /// How long a request waited, in the buckets of the console's `agency_floor_intervention`
   /// (`secondsInStateBucket`): under a minute, 1–5, 5–15, over 15 minutes. A negative wait (the

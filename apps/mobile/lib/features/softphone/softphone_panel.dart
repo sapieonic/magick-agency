@@ -293,8 +293,6 @@ class _Header extends ConsumerWidget {
           canReturn: v.canReturn,
           returnReason: v.returnBlockedReason,
           busy: v.sessionBusy,
-          callOnScreen: v.callOnScreen,
-          linkOpen: v.link == StationLink.open,
         ),
       ),
     );
@@ -334,7 +332,7 @@ class _Header extends ConsumerWidget {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   if (phone)
-                    NeedHelpButton.phoneTab(onCall: s.callOnScreen, linkOpen: s.linkOpen)
+                    const NeedHelpButton.phoneTab()
                   else
                     const NeedHelpButton(),
                   // Merged, so the reason is the button's own hint, read with it.

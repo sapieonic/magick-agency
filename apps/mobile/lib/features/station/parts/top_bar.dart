@@ -8,7 +8,7 @@ import '../../../app/routes.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
 import '../../../core/session/local_preferences.dart';
-import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
+import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider, softphoneViewProvider;
 import '../../../core/station/station_view.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
@@ -91,17 +91,15 @@ class StationTopBar extends ConsumerWidget {
 ///
 /// The request and its actions are the hosted session's ([sessionHelpProvider],
 /// [sessionHelpActionsProvider]), a campaign station's or a soft-phone session's. On the Phone tab
-/// ([NeedHelpButton.phoneTab], LF39) there is no campaign view: the soft phone says whether a call
-/// is on screen and whether the socket is open.
+/// ([NeedHelpButton.phoneTab], LF39) there is no campaign view: the soft phone's view
+/// ([softphoneViewProvider]) says whether a call is on screen and whether the socket is open.
 class NeedHelpButton extends ConsumerWidget {
-  const NeedHelpButton({super.key}) : _phoneTab = null;
+  const NeedHelpButton({super.key}) : _phoneTab = false;
 
-  /// On the Phone tab's soft-phone session: [onCall], a call on screen (live or owing its outcome);
-  /// [linkOpen], the session's socket is open.
-  const NeedHelpButton.phoneTab({super.key, required bool onCall, required bool linkOpen})
-      : _phoneTab = (onCall: onCall, linkOpen: linkOpen);
+  /// On the Phone tab's soft-phone session.
+  const NeedHelpButton.phoneTab({super.key}) : _phoneTab = true;
 
-  final ({bool onCall, bool linkOpen})? _phoneTab;
+  final bool _phoneTab;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -109,11 +107,13 @@ class NeedHelpButton extends ConsumerWidget {
     final help = ref.watch(sessionHelpProvider);
     final bool offered;
     final bool open;
-    if (_phoneTab case final phoneTab?) {
+    if (_phoneTab) {
+      // A call on screen (live or owing its outcome), and whether the session's socket is open.
+      final phone = ref.watch(softphoneViewProvider.select((v) => (onCall: v.callOnScreen, linkOpen: v.link == StationLink.open)));
       // A soft-phone session takes a raise in any state (AS5); on calls only when this server
       // refused a raise off one.
-      offered = !help.onlyOnCall || phoneTab.onCall;
-      open = phoneTab.linkOpen;
+      offered = !help.onlyOnCall || phone.onCall;
+      open = phone.linkOpen;
     } else {
       final phase = ref.watch(stationViewProvider.select((v) => v?.phase));
       open = ref.watch(stationViewProvider.select((v) => v?.link == StationLink.open));

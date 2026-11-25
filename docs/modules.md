@@ -2983,7 +2983,9 @@ a call that ended while the socket was down lets go of ringback, CallKit and the
 carries a failed system hang-up to the soft phone (`SoftphoneHostView.hangupFailure`). Floor assist
 (`floor_assist.dart`, `mobile.md` "Floor assist"): `FloorAssistState`, the agent's Need help matched
 by `raised_at` and a supervisor's messages queued once per id, fed by the controller from `ready.help`,
-`help_answered`, `help_cleared`, `supervisor_message` and the help routes' answers; `StationView.help`,
+`help_answered`, `help_cleared`, `supervisor_message` and the help routes' answers (it also owns LF39's
+"in scope", `holds`, with the raise in flight and the cancels pressed; `HelpRefusal`, one reading of a refused
+raise or cancel for both the station's words and `agency_help_refused`'s code); `StationView.help`,
 the messages on `StationHost.messages` (`supervisorMessagesProvider`); `caps=inbound,floor_assist`. It holds an
 inbound call beside the campaign's (`StationState.inbound`, `newerInboundCall`, the let-go copies
 remembered, `inboundOnScreen`; the phase follows it, `effectiveState`), declares `caps=inbound` on
