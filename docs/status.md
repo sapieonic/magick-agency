@@ -45,6 +45,19 @@ super-admins add (not env). Built in steps:
 | Merge with main (2026-11-07) | Done | `main`'s dedicated caller ID per agent (#51, DN1–DN10) and the Insights tabs (#53) merged in (a merge commit; the branch is published). `main`'s `0018_agent_caller_ids.sql` is released and kept; this branch's unreleased migrations moved up one, to `0019_plivo_numbers_and_carrier_pause.sql`, `0020_carrier_account_unavailable_pause.sql` and `0021_carrier_refusing_calls_pause.sql` (headers, tests, `BASELINE.md`, the down → up ledger). The two caller-ID rules are one: every dial path hands `resolveCallerId` (DN2) the campaign's DIALABLE caller IDs (PL13), so on a tenant's own carrier account a dedicated number retired or revoked there falls back to the rotation, and the rotation is the dialable pool minus the dedicated numbers; a service-account campaign behaves as on `main` (`decisions.md`, PL13's addendum). The supervisor's caller-ID list and PUT and the agent's My contacts see the same pool; removing a retired number still dedicated is refused `caller_id_dedicated`, naming it. Tests: `pacing-engine.test.ts` and `dedicated-caller-ids.test.ts` ("over the dialable pool"), `agency-agent-caller-ids.test.ts` (a pinned campaign end to end), each mutation-checked |
 | 5 Live check | Not started | Needs a Plivo account. To check: one real call end to end (dial, answer XML, stream, hangup) and one recording analysed; the cause codes real hangup callbacks carry, added to `plivo-carrier.fixture.json`; the recording host and whether a recording fetch redirects (the fetch sends the credential to `media.plivo.com` and its subdomains only, and never follows a redirect with it; staging's account records on `aps1.media.plivo.com`); the assumption that a 403 on create-call is a geo-permission refusal of the destination, not an auth failure; and the call detail record the ring deadline reads (`GET Call/{call_uuid}/`): the values of its `call_state` for a busy, unanswered, cancelled, failed and answered call (the SDK names the field, not its values; `plivo-carrier.fixture.json` `cdr` holds illustrative ones), its `hangup_cause_name` catalogue, and that it answers 404 while the call is live |
 
+### Carrier account modes; VoiceLink on tenants' own accounts 2026-11-25 (CR1–CR14, [`carriers.md`](carriers.md))
+
+A carrier declares which accounts a call may be placed on: the service's own (env), tenants' own
+(a sealed credential), or both. VoiceLink now takes both; Plivo stays tenant accounts only.
+
+| Step | State | Evidence |
+|---|---|---|
+| 1 Foundation | Done | One codec-free carrier catalogue with account modes; `SERVICE_ADAPTERS` and `TENANT_ADAPTERS` instead of a switch; webhook base and public recordings from the catalogue; recording access per account mode; every per-carrier list held to the catalogue by `carrier-conformance.test.ts`, mutation-checked |
+| 2 VoiceLink tenant account | Done | Credential spec (login check, the service's username reserved), tenant adapter with one shared login per credential and secret version, typed refusals so PL2 and PL11 apply, recordings proxied and ended by revocation; `voicelink-tenant-call-e2e.test.ts` on the mock carrier. Not yet run on a real tenant VoiceLink account |
+| 3 Write rules | Done | Campaigns by account mode (CR8), no pinned caller ID on a service-account campaign (CR9), numbers added by hand pinned to a credential and assigned to its tenant (CR6, CR7), capability fields on the provider lists, inbound gated by capability (`inbound_not_supported`, CR11); readiness by account mode (a tenant VoiceLink account needs `VOICELINK_BASE_URL`) |
+| 4 Consoles | In progress | Super-admin Add number with the account picker, Sync and inbound by capability; console carrier names |
+| 5 Ratify | Open | Manas: CR1–CR14 and the questions in `carriers.md` §6 |
+
 ### Tidy-up 2026-10-16/17
 
 Manas asked on 2026-10-16 for the whole tidy-up plan to be implemented. Decisions and the

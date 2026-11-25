@@ -331,11 +331,13 @@ retire or delete, the same way.
 The other readers of the credential store outside the voice area import it directly too, for the
 same reason (no bootstrap state), and none of them opens a secret except through the service:
 
-- campaign management (`agency/campaign-carrier.ts`) reads the voice area's credential specs
-  (`findCredentialSpec`: does a carrier take tenant credentials) and the shared credential
-  repository, to check a campaign's carrier, credential and caller IDs;
-- the super-admin phone routes read the same two to refuse hand-added numbers on a
-  tenant-credential carrier and a synced number assigned to another tenant;
+- campaign management (`agency/campaign-carrier.ts`) reads the voice area's carrier catalogue
+  (`telephony/carrier-catalog.ts`: which account modes a carrier supports, docs/carriers.md CR1)
+  and the shared credential repository, to check a campaign's carrier, credential and caller IDs;
+- the super-admin phone routes read the catalogue and the credential specs
+  (`telephony/carrier-number-source.ts`: are a carrier's tenant numbers synced or added by hand)
+  to accept a number by hand on the service's account or pinned to a credential (CR6) and to
+  refuse a pinned number assigned to another tenant (CR7);
 - every recording fetch (the attempt and soft-phone recording proxies, signed playback, the
   analysis runner) asks `telephony/recording-access.ts` for the call's hosts and headers, which
   resolves the pinned credential through the service lazily (`getRecordingAccessResolver`).

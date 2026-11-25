@@ -95,7 +95,7 @@ in `SERVICE_ADAPTERS`. `webhook-url-builder.ts` reads `descriptor.webhookBaseUrl
 | CR8 | A campaign's carrier account is valid when the carrier supports its mode (CR1): a null credential needs a service account; a set credential needs tenant accounts and an `active` credential of this tenant and carrier (unchanged). Moving between the two modes on one carrier is a carrier-account change, judged as one (all caller IDs re-checked) | default, pending Manas |
 | CR9 | A service-account campaign may not take a caller ID that is a number pinned to any credential. It would dial the tenant's DID on the service's account. This is checked at the write for the IDs the write adds (as PL13 does for pinned campaigns). Before this ruling the server only checked the shape of such IDs, and only the console filtered them | default, pending Manas |
 | CR10 | `GET /proxy/agency/carriers` offers the service account of every carrier that has one and can dial (PL12), plus every `active` credential of the tenant on a carrier that takes tenant accounts and can dial. The console names each by alias plus account label (PL10). The service account's label is the alias alone | default, pending Manas |
-| CR11 | Inbound stays Plivo-only (`inbound: true` only on Plivo). Every inbound action on a credential, Link included, is refused for a carrier without it (`inbound_not_supported`). The super-admin console shows inbound controls and the "Sync numbers" button only where the carrier's capabilities allow them. The API now says so (`supports_inbound`, `number_source`) | default, pending Manas |
+| CR11 | Inbound stays Plivo-only (`inbound: true` only on Plivo). Every inbound action on a credential (enable, disable, health, re-point and Link) is refused 409 `inbound_not_supported` for a carrier without it; the reads of inbound state still answer. The super-admin console shows inbound controls and the "Sync numbers" button only where the carrier's capabilities allow them. The API now says so (`supports_inbound`, `number_source`) | default, pending Manas |
 | CR12 | Recordings of a call pinned to a credential always go through the recording proxy, never to the client as a raw URL, even on a carrier whose service-account recordings are public (VoiceLink). Revoking the credential therefore ends playback and analysis on every carrier, as B21 says. A VoiceLink tenant recording is fetched from the same configured hosts (`VOICELINK_RECORDING_ALLOWED_HOSTS`) with no credential attached, because VoiceLink serves recordings unauthenticated. The pinned credential is still resolved for `recording` first | default, pending Manas |
 | CR13 | Concurrency (B22): a VoiceLink call on a tenant account takes the same global, account and per-account provider slots as one on the service account. An account's VoiceLink allocation in `provider_breakdown` covers both its accounts. Allocation per credential is not built | default, pending Manas |
 | CR14 | Adding a carrier means: a folder `telephony/<carrier>/` with its capabilities (catalogue entry), carrier module, adapter(s), credential spec when it takes tenant accounts, callback routes, recording access per mode, and one line in each registry list. Any piece missing for a declared mode fails `test/unit/telephony/carrier-conformance.test.ts`. No code outside `telephony/` and the carrier's own routes branches on its name | default, pending Manas |
@@ -125,10 +125,17 @@ catalogue rather than separate name lists.
 | 4 Consoles | Super-admin: "Add number" takes a credential where CR6 allows it; Sync and inbound controls follow capabilities; carrier copy. Console: carrier labels (CR10) | operators can run it end to end |
 | 5 Docs and review | `decisions.md` (B18 amended, CR1–CR14), `modules.md`, `seams.md`, `status.md`; independent review | none |
 
-Steps 2 and 3 run side by side, since they touch disjoint files. Step 3 tests the hybrid rules
+Steps 1–3 are built (2026-11-25; `status.md`). A tenant account also needs `VOICELINK_BASE_URL` to be dial-ready: the catalogue entry's `tenantAccountsReady` says what a tenant account needs from env beyond the webhook base, and `carrierDialReady` reads it by account mode (PL12). Steps 2 and 3 run side by side, since they touch disjoint files. Step 3 tests the hybrid rules
 against a catalogue double, so it does not wait for step 2's flag.
 
 ## 6. Open with Manas
+
+- **CR9 and older campaigns:** a pinned number saved as a caller ID on a service-account campaign
+  before CR9 stays and is still dialled (CR9 judges writes only). Filter it at the dial too, or find
+  such campaigns once (a null credential whose `caller_ids` overlap pinned numbers) and fix them?
+- **CR11:** is 409 the right status for `inbound_not_supported`?
+- **CR4:** does VoiceLink cancel an account's earlier token when it logs in again? The shared login
+  is a precaution; the mock does not cancel, so it is not proven necessary.
 
 - **CR2:** is a tenant's VoiceLink account always on the same API host as ours? If some tenants are
   on another VoiceLink host, the host becomes a per-carrier allow-list in code (never tenant data)
