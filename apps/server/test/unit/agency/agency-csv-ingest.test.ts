@@ -5,6 +5,8 @@ import {
   AgencyIngestError,
   dedupeHeaders,
   AGENCY_MAX_COLUMNS,
+  AGENCY_MAX_ROWS,
+  AGENCY_LIMIT_MESSAGES,
   type AgencyIngestContact,
   type AgencyIngestRejection,
   type AgencyIngestSummary,
@@ -625,24 +627,51 @@ describe('C17 — embedded newlines', () => {
     expect(contacts[0]!.context['Notes']).toBe('line one\nline two');
   });
 
-  it('keeps source_row_number correct for rows AFTER the multiline one', async () => {
-    // The bug this guards: counting emitted records instead of file lines
-    // drifts by one line for every multiline row, so every row number after it
-    // is wrong — and the operator reconciles these against their spreadsheet.
+  it('numbers a multiline record as ONE row, as a spreadsheet opens the file (IM8)', async () => {
+    // A spreadsheet shows a record whose quoted cell holds a line break as one row, so
+    // the row after it is the next row. Counting the file's lines instead (as the
+    // ingest did before IM8) put every row after it one further down per line break
+    // than the operator sees it, and in an Excel upload row N would not be row N.
     const csv = [
-      'Mobile,Notes', // line 1
-      '9876543210,"a', // line 2  ─┐ one record spanning
-      'b"', //            line 3  ─┘ lines 2-3
-      '9123456780,plain', // line 4
-      'notaphone,x', // line 5
+      'Mobile,Notes', // row 1
+      '9876543210,"a', // row 2 ─┐ one record over
+      'b"', //                    ─┘ two lines of the file
+      '9123456780,plain', // row 3
+      'notaphone,x', // row 4
     ].join('\n');
 
     const { contacts, rejections } = await run(csv, { phoneColumn: 'Mobile' });
 
     expect(contacts[0]!.source_row_number).toBe(2);
-    // Would be 3 if we counted records rather than lines.
-    expect(contacts[1]!.source_row_number).toBe(4);
-    expect(rejections[0]!.row_number).toBe(5);
+    // Would be 4 if the file's lines were counted.
+    expect(contacts[1]!.source_row_number).toBe(3);
+    expect(rejections[0]!.row_number).toBe(4);
+  });
+});
+
+describe('C17b — blank lines are blank rows (IM8)', () => {
+  it('counts a blank line before the header and between rows, so row N is the spreadsheet row', async () => {
+    // A blank line is a blank row in a spreadsheet; the parser skips it, and counting the
+    // records alone put every row after one too high. An Excel upload keeps its blank
+    // rows as blank lines (`agency-xlsx.ts`), so this is what keeps its rows lined up.
+    const csv = [
+      '', // row 1
+      'Mobile,Name', // row 2
+      '9876543210,Asha', // row 3
+      '', // row 4
+      '   ', // row 5 (spaces only: blank)
+      'notaphone,Ravi', // row 6
+      ',', // row 7 (empty cells: a row, rejected)
+      '9123456780,Meena', // row 8
+    ].join('\n');
+
+    const { contacts, rejections } = await run(csv, { phoneColumn: 'Mobile' });
+
+    expect(contacts.map((c) => c.source_row_number)).toEqual([3, 8]);
+    expect(rejections.map((r) => [r.row_number, r.reason_code])).toEqual([
+      [6, 'invalid_phone'],
+      [7, 'missing_phone_value'],
+    ]);
   });
 });
 
@@ -820,6 +849,12 @@ describe('summary', () => {
     await expect(run(`Mobile\n${rows}\n`, { phoneColumn: 'Mobile', maxRows: 10 })).rejects.toMatchObject({
       code: 'too_many_rows',
     });
+  });
+
+  it('says the row limit grouped the Indian way, as the console shows it (10,00,000)', () => {
+    expect(AGENCY_MAX_ROWS).toBe(1_000_000);
+    expect(AGENCY_LIMIT_MESSAGES.tooManyRows(AGENCY_MAX_ROWS)).toBe('The file has more than 10,00,000 rows. Split it into smaller campaigns.');
+    expect(AGENCY_LIMIT_MESSAGES.tooManyColumns(102, 100)).toBe('The file has 102 columns. The maximum is 100.');
   });
 });
 

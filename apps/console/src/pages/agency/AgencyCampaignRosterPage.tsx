@@ -781,7 +781,7 @@ function RosterSection({ id, campaign }: { id: string; campaign: AgencyCampaign 
           description={
             filtered
               ? 'Clear the filters to see the whole roster.'
-              : 'Upload a CSV to give this campaign something to dial.'
+              : 'Upload an Excel or CSV file to give this campaign something to dial.'
           }
         />
       )}

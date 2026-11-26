@@ -19,6 +19,9 @@ const result = await build({
     index: 'src/index.ts',
     migrate: 'src/migrate.ts',
     'create-super-admin': 'scripts/create-super-admin.ts',
+    // The Excel upload's child process (IM8): `agency-xlsx-runner.ts` forks dist/xlsx-worker.js
+    // beside the bundle. Guarded by test/unit/agency/agency-xlsx-worker-build.test.ts.
+    'xlsx-worker': 'src/agency/agency-xlsx-worker.ts',
   },
   outdir: 'dist',
   bundle: true,
@@ -47,4 +50,4 @@ const result = await build({
 assertBundled(result.metafile, packageVersions);
 
 const packages = Object.entries(packageVersions).map(([name, version]) => `${name} ${version}`).join(', ');
-console.log(`built dist/index.js, dist/migrate.js, dist/create-super-admin.js (server ${pkg.version}; ${packages})`);
+console.log(`built dist/index.js, dist/migrate.js, dist/create-super-admin.js, dist/xlsx-worker.js (server ${pkg.version}; ${packages})`);

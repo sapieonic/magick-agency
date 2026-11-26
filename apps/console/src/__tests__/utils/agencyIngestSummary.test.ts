@@ -365,8 +365,8 @@ describe('terminal notices', () => {
 
   it('surfaces the failure message when the API gave one', () => {
     expect(
-      terminalNotice(job({ status: 'failed', error_message: 'Could not read the CSV.' })),
-    ).toBe('Could not read the CSV.');
+      terminalNotice(job({ status: 'failed', error_message: 'Could not read the file.' })),
+    ).toBe('Could not read the file.');
   });
 
   it('is silent for a completed job', () => {

@@ -1,8 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { WithPageCrumbs, suppliedCrumbs } from '../helpers/pageCrumbs';
 import type { AgencyCampaign, AgencyColumnAnalysis } from '../../types/agency-campaign';
+import { ApiError } from '../../api/client';
+import styles from '../../pages/agency/AgencyCampaignContactsPage.module.css';
+import { watchFileInputClears } from '../helpers/fileInputClears';
+import { BUSY_REFUSALS, WORKBOOK_BUSY, WORKBOOK_TOO_LARGE, WORKBOOK_UNREADABLE, WORKBOOK_UNSUPPORTED } from '../helpers/uploadRefusals';
 
 /**
  * Adding contacts to an EXISTING campaign.
@@ -21,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   campaignLineage: vi.fn(),
   createAgencyCampaign: vi.fn(),
   getIngestLimits: vi.fn(),
-  uploadRosterCsv: vi.fn(),
+  uploadCustomerFile: vi.fn(),
   analyzeRosterColumns: vi.fn(),
   startRosterIngest: vi.fn(),
   getIngestJob: vi.fn(),
@@ -56,7 +62,7 @@ vi.mock('../../api/agencyCampaigns', () => ({
   campaignLineage: mocks.campaignLineage,
   createAgencyCampaign: mocks.createAgencyCampaign,
   getIngestLimits: mocks.getIngestLimits,
-  uploadRosterCsv: mocks.uploadRosterCsv,
+  uploadCustomerFile: mocks.uploadCustomerFile,
   analyzeRosterColumns: mocks.analyzeRosterColumns,
   startRosterIngest: mocks.startRosterIngest,
   getIngestJob: mocks.getIngestJob,
@@ -129,7 +135,7 @@ beforeEach(() => {
   mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
   mocks.campaignLineage.mockResolvedValue(noLineage());
   mocks.getIngestLimits.mockResolvedValue({ max_rows: 1_000_000, max_file_bytes: 536_870_912 });
-  mocks.uploadRosterCsv.mockResolvedValue({ s3_key: 'agency-ingest/t/u/f.csv', file_name: 'f.csv' });
+  mocks.uploadCustomerFile.mockResolvedValue({ s3_key: 'agency-ingest/t/u/f.csv', file_name: 'f.csv' });
   mocks.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
   mocks.startRosterIngest.mockResolvedValue({ job_id: 'job-1', status: 'running' });
   mocks.getIngestJob.mockResolvedValue({
@@ -416,7 +422,248 @@ describe('add contacts — check, review, then import (IM1, IM2, IM3)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Upload a corrected file' }));
     expect(screen.queryByTestId('ingest-summary')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Choose a CSV' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Choose a file' })).toBeTruthy();
+  });
+});
+
+describe('add contacts — an Excel or CSV file (CS7)', () => {
+  const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+  async function pickWorkbook() {
+    await waitFor(() => expect(document.querySelector('input[type=file]')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Excel or CSV file'), {
+      target: { files: [new File(['PK'], 'Customers May.xlsx', { type: XLSX })] },
+    });
+    await waitFor(() => expect(screen.getByText(/Customers May\.xlsx/)).toBeTruthy());
+  }
+
+  function excelUpload(otherSheetNames: string[]) {
+    return {
+      s3_key: 'agency-ingest/t/u/customers.csv',
+      file_name: 'Customers May.xlsx',
+      file_size_bytes: 9000,
+      format: 'xlsx',
+      sheet: { name: 'Customers', other_sheet_names: otherSheetNames, other_sheet_count: otherSheetNames.length },
+    };
+  }
+
+  it('offers an Excel or CSV file, and nothing else', async () => {
+    renderPage();
+    await waitFor(() => expect(document.querySelector('input[type=file]')).toBeTruthy());
+    expect(screen.getByText('Drop an Excel or CSV file here, or choose one. Any columns you like — you pick the phone column next.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Choose a file' })).toBeTruthy();
+    const accept = (screen.getByLabelText('Excel or CSV file') as HTMLInputElement).accept.split(',');
+    expect(accept).toEqual(['.csv', 'text/csv', '.xlsx', XLSX]);
+    expect(accept).not.toContain('.xls');
+  });
+
+  it('says nothing about sheets for a CSV', async () => {
+    renderPage();
+    await pickFile();
+    expect(screen.getByRole('button', { name: 'Check the file' })).toBeTruthy();
+    expect(screen.queryByTestId('sheet-notice')).toBeNull();
+    expect(screen.queryByText(/sheet/i)).toBeNull();
+  });
+
+  it('names the sheet read and nothing more when the workbook has one, and announces it', async () => {
+    mocks.uploadCustomerFile.mockResolvedValue(excelUpload([]));
+    renderPage();
+    await pickWorkbook();
+    const notice = screen.getByTestId('sheet-notice');
+    expect(notice.getAttribute('role')).toBe('status');
+    expect(within(notice).getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
+    expect(screen.queryByTestId('sheet-others')).toBeNull();
+    // The page's own muted line, the limits line's style, not a copy of it.
+    expect(screen.getByTestId('sheet-read').className).toBe(styles.limits);
+    const css = readFileSync(resolve(__dirname, '../../pages/agency/AgencyCampaignContactsPage.module.css'), 'utf8');
+    expect(css).not.toMatch(/\.sheetRead\b/);
+  });
+
+  it('offers another file before the check, which goes back to the picker', async () => {
+    mocks.uploadCustomerFile.mockResolvedValue(excelUpload(['Paid']));
+    renderPage();
+    await pickWorkbook();
+    expect(screen.getByRole('button', { name: 'Check the file' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose another file' }));
+    expect(screen.queryByRole('button', { name: 'Check the file' })).toBeNull();
+    expect(screen.queryByTestId('sheet-notice')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Choose a file' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(mocks.startRosterIngest).not.toHaveBeenCalled();
+  });
+
+  it('says an Excel file is being read as well as sent while it uploads', async () => {
+    mocks.uploadCustomerFile.mockImplementation(() => new Promise(() => {}));
+    renderPage();
+    await waitFor(() => expect(document.querySelector('input[type=file]')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Excel or CSV file'), {
+      target: { files: [new File(['PK'], 'Customers May.xlsx', { type: XLSX })] },
+    });
+    expect(await screen.findByText('Uploading and reading the file…')).toBeTruthy();
+    expect(screen.queryByText('Uploading…')).toBeNull();
+  });
+
+  it('clears the picker after each pick, so the same file can be chosen again after a refusal', async () => {
+    mocks.uploadCustomerFile.mockRejectedValueOnce(new ApiError(WORKBOOK_BUSY.status, WORKBOOK_BUSY.body));
+    renderPage();
+    await waitFor(() => expect(document.querySelector('input[type=file]')).toBeTruthy());
+    const input = screen.getByLabelText('Excel or CSV file') as HTMLInputElement;
+    const clears = watchFileInputClears(input);
+    const workbook = new File(['PK'], 'Customers May.xlsx', { type: XLSX });
+    fireEvent.change(input, { target: { files: [workbook] } });
+    expect(await screen.findByText(WORKBOOK_BUSY.body.message)).toBeTruthy();
+    expect(clears()).toBe(1);
+    fireEvent.change(screen.getByLabelText('Excel or CSV file'), { target: { files: [workbook] } });
+    await waitFor(() => expect(mocks.uploadCustomerFile).toHaveBeenCalledTimes(2));
+  });
+
+  it.each([
+    ['an HTML page from the proxy', undefined, 'This file is too large. A file can be up to 512 MB.'],
+    ['the server’s own file_too_large', WORKBOOK_TOO_LARGE.body, WORKBOOK_TOO_LARGE.body.message],
+  ])('says a file over the size limit plainly when the 413 is %s', async (_what, body, shown) => {
+    mocks.uploadCustomerFile.mockRejectedValue(new ApiError(413, body));
+    renderPage();
+    await screen.findByText(/MB per file/);
+    fireEvent.change(screen.getByLabelText('Excel or CSV file'), {
+      target: { files: [new File(['PK'], 'Huge.xlsx', { type: XLSX })] },
+    });
+    expect(await screen.findByText(shown)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/API error|request file too large/i);
+  });
+
+  it('names one other sheet that was not read', async () => {
+    mocks.uploadCustomerFile.mockResolvedValue(excelUpload(['Paid']));
+    renderPage();
+    await pickWorkbook();
+    expect(screen.getByTestId('sheet-others').textContent).toBe(
+      'This file has 1 other sheet (‘Paid’) that was not read. To import it, move those customers to the sheet ‘Customers’, or save that sheet as its own file.',
+    );
+  });
+
+  it('names the other sheets through the check, names its downloads without .xlsx, and is gone with the file', async () => {
+    mocks.uploadCustomerFile.mockResolvedValue(excelUpload(['Paid', 'Archive']));
+    mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
+    mocks.getIngestJob.mockResolvedValue(finishedJob({ file_name: 'Customers May.xlsx' }));
+    mocks.downloadRejectedRows.mockResolvedValue(new Blob(['x']));
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    const names: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    try {
+      renderPage();
+      await pickWorkbook();
+      const others = 'This file has 2 other sheets (‘Paid’, ‘Archive’) that were not read. To import them, move those customers to the sheet ‘Customers’, or save each sheet as its own file.';
+      expect(screen.getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
+      expect(screen.getByTestId('sheet-others').textContent).toBe(others);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));
+      await screen.findByTestId('ingest-summary');
+      expect(mocks.startRosterIngest.mock.calls[0]![0]).toMatchObject({ file_name: 'Customers May.xlsx' });
+      expect(screen.getByTestId('sheet-others').textContent).toBe(others);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Download rejected rows' }));
+      await waitFor(() => expect(names).toEqual(['Customers May-rejected-rows.csv']));
+
+      fireEvent.click(screen.getByRole('button', { name: 'Upload a corrected file' }));
+      expect(screen.queryByTestId('sheet-notice')).toBeNull();
+    } finally {
+      click.mockRestore();
+    }
+  });
+
+  it("shows the server's words when it refuses a workbook, and offers the picker again", async () => {
+    const { message } = WORKBOOK_UNSUPPORTED.body;
+    mocks.uploadCustomerFile.mockRejectedValue(new ApiError(WORKBOOK_UNSUPPORTED.status, WORKBOOK_UNSUPPORTED.body));
+    renderPage();
+    await waitFor(() => expect(document.querySelector('input[type=file]')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Excel or CSV file'), {
+      target: { files: [new File(['x'], 'old.xls', { type: 'application/vnd.ms-excel' })] },
+    });
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(mocks.analyzeRosterColumns).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Choose a file' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByTestId('sheet-notice')).toBeNull();
+  });
+});
+
+describe('add contacts — a workbook refused while another is being read', () => {
+  it.each(BUSY_REFUSALS)("shows the server's words for a %i, never a generic error, and offers the picker again", async (status, refusal) => {
+    const { message } = refusal.body;
+    mocks.uploadCustomerFile.mockRejectedValue(new ApiError(status, refusal.body, 'req-77'));
+    renderPage();
+    await waitFor(() => expect(document.querySelector('input[type=file]')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Excel or CSV file'), {
+      target: { files: [new File(['PK'], 'Second.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })] },
+    });
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/something went wrong|server error|API error/i);
+    expect(mocks.analyzeRosterColumns).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Choose a file' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe('add contacts — the drop zone', () => {
+  const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const zone = async () => {
+    await waitFor(() => expect(screen.getByTestId('contacts-dropzone')).toBeTruthy());
+    return screen.getByTestId('contacts-dropzone');
+  };
+
+  it('takes a dropped CSV or Excel file, as the picker does', async () => {
+    renderPage();
+    const dropzone = await zone();
+    fireEvent.dragOver(dropzone);
+    expect(dropzone.getAttribute('data-drag-over')).toBe('true');
+    const workbook = new File(['PK'], 'Customers May.xlsx', { type: XLSX });
+    fireEvent.drop(dropzone, { dataTransfer: { files: [workbook] } });
+    expect(dropzone.getAttribute('data-drag-over')).toBeNull();
+    await waitFor(() => expect(mocks.uploadCustomerFile).toHaveBeenCalledWith(workbook, 'tenant-1', 'account-1'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check the file' })).toBeTruthy());
+
+    cleanup();
+    vi.clearAllMocks();
+    mocks.getAgencyCampaign.mockResolvedValue(campaign());
+    mocks.getAgencyCampaignStats.mockResolvedValue(workspaceStats());
+    mocks.campaignLineage.mockResolvedValue(noLineage());
+    mocks.uploadCustomerFile.mockResolvedValue({ s3_key: 'k', file_name: 'list.csv', file_size_bytes: 10, format: 'csv' });
+    mocks.analyzeRosterColumns.mockResolvedValue(ANALYSIS);
+    renderPage();
+    const list = new File(['Mobile\n98200\n'], 'list.csv', { type: 'text/csv' });
+    fireEvent.drop(await zone(), { dataTransfer: { files: [list] } });
+    await waitFor(() => expect(mocks.uploadCustomerFile).toHaveBeenCalledWith(list, 'tenant-1', 'account-1'));
+  });
+
+  it('takes one file at a time: a second drop while the first is being taken is ignored', async () => {
+    mocks.uploadCustomerFile.mockImplementation(() => new Promise(() => {}));
+    renderPage();
+    const dropzone = await zone();
+    fireEvent.drop(dropzone, { dataTransfer: { files: [new File(['a'], 'first.csv', { type: 'text/csv' })] } });
+    fireEvent.drop(dropzone, { dataTransfer: { files: [new File(['b'], 'second.csv', { type: 'text/csv' })] } });
+    await screen.findByText('Uploading…');
+    fireEvent.dragOver(screen.getByTestId('contacts-dropzone'));
+    expect(screen.getByTestId('contacts-dropzone').getAttribute('data-drag-over')).toBeNull();
+    fireEvent.drop(screen.getByTestId('contacts-dropzone'), { dataTransfer: { files: [new File(['c'], 'third.csv', { type: 'text/csv' })] } });
+    expect(mocks.uploadCustomerFile).toHaveBeenCalledTimes(1);
+    expect(mocks.uploadCustomerFile.mock.calls[0]![0].name).toBe('first.csv');
+  });
+
+  it("shows the server's words for a dropped workbook it refuses", async () => {
+    mocks.uploadCustomerFile.mockRejectedValue(new ApiError(WORKBOOK_UNREADABLE.status, WORKBOOK_UNREADABLE.body));
+    renderPage();
+    fireEvent.drop(await zone(), { dataTransfer: { files: [new File(['PK'], 'Broken.xlsx', { type: XLSX })] } });
+    expect(await screen.findByText(WORKBOOK_UNREADABLE.body.message)).toBeTruthy();
+    expect(mocks.analyzeRosterColumns).not.toHaveBeenCalled();
+  });
+
+  it('takes no dropped file from someone who cannot add contacts', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
+    renderPage();
+    const dropzone = await zone();
+    fireEvent.dragOver(dropzone);
+    expect(dropzone.getAttribute('data-drag-over')).toBeNull();
+    fireEvent.drop(dropzone, { dataTransfer: { files: [new File(['a'], 'list.csv', { type: 'text/csv' })] } });
+    expect(mocks.uploadCustomerFile).not.toHaveBeenCalled();
   });
 });
 
@@ -477,7 +724,7 @@ describe('add contacts — analytics', () => {
 
   it('a failed check is reported as one, not as a failed import', async () => {
     mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
-    mocks.getIngestJob.mockResolvedValue(finishedJob({ status: 'failed', error_code: 'malformed_csv', error_message: 'Could not read the CSV.' }));
+    mocks.getIngestJob.mockResolvedValue(finishedJob({ status: 'failed', error_code: 'malformed_csv', error_message: 'Could not read the file.' }));
     renderPage();
     await pickFile();
     fireEvent.click(screen.getByRole('button', { name: 'Check the file' }));

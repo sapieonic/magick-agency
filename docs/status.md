@@ -537,6 +537,74 @@ contact import check and re-import (IM)".
   way back as Add contacts after a check or import that did not finish. Not done: Insights'
   upload history offers no skipped-rows download (a new field through the contract and its read).
 
+### Excel customer list 2026-11-24 (IM8)
+
+ClickUp "Campaign customer upload: accept Excel (.xlsx) as well as CSV". Rulings: IM8 in
+[`decisions.md`](decisions.md) (decided, Manas 2026-11-25); the console's side is CS7
+([`campaign-setup.md`](campaign-setup.md)).
+
+- **Server.** `POST /ingest/upload` detects a workbook by its bytes (then its name), reads its first
+  visible worksheet in tab order (`agency-xlsx.ts`, over the zip's central directory in
+  `agency-xlsx-zip.ts` and `saxes`) and stores it as CSV; nothing after the upload changed. The 201
+  carries `format` and, for Excel, the sheet read and the other visible sheets. An `.xls` or a
+  workbook with a password, text named `.xlsx`, an unreadable workbook and one with no visible
+  sheet are refused 400 in words; over the rows or columns, 422 in the ingest's words; over the
+  size, the upload's own 413. Downloads are named without `.xlsx`.
+- **Row numbers, CSV too.** The ingest numbers a row as a spreadsheet shows it: a blank line counts
+  as a row and a quoted cell with line breaks is one row (it counted the file's lines). Row N of an
+  Excel upload's review and downloads is row N of its sheet. `agency-csv-ingest.test.ts` C17 and
+  the restart contract's numbering cases were rewritten for it.
+- Words that reach an Excel upload say "the file", not "the CSV" (`malformed_csv`'s "Could not read
+  the file: …", the header encoding refusal names both formats).
+- **Containment (review of 2026-11-24).** Two reviews found small hostile workbooks that held the
+  event loop for seconds or grew the heap past a gigabyte. The conversion now runs in a child
+  process (`agency-xlsx-runner.ts`, `dist/xlsx-worker.js`) with its own 1 GiB heap, a 5 minute
+  deadline, one at a time (a second Excel upload: 429 `workbook_busy`, `Retry-After: 60`), killed
+  when the client goes; and the converter caps its work and live objects (format codes, cell
+  references, merges, the zip directory, XML depth, cell length, shared strings, decompression
+  against the compressed size, cells a pass visits, sheet names). Not a worker thread: under the
+  image's `--max-old-space-size` a worker's heap limit does not hold. Each reviewer's input is
+  refused or answered in well under a second of the server's own time.
+- **Runner review (2026-11-24).** The slot is freed when the child exits whatever the CSV's reader
+  does (an S3 upload that stalled or failed before reading held it for good); the deadline reaches
+  the S3 upload (503 `upload_storage_slow` once only the upload is left); a fork that cannot start
+  is an error for the upload, not a crash; closing the server stops a conversion in flight (503
+  `server_restarting`, the upload route's `preClose` hook), so shutdown does not wait for it; a
+  bundle without `dist/xlsx-worker.js` says so; the child's `oom_score_adj` is 1000 and it exits with
+  the server; a second workbook is refused before its body is read. The RAM sizing in
+  `docs/operations.md` now counts the conversion child.
+- **Numbers as the sheet shows them (Manas, 2026-11-25).** IM8 decided. A number cell is written as
+  its format shows it (`agency-xlsx-numfmt.ts`: sections, conditions such as the lakh format, currency
+  tags, placeholders, percent, scaling, Excel's rounding, the built-in ids), General and padding as
+  before, Indian grouping; fractions and scientific formats keep the value. The agent station's money
+  and number facts read the rendered amounts (`₹1,25,000.00`, `1,25,000.00`); `(1,250.00)` and `15%`
+  are shown as written. Choosing another sheet is not in the first cut.
+- **Phone columns and signs (Manas, 2026-11-25).** A whole number in a column whose header looks
+  like a phone column's (the column analysis's own header rule, now one function,
+  `phone-header.ts`) is written in full digits whatever its format, so a `#,##0` mobile column
+  imports. A red-negative format keeps the minus (only when its negative section looks like the
+  positive one: `0" Cr";0" Dr"` stays `5 Dr`); grouping stays Indian. The renderer review's
+  fixes: a text section never read as negative or zero, zero written as zero (never `-0`/`(0)`),
+  the integer placed before a format's own point, `%` and scaling capped, padding only for a lone
+  zeros section, slots precomputed, whole characters escaped, a malformed condition falling back.
+- **Fresh review (2026-11-25).** Four reviewers with no part in the build read the whole change.
+  Converter: a number under a text-only format (`@` spelled out) is written as General, not lost;
+  a date-formatted cell stays a date in a phone-like column (`Last Contact Date`); serials past
+  9999 by either system's limit, after rounding; a no-digit section chosen by sign; a value under a
+  merge does not widen the CSV; the phone rule's header row is the ingest's; `<dxfs>` formats left
+  out; General past 2^53 at 15 digits; a format code capped at 255 characters with one `General`
+  per section, so a cell's cost is bounded (an 80 KB workbook had held the conversion slot for the
+  full 5 minutes); long text refused as it streams in. Route and runner: shutdown stops every live
+  conversion, one whose CSV is still being stored and one whose body is still arriving included;
+  at most 10 Excel conversions per user in 15 minutes (429 `upload_rate_limited`); every refusal
+  carries a code (`AgencyUploadRefusalCode`) and a 413 says `file_too_large` in plain words; the
+  row limit reads "10,00,000"; the parser stays out of the server's own process
+  (`agency-xlsx-refusals.ts`). Console: the same file can be picked again after a refusal; Add
+  contacts takes a dropped file and offers "Choose another file"; the sheet notice counts every
+  other sheet, names five and names the sheet to move customers to, as a status; a proxy's 413 in
+  plain words; New campaign's error line keeps the request id out of the sentence.
+- Not done: an Excel file's other sheets cannot be chosen (only the first visible one is read).
+
 ### Wrap-up redial 2026-11-03
 
 A connected call can drop for reasons on any side. With the campaign setting "Allow redial from
@@ -3139,7 +3207,7 @@ account their browser last had open. Every signed-in console page is now served 
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.
 - [ ] Terraform state bucket made (`aws/state`) and any local state moved into it
       (`aws/README.md`, "State").
-- [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and CSV uploads, applied per
+- [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and customer file uploads, applied per
       environment from `aws/terraform` (`aws/README.md`). The same module can create the VM, its
       security group and Elastic IP (`create_server`).
 - [ ] Analysis: `DIALER_ANALYSIS_ENABLED`, transcriber and LLM keys, `RECORDING_URL_SIGNING_SECRET`.

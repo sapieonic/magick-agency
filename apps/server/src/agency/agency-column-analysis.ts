@@ -1,6 +1,7 @@
 import { parse, type Info } from 'csv-parse';
 import { Transform, type Readable } from 'node:stream';
 import { normalizePhoneToE164 } from '../utils/phone-normalizer.js';
+import { looksLikePhoneHeader } from './phone-header.js';
 import {
   AgencyIngestError,
   EncodingGuard,
@@ -8,6 +9,7 @@ import {
   readDataCells,
   dedupeKey,
   AGENCY_MAX_COLUMNS,
+  AGENCY_LIMIT_MESSAGES,
 } from './agency-csv-ingest.js';
 
 /**
@@ -43,8 +45,6 @@ const SAMPLE_VALUES_PER_COLUMN = 3;
  */
 const PHONE_TIE_MARGIN = 0.1;
 
-/** Headers that suggest a phone column. */
-const PHONE_HEADER_HINT = /(phone|mobile|cell|contact|msisdn|number|tel)/i;
 
 /**
  * Weight of a phone-ish header, deliberately set just ABOVE {@link PHONE_TIE_MARGIN}
@@ -183,7 +183,7 @@ export async function analyzeAgencyCsvColumns(options: AnalyzeOptions): Promise<
         if (record.length > maxColumns) {
           throw new AgencyIngestError(
             'too_many_columns',
-            `The file has ${record.length} columns. The maximum is ${maxColumns}.`,
+            AGENCY_LIMIT_MESSAGES.tooManyColumns(record.length, maxColumns),
           );
         }
         headers = dedupeHeaders(record);
@@ -223,7 +223,7 @@ export async function analyzeAgencyCsvColumns(options: AnalyzeOptions): Promise<
     if (err instanceof AgencyIngestError) throw err;
     throw new AgencyIngestError(
       'malformed_csv',
-      `Could not read the CSV: ${err instanceof Error ? err.message : 'unknown error'}`,
+      `Could not read the file: ${err instanceof Error ? err.message : 'unknown error'}`,
     );
   } finally {
     source.destroy();
@@ -266,7 +266,7 @@ export function suggestPhoneColumn(columns: AgencyColumnStat[]): {
     .filter((c) => c.phone_score > 0 && c.non_empty > 0)
     .map((c) => ({
       column: c,
-      effective: c.phone_score + (PHONE_HEADER_HINT.test(c.name) ? PHONE_HEADER_BONUS : 0),
+      effective: c.phone_score + (looksLikePhoneHeader(c.name) ? PHONE_HEADER_BONUS : 0),
     }))
     .sort((a, b) => b.effective - a.effective);
 

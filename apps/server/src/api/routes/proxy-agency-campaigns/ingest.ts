@@ -3,6 +3,7 @@
  * rejected-rows download. Part of `proxy-agency-campaigns.routes.ts`.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { MultipartFile } from '@fastify/multipart';
 import { z } from 'zod';
 import crypto from 'node:crypto';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
@@ -10,7 +11,7 @@ import { createChildLogger } from '@magick-agency/observability';
 // `getFileBuffer` is `storage/s3.ts`'s `getFile`, the one S3 module (decision B14): a
 // `GetObjectCommand` on the agency bucket, returning the whole object as a Buffer. The alias
 // names what the call sites want back.
-import { uploadFile, getFileStream, getFile as getFileBuffer, isS3NotFound } from '../../../storage/s3.js';
+import { uploadFile, uploadStream, getFileStream, getFile as getFileBuffer, isS3NotFound } from '../../../storage/s3.js';
 import { AGENCY_INGEST_CHECK_VALID_HOURS, AGENCY_MAX_DEDUPE_COLUMNS } from '@magick-agency/contracts/api/agency/agency-campaign';
 import { analyzeAgencyCsvColumns } from '../../../agency/agency-column-analysis.js';
 import {
@@ -18,8 +19,29 @@ import {
   AGENCY_MAX_COLUMNS,
   AGENCY_MAX_ROWS,
   AGENCY_MAX_CELL_BYTES,
+  AGENCY_LIMIT_MESSAGES,
   sameHeader,
 } from '../../../agency/agency-csv-ingest.js';
+import {
+  detectUploadFormat,
+  isWorkbookName,
+  XlsxLimitError,
+  XlsxRefusal,
+  xlsxRefusalMessage,
+  type UploadFormat,
+} from '../../../agency/agency-xlsx-refusals.js';
+import {
+  abortXlsxConversions,
+  convertXlsxInChild,
+  xlsxConversionRunning,
+  xlsxWorkerEntry,
+  XlsxBusyError,
+  XlsxShutdownError,
+  XlsxStorageTimeoutError,
+  type XlsxConversion,
+} from '../../../agency/agency-xlsx-runner.js';
+import type { AgencyUploadRefusalCode, AgencyUploadResponse } from '@magick-agency/contracts/api/agency/agency-campaign';
+import { XlsxStartCap } from '../../../agency/agency-xlsx-start-cap.js';
 import {
   agencyIngestJobRepository,
   IngestCheckImportUnavailableError,
@@ -41,6 +63,190 @@ import { accountOrRefuse } from '../helpers/account-scope.js';
 const log = createChildLogger({ component: 'proxy-agency-campaigns' });
 
 const CSV_MAX_BYTES = 512 * 1024 * 1024;
+
+/** An Excel upload's limits (IM8): the CSV it becomes is held to the CSV path's own. */
+const XLSX_LIMITS = {
+  maxDataRows: AGENCY_MAX_ROWS,
+  maxColumns: AGENCY_MAX_COLUMNS,
+  maxCsvBytes: CSV_MAX_BYTES,
+};
+
+/** When a refused upload may try again (a converter busy, the server restarting, S3 slow): about the time a large one takes to convert. */
+const XLSX_RETRY_AFTER_SECONDS = 60;
+
+/** The upload's size limit, as the supervisor reads it. */
+const MAX_FILE_MB = CSV_MAX_BYTES / (1024 * 1024);
+
+/** A refusal's `error` title, by status. */
+const UPLOAD_REFUSAL_TITLES = {
+  400: 'Validation Error',
+  413: 'Payload Too Large',
+  422: 'Validation Error',
+  429: 'Too Many Requests',
+  503: 'Service Unavailable',
+} as const;
+
+/** An upload refusal (IM8): `{ error, code, message }`, and when to try again on a 429 or 503. */
+interface UploadRefusalBody {
+  error: string;
+  code: AgencyUploadRefusalCode;
+  message: string;
+  retry_after_seconds?: number;
+}
+
+function refuseUpload(
+  reply: FastifyReply,
+  status: keyof typeof UPLOAD_REFUSAL_TITLES,
+  code: AgencyUploadRefusalCode,
+  message: string,
+  retryAfterSeconds?: number,
+): FastifyReply {
+  const body: UploadRefusalBody = {
+    error: UPLOAD_REFUSAL_TITLES[status],
+    code,
+    message,
+    ...(retryAfterSeconds !== undefined ? { retry_after_seconds: retryAfterSeconds } : {}),
+  };
+  if (retryAfterSeconds !== undefined) reply.header('Retry-After', String(retryAfterSeconds));
+  return reply.code(status).send(body);
+}
+
+/** The code of each workbook the converter cannot read (`XlsxRefusal`); its words are `xlsxRefusalMessage`'s. */
+const XLSX_REFUSAL_CODES: Record<XlsxRefusal['kind'], AgencyUploadRefusalCode> = {
+  legacy_or_encrypted: 'workbook_unsupported',
+  not_a_workbook: 'not_a_workbook',
+  unreadable: 'workbook_unreadable',
+  no_visible_sheet: 'workbook_no_sheet',
+  cell_too_long: 'cell_too_long',
+};
+
+/** The words of the upload's own refusals: the size, the conversion's deadline and heap cap, a busy converter, the server's side. */
+const UPLOAD_REFUSAL_MESSAGES = {
+  fileTooLarge: `This file is too large. A file can be up to ${MAX_FILE_MB} MB.`,
+  workbookTooLarge: `This workbook is too large to read: its sheet comes to more than ${MAX_FILE_MB} MB as CSV, `
+    + `and a file can be up to ${MAX_FILE_MB} MB. Split the customers into smaller files and upload them again.`,
+  tooSlow: 'This workbook took too long to read. Save the sheet with your customers as a CSV file, '
+    + 'or as a workbook with only that sheet, and upload it again.',
+  tooComplex: 'This workbook is too large or complex to read. Save the sheet with your customers as a CSV file, '
+    + 'or as a workbook with only that sheet, and upload it again.',
+  busy: 'Another Excel file is being read just now. Try again in a minute.',
+  shutdown: 'The server is restarting. Upload the file again in a minute.',
+  storage: 'The file was read, but it could not be saved in time. Upload it again in a few minutes.',
+  noFile: 'No file uploaded.',
+  malformed: 'The upload could not be read: the file was cut off or the form is malformed. Please upload it again.',
+  stopped: 'The upload was stopped before it finished.',
+} as const;
+
+/** The per-user cap's words (`XlsxStartCap`): when to try again, and that a CSV is never held up. */
+function rateLimitedMessage(retryAfterSeconds: number): string {
+  const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+  return `You've uploaded a lot of Excel files in a short time. Try again in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}, `
+    + 'or upload the list as a CSV file.';
+}
+
+/**
+ * The answer to a workbook that cannot be stored, or null for an error that is not one.
+ * Every answer is `{ error, code, message }` (`AgencyUploadRefusalCode`). A refusal is a 400
+ * with its kind's code. A limit is refused as the CSV path refuses it: over the size, a 413
+ * `file_too_large`; too many rows or columns, the ingest's code and words, as a 422 like the
+ * analyzer's. The conversion's deadline and heap cap are 422s with their own codes; a
+ * conversion already running is a 429 with `Retry-After`, as Compare agents' `compare_busy`.
+ * The server closing (a conversion stopped by `abortXlsxConversions`) and S3 not storing the
+ * CSV by the deadline are 503s with `Retry-After`, through the error mask's reviewed opt-out
+ * so their words reach the supervisor.
+ */
+function refuseXlsx(err: unknown, reply: FastifyReply): FastifyReply | null {
+  if (err instanceof XlsxBusyError) {
+    return refuseUpload(reply, 429, 'workbook_busy', UPLOAD_REFUSAL_MESSAGES.busy, XLSX_RETRY_AFTER_SECONDS);
+  }
+  if (err instanceof XlsxShutdownError) {
+    reply.request.preserveReviewedUpstreamError = true;
+    // Closing the server waits for every connection; this one is not kept for another request.
+    reply.header('Connection', 'close');
+    return refuseUpload(reply, 503, 'server_restarting', UPLOAD_REFUSAL_MESSAGES.shutdown, XLSX_RETRY_AFTER_SECONDS);
+  }
+  if (err instanceof XlsxStorageTimeoutError) {
+    reply.request.preserveReviewedUpstreamError = true;
+    return refuseUpload(reply, 503, 'upload_storage_slow', UPLOAD_REFUSAL_MESSAGES.storage, XLSX_RETRY_AFTER_SECONDS);
+  }
+  if (err instanceof XlsxRefusal) {
+    return refuseUpload(reply, 400, XLSX_REFUSAL_CODES[err.kind], xlsxRefusalMessage(err.kind));
+  }
+  if (err instanceof XlsxLimitError) {
+    const kind = err.kind;
+    switch (kind) {
+      case 'too_large':
+        return refuseUpload(reply, 413, 'file_too_large', UPLOAD_REFUSAL_MESSAGES.workbookTooLarge);
+      case 'too_slow':
+        return refuseUpload(reply, 422, 'workbook_too_slow', UPLOAD_REFUSAL_MESSAGES.tooSlow);
+      case 'too_much_memory':
+      case 'too_complex':
+        return refuseUpload(reply, 422, 'workbook_too_complex', UPLOAD_REFUSAL_MESSAGES.tooComplex);
+      case 'too_many_rows':
+        return refuseUpload(reply, 422, 'too_many_rows', AGENCY_LIMIT_MESSAGES.tooManyRows(AGENCY_MAX_ROWS));
+      case 'too_many_columns':
+        return refuseUpload(
+          reply, 422, 'too_many_columns',
+          AGENCY_LIMIT_MESSAGES.tooManyColumns(err.columns ?? AGENCY_MAX_COLUMNS + 1, AGENCY_MAX_COLUMNS),
+        );
+      default: {
+        const unknown: never = kind;
+        throw new Error(`An Excel limit with no answer: ${String(unknown)}`);
+      }
+    }
+  }
+  return null;
+}
+
+/** How long the rest of a refused upload's request (the form's end, after the file) is waited for. */
+const DISCARD_TAIL_MS = 5_000;
+
+/**
+ * Read the rest of an upload the route refuses before reading its file (a workbook while one
+ * converts, or over its user's cap), dropping every byte. Answering while the browser is still
+ * sending makes Node close the connection under it, and a browser reports that reset as a
+ * network error without reading the answer. Bounded by the multipart file limit: a file past
+ * it stops the reading there. True when the whole request was read; false when it was not
+ * (past the limit, or the form's end never came), and the answer then closes the connection.
+ */
+async function discardUpload(file: MultipartFile, request: FastifyRequest): Promise<boolean> {
+  const stream = file.file;
+  if (!stream.readableEnded && !stream.destroyed) {
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      stream.once('end', done);
+      stream.once('close', done);
+      stream.once('error', done);
+      stream.once('limit', done);
+      stream.resume();
+    });
+  }
+  if (stream.truncated) return false;
+  const raw = request.raw;
+  if (!raw.readableEnded && !raw.destroyed) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(done, DISCARD_TAIL_MS);
+      function done() {
+        clearTimeout(timer);
+        resolve();
+      }
+      raw.once('end', done);
+      raw.once('close', done);
+      raw.once('error', done);
+    });
+  }
+  return raw.readableEnded;
+}
+
+/** What a refused workbook's log line says, never the file's content. */
+function xlsxErrorReason(err: unknown): string {
+  if (err instanceof XlsxRefusal) return `${err.kind}: ${err.message}`;
+  if (err instanceof XlsxLimitError) return err.kind;
+  if (err instanceof XlsxBusyError) return 'busy';
+  if (err instanceof XlsxShutdownError) return 'shutdown';
+  if (err instanceof XlsxStorageTimeoutError) return 'storage_slow';
+  return err instanceof Error ? `${err.name}: ${err.message}` : 'unknown';
+}
 
 const dedupeColumnName = z.string().trim().min(1).max(200);
 
@@ -143,7 +349,10 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
   });
 
   /**
-   * Upload the CSV. Stored raw; parsing happens in the ingest job.
+   * Upload the customer file: a CSV, stored raw, or an Excel workbook (IM8), whose first
+   * visible sheet is converted here, once, and stored as CSV. Every later step (the column
+   * analysis, the check, the import, the downloads) reads the stored CSV and never knows
+   * the difference. Parsing happens in the ingest job.
    *
    * Multipart lives in its own sub-plugin so the parser is scoped to this one
    * route — registering it at the plugin
@@ -159,47 +368,167 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       limits: { fileSize: CSV_MAX_BYTES },
     });
 
+    // A build without the Excel conversion's child bundle is said at boot, not at the first upload.
+    try {
+      xlsxWorkerEntry();
+    } catch (err) {
+      log.error({ err }, "Excel uploads will fail: the conversion child's bundle is missing from this build");
+    }
+
+    // Each user's Excel conversions, capped so one supervisor cannot keep the one slot (IM8).
+    const xlsxStarts = new XlsxStartCap();
+
+    // Closing the server stops a conversion in flight, so the upload answers at once (503)
+    // and `app.close()` does not wait out the conversion's deadline (IM8).
+    sub.addHook('preClose', (done) => {
+      abortXlsxConversions('The server is shutting down.');
+      done();
+    });
+
     sub.post('/ingest/upload', {
       preHandler: requirePermission('agency.campaigns.write'),
     }, async (request, reply) => {
       const file = await request.file();
       if (!file) {
-        return reply.code(400).send({ error: 'Validation Error', message: 'No file uploaded.' });
+        return refuseUpload(reply, 400, 'no_file', UPLOAD_REFUSAL_MESSAGES.noFile);
+      }
+      const userKey = request.user?.id ?? '';
+      // A workbook over its user's cap, or a second one while one converts, is told so before
+      // its body is read into memory; the authoritative checks are below, once the bytes say
+      // it is a workbook, and the runner's own.
+      const rateLimitedFor = (): number => xlsxStarts.retryAfterSeconds(userKey);
+      const refuseRateLimited = (retryAfter: number): FastifyReply => {
+        log.info({ tenantId: request.tenantId, reason: 'rate_limited' }, 'Agency roster workbook refused');
+        return refuseUpload(reply, 429, 'upload_rate_limited', rateLimitedMessage(retryAfter), retryAfter);
+      };
+      if (isWorkbookName(file.filename)) {
+        const retryAfter = rateLimitedFor();
+        const busy = retryAfter === 0 && xlsxConversionRunning();
+        if (retryAfter > 0 || busy) {
+          // The file is neither held in memory nor converted, but the rest of it is read and
+          // dropped before the answer; otherwise a browser still sending it would see the
+          // connection reset instead of the 429. Neither the slot nor the cap is held meanwhile.
+          if (!(await discardUpload(file, request))) reply.header('Connection', 'close');
+          if (retryAfter > 0) return refuseRateLimited(retryAfter);
+          log.info({ tenantId: request.tenantId, reason: 'busy' }, 'Agency roster workbook refused');
+          return refuseXlsx(new XlsxBusyError(), reply);
+        }
       }
 
       // A multipart body that ends mid-part raises busboy's `Unexpected end of form`, an
       // error with no status, which reached the client as a masked 500. It is the caller's
-      // malformed upload: a 400. Errors the plugin does classify (the 413 for a file over
-      // `CSV_MAX_BYTES`) keep their status (`load/hostile-input-fuzz.test.ts`).
+      // malformed upload: a 400. A file over `CSV_MAX_BYTES` is the upload's own 413
+      // `file_too_large`; other errors the plugin classifies keep their status
+      // (`load/hostile-input-fuzz.test.ts`).
       let buffer: Buffer;
       try {
         buffer = await file.toBuffer();
       } catch (err) {
+        if (err instanceof sub.multipartErrors.RequestFileTooLargeError) {
+          log.info({ tenantId: request.tenantId }, 'Agency roster upload refused: over the size limit');
+          return refuseUpload(reply, 413, 'file_too_large', UPLOAD_REFUSAL_MESSAGES.fileTooLarge);
+        }
         if (typeof (err as { statusCode?: unknown }).statusCode === 'number') throw err;
         log.warn({ err, tenantId: request.tenantId }, 'Agency roster upload refused: malformed multipart body');
-        return reply.code(400).send({
-          error: 'Validation Error',
-          message: 'The upload could not be read: the file was cut off or the form is malformed. Please upload it again.',
-        });
+        return refuseUpload(reply, 400, 'upload_malformed', UPLOAD_REFUSAL_MESSAGES.malformed);
       }
-      const uploadId = crypto.randomUUID();
-      // The shape is load-bearing: `isTenantUploadKey` proves ownership of a
-      // client-supplied key from exactly what `uploadKey` mints, and refuses the
-      // rejected-rows export that shares its prefix.
-      const safeName = file.filename.replace(/[^A-Za-z0-9._-]/g, '_');
-      const s3Key = uploadKey(request.tenantId!, uploadId, safeName);
-      await uploadFile(s3Key, buffer, 'text/csv');
 
-      log.info(
-        { tenantId: request.tenantId, s3Key, bytes: buffer.length },
-        'Agency roster CSV uploaded',
-      );
+      // What the file is, by its bytes and then its name (`detectUploadFormat`): an `.xls`
+      // or a workbook with a password, or text named `.xlsx`, is refused here.
+      const fileSizeBytes = buffer.length;
+      const refused = (err: unknown): FastifyReply | null => {
+        if (!(err instanceof XlsxRefusal || err instanceof XlsxLimitError || err instanceof XlsxBusyError
+          || err instanceof XlsxShutdownError || err instanceof XlsxStorageTimeoutError)) return null;
+        log.info({ tenantId: request.tenantId, bytes: fileSizeBytes, reason: xlsxErrorReason(err) }, 'Agency roster workbook refused');
+        return refuseXlsx(err, reply);
+      };
+      let format: UploadFormat;
+      try {
+        format = detectUploadFormat(buffer, file.filename);
+      } catch (err) {
+        const answer = refused(err);
+        if (answer) return answer;
+        throw err;
+      }
 
-      return reply.code(201).send({
-        s3_key: s3Key,
-        file_name: file.filename,
-        file_size_bytes: buffer.length,
-      });
+      // A workbook is converted in a child process (`agency-xlsx-runner.ts`): its first pass
+      // (rows, width, merges) before anything is stored. A client that goes away stops it.
+      let conversion: XlsxConversion | null = null;
+      const gone = new AbortController();
+      const onClose = () => {
+        if (!reply.raw.writableEnded) gone.abort(new Error('The client closed the upload.'));
+      };
+      reply.raw.on('close', onClose);
+      try {
+        if (format === 'xlsx') {
+          // A workbook under another name (`customers.csv`) meets the cap only now (its body read).
+          const retryAfter = rateLimitedFor();
+          if (retryAfter > 0) return refuseRateLimited(retryAfter);
+          // A start counts only when the slot is free, so a `workbook_busy` costs the user nothing.
+          if (!xlsxConversionRunning()) xlsxStarts.record(userKey);
+          try {
+            conversion = await convertXlsxInChild(buffer, XLSX_LIMITS, { signal: gone.signal });
+          } catch (err) {
+            const answer = refused(err);
+            if (answer) return answer;
+            if (gone.signal.aborted) {
+              log.info({ tenantId: request.tenantId, bytes: fileSizeBytes }, 'Agency roster workbook abandoned by the client');
+              return refuseUpload(reply, 400, 'upload_stopped', UPLOAD_REFUSAL_MESSAGES.stopped);
+            }
+            throw err;
+          }
+        }
+
+        const uploadId = crypto.randomUUID();
+        // The shape is load-bearing: `isTenantUploadKey` proves ownership of a
+        // client-supplied key from exactly what `uploadKey` mints, and refuses the
+        // rejected-rows export that shares its prefix. A workbook is stored as CSV, so
+        // its key ends `.csv` (`customers.xlsx.csv`).
+        const safeName = file.filename.replace(/[^A-Za-z0-9._-]/g, '_');
+        const s3Key = uploadKey(request.tenantId!, uploadId, conversion ? `${safeName}.csv` : safeName);
+
+        if (conversion) {
+          try {
+            // Stopped by the client going, or by the conversion's own end (its deadline, shutdown).
+            const csvBytes = await uploadStream(s3Key, conversion.csv, 'text/csv', AbortSignal.any([gone.signal, conversion.signal]));
+            log.info(
+              { tenantId: request.tenantId, s3Key, bytes: fileSizeBytes, csvBytes, rows: conversion.rows, columns: conversion.columns },
+              'Agency roster workbook converted and uploaded',
+            );
+          } catch (err) {
+            // The conversion's own failure is the answer, whatever the aborted upload then
+            // reported (lib-storage's abort of the multipart upload can fail on its own).
+            // Then stopped, so an upload that failed without reading (no S3) frees the slot now.
+            const cause = conversion.failure() ?? err;
+            conversion.dispose();
+            const answer = refused(cause);
+            if (answer) return answer;
+            if (gone.signal.aborted) {
+              log.info({ tenantId: request.tenantId, bytes: fileSizeBytes }, 'Agency roster workbook abandoned by the client');
+              return refuseUpload(reply, 400, 'upload_stopped', UPLOAD_REFUSAL_MESSAGES.stopped);
+            }
+            throw cause;
+          }
+        } else {
+          await uploadFile(s3Key, buffer, 'text/csv');
+          log.info(
+            { tenantId: request.tenantId, s3Key, bytes: fileSizeBytes },
+            'Agency roster CSV uploaded',
+          );
+        }
+
+        const response: AgencyUploadResponse = {
+          s3_key: s3Key,
+          file_name: file.filename,
+          file_size_bytes: fileSizeBytes,
+          format,
+          ...(conversion ? { sheet: conversion.sheet } : {}),
+        };
+        return reply.code(201).send(response);
+      } finally {
+        reply.raw.off('close', onClose);
+        conversion?.dispose();
+      }
     });
   });
 
@@ -1045,7 +1374,8 @@ async function proveCampaignOwnedForWrite(
  * quote-safe in `filename=`. Cut by code point (`Array.from`), never mid-surrogate.
  */
 function downloadBaseName(fileName: string): string {
-  const stem = fileName.replace(/\.csv$/i, '');
+  // `.xlsx` too (IM8): `customers.xlsx` downloads as `customers-rejected-rows.csv`.
+  const stem = fileName.replace(/\.(csv|xlsx|xlsm)$/i, '');
   const sanitised = stem
     .replace(/[\\/]/g, '_')
     .replace(/\.{2,}/g, '.')

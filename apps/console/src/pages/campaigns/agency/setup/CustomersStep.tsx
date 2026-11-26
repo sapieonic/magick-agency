@@ -9,11 +9,14 @@ import {
   Switch,
 } from '../../../../components/campaign-setup';
 import { ColumnMapper } from '../ColumnMapper';
+import { SheetNotice } from '../SheetNotice';
 import { IngestSummary } from '../IngestSummary';
 import type { UploadPhase, useRosterIngest } from '../../../../hooks/useRosterIngest';
 import { MAPPING_BLOCK_COPY, mappingBlockReason } from '../../../../utils/agencyColumnMapping';
 import { buildIngestSummary, checkComparison } from '../../../../utils/agencyIngestSummary';
 import { formatSpineTimestamp } from '../../../../utils/agencySpineCopy';
+import { CUSTOMER_FILE_ACCEPT, CUSTOMER_FILE_LABEL, uploadingLine } from '../../../../utils/agencyCustomerFile';
+import { useCustomerFileDrop } from '../../../../hooks/useCustomerFileDrop';
 import { formatCount } from '../../../../utils/format/number';
 import {
   fileRowLine,
@@ -45,6 +48,7 @@ export type CustomersIngest = Pick<
   | 'retryable'
   | 'checkJob'
   | 'importing'
+  | 'uploadingWorkbook'
   | 'upload'
   | 'analysis'
   | 'mapping'
@@ -82,10 +86,11 @@ export interface CustomersStepProps {
 const UPLOAD_PHASES: readonly UploadPhase[] = ['idle', 'uploading', 'analyzing'];
 
 /**
- * Step 2 of the campaign setup, "Customers" (CS6–CS9): upload a CSV, which is checked straight
- * away when the phone column is sure (CS8; otherwise the column mapper asks), then the check's
- * counts as chips, and the columns agents see as switches over sample rows. The footer's primary
- * action (Add 1,240 customers, Continue, Skip for now) is the page's, from `customersContinue`.
+ * Step 2 of the campaign setup, "Customers" (CS6–CS9): upload an Excel or CSV file (CS7), which
+ * is checked straight away when the phone column is sure (CS8; otherwise the column mapper asks),
+ * then the check's counts as chips, and the columns agents see as switches over sample rows. The
+ * footer's primary action (Add 1,240 customers, Continue, Skip for now) is the page's, from
+ * `customersContinue`.
  *
  * Controlled: every piece of state is the roster ingest's (`useRosterIngest`), except the drag
  * feedback and the note that the step started the check itself.
@@ -108,6 +113,7 @@ export function CustomersStep({
     retryable,
     checkJob,
     importing,
+    uploadingWorkbook,
     upload,
     analysis,
     mapping,
@@ -123,22 +129,9 @@ export function CustomersStep({
     reset,
   } = ingest;
 
-  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // `phase` is render state, so two drop/change events can both see `idle` before React commits
-  // `uploading`; this lock takes the first file only.
-  const pickingRef = useRef(false);
-
-  const pick = async (file: File | undefined) => {
-    if (!file || phase !== 'idle' || pickingRef.current) return;
-    pickingRef.current = true;
-    setDragOver(false);
-    try {
-      await onPickFile(file);
-    } finally {
-      pickingRef.current = false;
-    }
-  };
+  // One file at a time, while idle; the picker cleared after each pick (shared with Add contacts).
+  const { dropzoneProps, onInputChange } = useCustomerFileDrop(phase === 'idle', onPickFile);
 
   /*
     CS8: a fresh analysis that is sure of the phone column starts the check here. Until the check
@@ -178,7 +171,7 @@ export function CustomersStep({
   return (
     <SetupCard
       title="Customers"
-      helper="Upload a CSV file. We check it for you."
+      helper="Upload an Excel or CSV file. We check it for you."
       headingRef={headingRef}
       testId="customers-step"
     >
@@ -186,23 +179,13 @@ export function CustomersStep({
         <div
           className={styles.dropzone}
           data-testid="contacts-dropzone"
-          data-drag-over={dragOver || undefined}
-          onDragOver={(event) => {
-            event.preventDefault();
-            if (phase === 'idle' && !pickingRef.current) setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragOver(false);
-            void pick(event.dataTransfer.files[0]);
-          }}
+          {...dropzoneProps}
         >
           <span className={styles.dropIcon} aria-hidden="true">
             <Upload size={22} />
           </span>
           <p className={styles.dropCopy}>
-            Drop a CSV file here, or choose one. We find the phone number column for you.
+            Drop an Excel or CSV file here, or choose one. We find the phone number column for you.
           </p>
           {limits ? (
             <p className={styles.muted} data-testid="ingest-limits">
@@ -214,12 +197,10 @@ export function CustomersStep({
             ref={fileInputRef}
             className="sr-only"
             type="file"
-            accept=".csv,text/csv"
-            aria-label="CSV file"
+            accept={CUSTOMER_FILE_ACCEPT}
+            aria-label={CUSTOMER_FILE_LABEL}
             disabled={phase !== 'idle'}
-            onChange={(event) => {
-              void pick(event.target.files?.[0]);
-            }}
+            onChange={onInputChange}
           />
           <button
             type="button"
@@ -227,9 +208,9 @@ export function CustomersStep({
             disabled={phase !== 'idle'}
             onClick={() => fileInputRef.current?.click()}
           >
-            Choose a CSV file
+            Choose a file
           </button>
-          {phase === 'uploading' ? <p className={styles.busy} role="status">Uploading…</p> : null}
+          {phase === 'uploading' ? <p className={styles.busy} role="status">{uploadingLine(uploadingWorkbook)}</p> : null}
           {phase === 'analyzing' ? <p className={styles.busy} role="status">Reading the columns…</p> : null}
         </div>
       ) : null}
@@ -244,6 +225,12 @@ export function CustomersStep({
             <span className={styles.muted}>
               {fileRowLine(upload, analysis, finished ? job : null)}
             </span>
+            <SheetNotice
+              upload={upload}
+              className={styles.sheetNotice}
+              readClassName={styles.muted}
+              othersClassName={styles.note}
+            />
           </div>
           {!importedDone ? (
             <button

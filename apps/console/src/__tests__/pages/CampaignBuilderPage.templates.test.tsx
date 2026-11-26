@@ -45,7 +45,7 @@ const mocks = vi.hoisted(() => ({
   listCampaignTemplates: vi.fn(),
   getEffectiveCampaignTemplate: vi.fn(),
   started: vi.fn(),
-  uploadRosterCsv: vi.fn(),
+  uploadCustomerFile: vi.fn(),
   analyzeRosterColumns: vi.fn(),
   startRosterIngest: vi.fn(),
   getIngestJob: vi.fn(),
@@ -79,7 +79,7 @@ vi.mock('../../hooks/useCampaignStaffing', async (importOriginal) => ({
 }));
 vi.mock('../../api/agencyCampaigns', () => ({
   getIngestLimits: mocks.getIngestLimits,
-  uploadRosterCsv: mocks.uploadRosterCsv,
+  uploadCustomerFile: mocks.uploadCustomerFile,
   analyzeRosterColumns: mocks.analyzeRosterColumns,
   startRosterIngest: mocks.startRosterIngest,
   getIngestJob: mocks.getIngestJob,
@@ -588,7 +588,7 @@ async function addCustomers(facts: string[] = []) {
 }
 
 function withRoster(analysis: AgencyColumnAnalysis = ANALYSIS) {
-  mocks.uploadRosterCsv.mockResolvedValue({ s3_key: 'k', file_name: 'collections_aug.csv', dedupe_columns: [], file_size_bytes: 10 });
+  mocks.uploadCustomerFile.mockResolvedValue({ s3_key: 'k', file_name: 'collections_aug.csv', dedupe_columns: [], file_size_bytes: 10 });
   mocks.analyzeRosterColumns.mockResolvedValue(analysis);
   mocks.startRosterIngest.mockResolvedValue({ job_id: 'check-1', status: 'pending' });
   mocks.importCheckedFile.mockResolvedValue({ job_id: 'import-1', status: 'pending', check_job_id: 'check-1', already_started: false });

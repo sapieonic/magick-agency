@@ -39,6 +39,12 @@
   background: var(--bg-secondary);
 }
 
+/* A file dragged over it, as New campaign's Customers step marks it. */
+.dropzone[data-drag-over='true'] {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
 .dropzoneCopy {
   font-size: 13px;
   color: var(--text-secondary);
@@ -49,9 +55,25 @@
   color: var(--text-muted);
 }
 
-/* Visually hidden: the "Choose a CSV" button beside it opens it. */
+/* Visually hidden: the "Choose a file" button beside it opens it. */
 .fileInput {
   composes: sr-only from global;
+}
+
+/* An Excel upload's sheet, above the columns: the sheet read (in `.limits`' muted line), then
+   any that were not (CS7). */
+.sheetNotice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.sheetOthers {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
 }
 
 /* Wraps, so the two import buttons stay on screen at phone width. */

@@ -811,6 +811,34 @@ describe('upload history', () => {
     await waitFor(() => expect(mocks.downloadRejectedRows).toHaveBeenCalledWith('job-2', 'tenant-1', 'account-1'));
   });
 
+  it('names the rejected rows of an Excel upload as a CSV, without the .xlsx or .xlsm', async () => {
+    mocks.downloadRejectedRows.mockResolvedValue(new Blob(['row_number,_reason\n']));
+    Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:x'), revokeObjectURL: vi.fn() });
+    const names: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    try {
+      const base = uploads().uploads[0]!;
+      const list = uploads({
+        uploads: [
+          { ...base, job_id: 'job-3', file_name: 'Customers May.XLSX' },
+          { ...base, job_id: 'job-4', file_name: 'Macros.xlsm' },
+          { ...base, job_id: 'job-2' },
+        ],
+      });
+      show(<UploadsSection campaignId="camp-1" campaignName="EMI Recovery" uploads={list} timezone={ZONE} tenantId="tenant-1" accountId="account-1" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Download the rejected rows of Customers May.XLSX' }));
+      await waitFor(() => expect(names).toEqual(['rejected-Customers May.csv']));
+      fireEvent.click(screen.getByRole('button', { name: 'Download the rejected rows of Macros.xlsm' }));
+      await waitFor(() => expect(names).toEqual(['rejected-Customers May.csv', 'rejected-Macros.csv']));
+      fireEvent.click(screen.getByRole('button', { name: /Download the rejected rows of october/ }));
+      await waitFor(() => expect(names).toEqual(['rejected-Customers May.csv', 'rejected-Macros.csv', 'rejected-october, cycle -B.csv']));
+    } finally {
+      click.mockRestore();
+    }
+  });
+
   it('quotes a file name with a comma and quotes in its CSV', () => {
     show(<UploadsSection campaignId="camp-1" campaignName="EMI Recovery" uploads={uploads()} timezone={ZONE} tenantId="tenant-1" accountId="account-1" />);
     expect(csvOf('Download CSV').split('\r\n')[1]?.startsWith('"october, cycle ""B"".csv",Anita Kulkarni,')).toBe(true);

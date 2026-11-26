@@ -8,7 +8,7 @@ import {
   getIngestLimits,
   importCheckedFile,
   startRosterIngest,
-  uploadRosterCsv,
+  uploadCustomerFile,
 } from '../api/agencyCampaigns';
 import {
   buildIngestRequest,
@@ -17,6 +17,7 @@ import {
   type MappingState,
 } from '../utils/agencyColumnMapping';
 import { HIGH_REJECTION_RATIO, checkStillImportable, isTerminal } from '../utils/agencyIngestSummary';
+import { isWorkbookFile, uploadBaseName, uploadErrorMessage } from '../utils/agencyCustomerFile';
 import {
   trackAgencyRosterIngestCompleted,
   trackAgencyRosterIngestFailed,
@@ -157,6 +158,8 @@ export function useRosterIngest(
    */
   const [checkedMapping, setCheckedMapping] = useState<MappingState | null>(null);
   const [importing, setImporting] = useState(false);
+  /** The file being uploaded looks like a workbook: the server reads it before it answers (IM8). */
+  const [uploadingWorkbook, setUploadingWorkbook] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
@@ -267,8 +270,9 @@ export function useRosterIngest(
       setJobId(null);
       setCheckJob(null);
       setPhase('uploading');
+      setUploadingWorkbook(isWorkbookFile(file));
       try {
-        const uploaded = await uploadRosterCsv(file, tenantId, accountId);
+        const uploaded = await uploadCustomerFile(file, tenantId, accountId);
         setUpload(uploaded);
         setPhase('analyzing');
         const columns = await analyzeRosterColumns({ s3_key: uploaded.s3_key }, tenantId, accountId);
@@ -276,11 +280,14 @@ export function useRosterIngest(
         setMapping(initialMapping(columns));
         setPhase('mapping');
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Could not read that file.');
+        // The server's words, except a 413 it did not write (nginx's page, Fastify's bare one).
+        setError(uploadErrorMessage(err, limits?.max_file_bytes));
         setPhase('idle');
+      } finally {
+        setUploadingWorkbook(false);
       }
     },
-    [tenantId, accountId],
+    [tenantId, accountId, limits],
   );
 
   const startIngest = useCallback(
@@ -400,7 +407,8 @@ export function useRosterIngest(
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `${job.file_name.replace(/\.csv$/i, '')}-${which}-rows.csv`;
+      // CSV whatever was uploaded: `Customers.xlsx` → `Customers-rejected-rows.csv`.
+      anchor.download = `${uploadBaseName(job.file_name)}-${which}-rows.csv`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (err: unknown) {
@@ -465,6 +473,7 @@ export function useRosterIngest(
     retryable,
     checkJob,
     importing,
+    uploadingWorkbook,
     importChecked,
     onDownloadSkipped,
     upload,
