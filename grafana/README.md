@@ -61,7 +61,7 @@ case-sensitive:
 (`apps/server/src/instrumentation.ts`), so an unnamed process never reaches
 Grafana Cloud. A process that is not a deployment uses a name the regex does not
 select (`.env.example` suggests `agency-dev-<you>`). Naming a dev box
-`magick-agency` makes it production, and its criticals page. The `deployment`
+`magick-agency` makes it production, and its alerts are routed as production's. The `deployment`
 label keys on the `-Staging` / `-Dedicated` suffix, so any other name the regex
 selects is routed as production.
 
@@ -72,38 +72,65 @@ the same regex, and the validators keep the two equal.
 
 **This module owns the stack's routing** (`terraform/routing.tf`, decision B6
 amended 2026-11-26). magickagency.grafana.net carries only agency, so the module
-manages the Slack contact point **Magick Agency Slack** and the stack's
-notification policy. The policy is a Grafana singleton: applying replaces the
-stack's whole routing tree, so nothing else may manage routing on this stack.
+manages the Slack contact point **Magick Agency Slack**, the nightly mute timings
+and the stack's notification policy. The policy is a Grafana singleton: applying
+replaces the stack's whole routing tree, so nothing else may manage routing on
+this stack. `terraform destroy` resets it to Grafana's default (the default email
+contact point).
 
 Every alert, critical and warning, from every deployment, posts to one Slack
-channel through an incoming webhook. The webhook URL is a secret and is passed
+channel through an incoming webhook. **Nothing pages anyone:** a critical is a
+Slack message re-sent hourly while it fires, so a production critical at night
+waits for someone to read the channel. The webhook URL is a secret and is passed
 in, never committed:
 
 ```bash
 export TF_VAR_slack_webhook_url="https://hooks.slack.com/services/..."
 ```
 
-To move the alerts to another channel, make a new incoming webhook for it in
-Slack, export its URL and apply.
+Every apply needs it, and it must be the same webhook each time: applying with
+another one (your own test channel, say) moves every agency alert there. To move
+the alerts to another channel on purpose, make a new incoming webhook for it in
+Slack, export its URL and apply. Like every secret Terraform manages, the URL is
+kept in plain text in the S3 state.
 
 The policy groups by `grafana_folder`, `alertname` and `deployment`, waits 30s
-before the first message of a group and 5m between updates. Criticals are re-sent
-hourly while they fire, warnings every 4 hours. The labels it reads:
+before the first message of a group and 5m between updates. Its routes, first
+match wins (the shape the shared sapieonic stack used):
+
+| Route | Muted | Re-sent |
+|---|---|---|
+| `alertname = DatasourceError` (a rule's query failed), grouped by `alertname`, `datasource_uid` | no | every 4h |
+| `deployment =~ staging\|dedicated` and `nightly_window = mute` | `nightly-dedicated` | every 4h |
+| ↳ `deployment = staging` | `nightly-staging` | daily |
+| ↳ `severity = critical` | `nightly-dedicated` | hourly |
+| `deployment = staging` | no | daily |
+| `severity = critical` | no | hourly |
+| everything else (production and dedicated warnings) | no | every 4h |
+
+The mute timings are in IST (`Asia/Kolkata`) and cover the nightly shutdown:
+`nightly-staging` 22:15–09:45, `nightly-dedicated` 22:15–08:30. They hide only the
+rules labelled `nightly_window = "mute"`, whose staging and dedicated firings are
+that shutdown.
+
+The labels on every alert:
 
 | Label | Value | Used for |
 |---|---|---|
-| `severity` | `critical` / `warning` | criticals have their own route, re-sent hourly |
-| `deployment` | templated from `service_name`: `-Staging` → `staging`, `-Dedicated` → `dedicated`, else `production` | grouping, so one rule's staging and production firings are separate messages. The template text is pinned by the routing test |
-| `nightly_window` | `mute` (only on `agy-service-not-reporting` and `agy-error-log-volume`) | marks firings that are the staging and dedicated nightly shutdown. No mute timing uses it yet, so those post to Slack too |
+| `severity` | `critical` / `warning` | criticals are re-sent hourly |
+| `deployment` | templated from `service_name`: `-Staging` → `staging`, `-Dedicated` → `dedicated`, else `production` | grouping and the staging and nightly routes. The template text is pinned by the routing test |
+| `nightly_window` | `mute` (only on `agy-service-not-reporting` and `agy-error-log-volume`) | the nightly mute route |
 | `service` | `agency` | shown in the message |
 | `component` | the rule group | shown in the message |
 
-The routing test in `scripts/validate-alerts.test.mjs` pins all of this:
+The routing test in `scripts/validate-alerts.test.mjs` pins all of this except
+the mute timings' hours:
 - the label set and the `deployment` template text;
 - that rules add no label but `nightly_window = "mute"`;
-- that routing resources are declared only in `routing.tf`, with one policy,
-  grouped as above, and a nested route on `severity = critical`;
+- that routing resources, classic or app-platform, are declared only in
+  `routing.tf`, with one contact point and one policy;
+- the policy's grouping and 4h re-send, and its whole route tree: each route's
+  matchers, mute timings and re-send, every route to the Slack contact point;
 - that the Slack URL is `var.slack_webhook_url`, declared sensitive, and no
   `.tf` file holds a literal webhook.
 
@@ -128,7 +155,7 @@ Every expression selects `${local.agency}` and nothing else.
 | `agy-event-loop-delay-p99` | `nodejs_eventloop_delay_p99_seconds` |
 | `agy-metric-cardinality-overflow` | `{otel_metric_overflow="true"}` |
 | `agy-cluster-child-crash` | `cluster_child_exits_total{expected="false"}`, with the new-series guard; the supervisor also records the series at zero when it starts |
-| `agy-credential-keyring-missing-keys` | `telephony_credential_missing_key_ids` above 0: stored carrier credential secrets sealed under a master key `TELEPHONY_CREDENTIAL_KEYS` does not hold (B19). Set at boot and after each hourly sweep; pages |
+| `agy-credential-keyring-missing-keys` | `telephony_credential_missing_key_ids` above 0: stored carrier credential secrets sealed under a master key `TELEPHONY_CREDENTIAL_KEYS` does not hold (B19). Set at boot and after each hourly sweep; critical |
 | `agy-credential-sweep-failing` | `telephony_credential_sweeps_total{result="failed"}`, 2+ in 3h (the sweep is hourly), with the new-series guard; the housekeeping also records both results at zero when it starts |
 | `agy-insights-rollup-failing` | `agency_insights_rollup_failures_total`, 10+ in 15m, with the new-series guard |
 | `agy-insights-rollup-behind` | `agency_insights_rollup_oldest_dirty_seconds` above 120s (8 rollup intervals) for 10m |
@@ -143,8 +170,8 @@ Every expression selects `${local.agency}` and nothing else.
 | `agy-inbound-unanswered-share` | `agency_inbound_calls_total`: of the open-hours calls (answered, overflow, overflow_no_capacity, abandoned_in_queue, voicemail), the share that reached nobody above 0.5 over 1h, with a floor of 10 calls |
 | `agy-inbound-answer-slow` | `agency_inbound_answer_seconds` p95 over 15m above 2s (half the 4s answer budget), with a floor of 5 answers |
 | `agy-inbound-callers-unserved` | `agency_inbound_queue_waiting` above 0 for 15m with no `agency_inbound_offers_total` in the last 10m |
-| `agy-inbound-connect-unavailable` | `agency_inbound_connect_available` at 0 (media workers on) while `agency_inbound_applications` counts a credential with inbound enabled; pages |
-| `agy-inbound-application-broken` | `agency_inbound_applications{health=~"url_mismatch\|app_missing"}` above 0 for 5m (the scheduled health check, every 15m); pages |
+| `agy-inbound-connect-unavailable` | `agency_inbound_connect_available` at 0 (media workers on) while `agency_inbound_applications` counts a credential with inbound enabled; critical |
+| `agy-inbound-application-broken` | `agency_inbound_applications{health=~"url_mismatch\|app_missing"}` above 0 for 5m (the scheduled health check, every 15m); critical |
 | `agy-inbound-application-unchecked` | `agency_inbound_applications{health=~"unreachable\|failed"}` above 0 for 45m (three passes) |
 | `agy-inbound-ring-push-failed` | `agency_inbound_rings_total`: of the rings to away agents' phones over 15m, the share `push_failed` above 0.2, with a floor of 5 rings (Mode B) |
 | `agy-listen-loop-delay` | `nodejs_eventloop_delay_p99_seconds` above 40 ms (two 20 ms media frames) for 10m while `agency_listen_sessions_active` is above 0: the loop delays every bridged frame, and listening's cost (the tap runs after the relay's write, so it costs loop time, not relay dwell; docs/listening.md §10) is the first thing to rule out |
@@ -340,9 +367,10 @@ What that costs depends on how many events a series holds:
   `-distributor.otel-created-timestamp-zero-ingestion-enabled`, experimental, off by
   default) writes a 0 sample at each OTLP point's start time. The OTel JS SDK
   stamps a new label set's start time at its first increment, so with it on every
-  counter and histogram counts from 0 in every query, restarts included. It is off
-  on this stack (every `agency_abandoned_reason_total` series' `min_over_time` on
-  23 Nov is 1, never 0); Grafana Cloud support turns it on for the stack. The arm
+  counter and histogram counts from 0 in every query, restarts included. It was off
+  on the sapieonic stack (every `agency_abandoned_reason_total` series' `min_over_time`
+  on 23 Nov is 1, never 0) and has not been checked on magickagency; Grafana Cloud
+  support turns it on per stack. The arm
   stays correct with it on (a series whose zero lands inside the window is still
   new; one whose zero lands before it goes through `rate()`), so the panels need
   no change either way.

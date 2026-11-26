@@ -443,7 +443,7 @@ schema when it seeds) and refuses any other name or port. How to run it, its set
    IB8). With media workers on, inbound calls are answered but nobody is put through to an agent:
    every caller to an open route hears the call-back message. The server warns at boot, the
    super-admin credential page says so, `agency_inbound_connect_available` reads 0 and
-   `agy-inbound-connect-unavailable` pages. Mode B's rings are offers of the same connector
+   `agy-inbound-connect-unavailable` fires as a critical. Mode B's rings are offers of the same connector
    ([`inbound.md`](inbound.md) §6.1), so they need it too.
 
 ## Shutdown and grace period
@@ -709,7 +709,7 @@ the pilot starts, not measured values.
 | Caller p90 wait, before and after | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_wait_seconds_bucket{result="connected",$s}[7d])))`, the week before the flag against each pilot week; `agency_inbound_answered_wait_seconds{channel}` splits the pilot weeks by station and push | no worse than before; push p90 within the route's maximum wait |
 | Overflow share | `agency_inbound_overflows_total` over `agency_inbound_calls_total`, before and after | lower than before |
 | `ring_missed` ends per agent per day | `increase(agency_away_ring_ended_total{reason="ring_missed",$s}[1d])` divided by the agents opted in (the devices with ringing on); the audit trail (`Phone stopped ringing for inbound calls`, why: missed rings) names them | at most 1; an agent above it most days is asked whether ringing suits them |
-| Push failures | `agency_inbound_rings_total{result="push_failed"}` over all rings, and `agency_push_sends_total{result!="ok"}` by result; the `agy-inbound-ring-push-failed` alert pages above 0.2 | below 0.02 outside an incident; `invalid` and `unregistered` explained device by device |
+| Push failures | `agency_inbound_rings_total{result="push_failed"}` over all rings, and `agency_push_sends_total{result!="ok"}` by result; the `agy-inbound-ring-push-failed` alert warns above 0.2 | below 0.02 outside an incident; `invalid` and `unregistered` explained device by device |
 | Bind headroom | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_ring_bind_seconds_bucket{$s}[7d])))` against the 15 s accept grace; `accept_lapsed` in `agency_inbound_rings_total` | p90 below 8 s; `accept_lapsed` below 0.05 of answered rings |
 
 ## Enabling live call listening for a tenant
@@ -1155,7 +1155,7 @@ and a longer one only delays the retry of a genuinely lost message.
 
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
-warn (Slack) and never page, for the carrier credential rules, for the inbound rules, for the
+only warn, for the carrier credential rules, for the inbound rules, for the
 reports rules (warn only), for the live call listening rules (warn only), for the Live floor's
 Need help rule (warn only), and for the analysis rule (warn only, last). The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
@@ -1282,7 +1282,7 @@ this alert.
 
 ### `agy-credential-keyring-missing-keys`
 
-This one pages. **Means:** `telephony_credential_missing_key_ids` is above 0: stored tenant
+This one is critical. **Means:** `telephony_credential_missing_key_ids` is above 0: stored tenant
 carrier credential secrets (B19) are sealed under master key ids that `TELEPHONY_CREDENTIAL_KEYS`
 does not hold, so they cannot be opened. Every call on an affected credential fails closed, and so
 do the hangups and webhook checks of its calls already in flight; a running campaign pinned to
@@ -1316,10 +1316,10 @@ Postgres or its pool; a lock wait on a credential row being revoked or rotated c
 
 The `inbound` group ([`inbound.md`](inbound.md)); its panels are the dashboard's *Inbound calls*
 row. Thresholds are for a pilot (tens of calls an hour); re-read them against the pilot's first
-weeks. Two page: a broken Application and the media-workers condition, both of which stop every
+weeks. Two are critical: a broken Application and the media-workers condition, both of which stop every
 caller of a tenant (or of the deployment) from reaching anyone.
 
-- **`agy-inbound-application-broken`** (pages). **Means:** the scheduled health check (every 15
+- **`agy-inbound-application-broken`** (critical). **Means:** the scheduled health check (every 15
   min, `telephony/credentials/inbound-monitor.ts`) found a credential's Application changed in
   Plivo's console (`url_mismatch`: its calls are refused with a hangup) or gone (`app_missing`: its
   calls never reach us). **Check:** the WARN "Inbound Application does not match what is stored"
@@ -1332,7 +1332,7 @@ caller of a tenant (or of the deployment) from reaching anyone.
   health check refused for a credential" (`code`). **Do:** `carrier_rejected`: the tenant rotated
   or closed their Plivo account; rotate the credential's secret. `secret_unavailable`: the keyring
   (`agy-credential-keyring-missing-keys`). `unreachable`: Plivo's status, our egress.
-- **`agy-inbound-connect-unavailable`** (pages). **Means:** the server runs with `MEDIA_WORKERS`
+- **`agy-inbound-connect-unavailable`** (critical). **Means:** the server runs with `MEDIA_WORKERS`
   above 0 while a credential has inbound enabled: nobody is put through, every open-route caller is
   told "we'll call you back" (IB8; deployment invariant 8). **Do:** `MEDIA_WORKERS=0` and redeploy;
   or disable inbound on every credential first if the workers must stay.

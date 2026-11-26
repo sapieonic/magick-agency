@@ -2944,8 +2944,9 @@ through `literals.json`, would guard them.
 - The rollback-window DNC mirror back to the previous platform. Only the `agency_dnc_outbox` table
   exists; nothing writes it.
 - The link from the previous platform's UI to Magick Agency.
-- Applying agency's alert rules and dashboard (`grafana/`, B6) to Grafana Cloud: written and
-  validated, never applied. The first `terraform apply` is in `grafana/README.md`.
+- Agency's Slack routing (`grafana/terraform/routing.tf`, B6 amended 2026-11-26): written and
+  validated, not applied yet. The rules and dashboard are applied on magickagency.grafana.net;
+  the next apply needs `TF_VAR_slack_webhook_url` (`grafana/README.md`, "Routing").
 
 **Deployment pieces:**
 
