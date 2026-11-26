@@ -274,29 +274,54 @@ text the band scrolls with the content and the main action keeps its place.
 **With the keyboard up.** The page ends at the on-screen keyboard's top and the actions stay where
 they are, on the keyboard, with the main action in view (AS1). The shell's `Scaffold` makes room for
 the keyboard once and takes it out of its body's `MediaQuery`; each tab is built with that
-`MediaQuery` (`ShellBody`, `lib/app/shell.dart`). It once rebuilt the tab's `MediaQuery` from the
-shell's own, above its `Scaffold`, which put the keyboard back: every `Scaffold` in a tab (the
-station, the Phone tab, My calls, Performance, Me) then made room for it a second time, so the page
-ended a keyboard's height above the keyboard, an empty grey band between them, and the outcomes and
-the note were squeezed out (the testers' report: the buttons jump up, the Notes label is gone). The
-same put the gesture bar's inset back under the tab bar, and gave a sheet over a tab a keyboard's
-height of empty space. The actions take at most 45% of the page (`StationActionArea`); past that
-they scroll inside themselves and keep the main action whole in view (Save & next call first, Slide
-to end call last), so the secondary ones (Save & take break, Call again) are what scrolls. A refusal
-shows at the top of the area, at most 20% of the page and never leaving the main action under 64 dp,
-so one that comes while the agent types is seen. On a short page (under 520 dp left over the
-keyboard: 360×800 with a 300 dp keyboard leaves 476) the band scrolls with the content while the
-keyboard is up, as at 200% text; on a taller one it stays, with its clock. While the agent types,
-the note's label ("Note", "Note (needed)") and its save status are brought into view with the field
-once the keyboard settles, and again when a refusal shortens the content (`RevealWhileTyping`,
-`KeepTypingInView`, `lib/ui/keyboard.dart`; the soft phone's notes do the same). Measured in tests
-with the app's fonts, a 24 dp status bar and gesture bar, at 411×917 with a 330 dp keyboard (the
-testers' phone), 360×800 and 360×640 with 300 dp, 100% and 200% text: the note keeps at least 110 dp,
-its label, status and first line in view, and the main action whole. One case does not fit: at
-360×640 and 200% text, "Note (needed)" puts the status on a line of its own and the label is a scroll
-away; the line being typed stays in view. Less than 100 dp at the bottom (a hardware keyboard's
-suggestion strip) is not the keyboard (`keyboardOpenOf`). Guarded by
-`test/features/station/station_keyboard_test.dart` and, for the shell, `test/app/shell_test.dart`.
+`MediaQuery` (`ShellBody`, inside `ShellContent`, `lib/app/shell.dart`; the test harnesses' shell
+uses the same `ShellContent`, a supervisor's message included). It once rebuilt the tab's
+`MediaQuery` from the shell's own, above its `Scaffold`, which put the keyboard back: every
+`Scaffold` in a tab (the station, the Phone tab, My calls, Performance, Me) then made room for it a
+second time, so the page ended a keyboard's height above the keyboard, an empty grey band between
+them, and the outcomes and the note were squeezed out (the testers' report: the buttons jump up, the
+Notes label is gone). The same put the gesture bar's inset back under the tab bar, and gave a sheet
+over a tab a keyboard's height of empty space. With the keyboard up the actions take at most 45% of
+the page (`StationActionArea`); past that they scroll inside themselves and keep the main action
+whole in view (Save & next call first, Slide to end call last), so the secondary ones (Save & take
+break, Call again) are what scrolls, with a scroll bar beside them that says there is more. A
+refusal shows at the top of the area, at most 20% of the page and never leaving the main action
+under 64 dp; while one shows the area takes at least its first line (48 dp) and those 64 dp, more
+than its share on the smallest page, so one that comes while the agent types is seen. With the
+keyboard down the actions take at most half the window under their padding, as they always have (at
+200% text on 360×640, the whole of Save & next call, Save & take break and Call again), and never
+more than 70% of the page, so the top bar and some content keep their place under a supervisor's
+message. A supervisor's message takes one row (64 dp) while the keyboard is up (below). The band:
+on a page with 520 dp or more over the keyboard, at normal text, it stays whole; on a shorter one
+(the testers' phone under a message leaves 499, 360×800 with a 300 dp keyboard 476), or at 200%
+text, it keeps only its title and clock, in one 48 dp row, and stays, so the time left to choose an
+outcome is in view while the agent types (when it runs out with a tile picked, the outcome saves
+and the station moves on); on the shortest (under 440 dp: 360×800 under a message leaves 412,
+360×640 316) it scrolls with the content and goes out of view as the note comes into it. While the
+agent types, the note's label ("Note", "Note (needed)") and its save status are brought into view
+with the field once the keyboard settles, and again when a refusal shortens the content
+(`RevealWhileTyping`, `KeepTypingInView`, `lib/ui/keyboard.dart`; the soft phone's notes do the
+same); when they cannot all fit, the line being typed is. Measured in tests with the app's fonts, a
+24 dp status bar and gesture bar, at 411×917 with a 330 dp keyboard (the testers' phone), 360×800
+and 360×640 with 300 dp, 100% and 200% text, with and without three supervisor's messages queued:
+
+| Phone, keyboard | Page over the keyboard | Note in view (with a refusal) | Band while typing |
+|---|---|---|---|
+| 411×917, 330 | 563 | 233 to 363 (162 to 250) | whole at 100%, its row at 200% |
+| 411×917, 330, a message | 499 | 169 to 299 (162 to 199) | its row |
+| 360×800, 300 | 476 | 150 to 276 (150 to 181) | its row |
+| 360×800, 300, a message | 412 | 163 to 260 (163 to 178) | scrolls away |
+| 360×640, 300 | 316 | 110 to 164 (110) | scrolls away |
+| 360×640, 300, a message | 252 | 75 to 100 (52) | scrolls away |
+
+The label, status and first line of the note are in view, the main action whole, and a refusal's
+first line in view, but on 360×640: there, at 200% text, "Note (needed)" puts the status on a line
+of its own and the label is a scroll away; under a message's row the label is a scroll away at 200%
+text, and while a refusal shows at any size, and at 200% text the area holds 89 of the two-line Save
+& next call's 116 dp (its top, which takes a press). The line being typed stays in view in every
+case. 100 dp or less at the bottom (a hardware keyboard's suggestion strip) is not the keyboard
+(`keyboardOpenOf`). Guarded by `test/features/station/station_keyboard_test.dart` and, for the
+shell, `test/app/shell_test.dart` and `test/app/supervisor_message_room_test.dart`.
 None of this has been checked on a real phone yet.
 
 | Screen | When | Main action |
@@ -1476,11 +1501,14 @@ the flag is on). Break limits are not behind it.
   - **Room.** The shell gives the banner its body's height (the keyboard and the tab bar already
     off it), and the banner, shut or open, takes at most about a third of what is left under the
     status bar, never less than one message beside its 48 dp Dismiss (64 dp); its text and list
-    scroll inside, so the tab under it keeps the rest and nothing overflows. When a third cannot
-    hold the open list (144 dp: the keyboard up on a small phone, a phone on its side), the banner
-    shows the first message with "· 2 more messages" after its time and no button, and the list
-    opens again once there is room if it was open. The first cut sized it from the whole window,
-    so with the keyboard up the list could leave the tab nothing.
+    scroll inside, so the tab under it keeps the rest and nothing overflows. While the on-screen
+    keyboard is up it takes only that one row, on any phone: a third of the room over the keyboard
+    left a note being typed on a 360×640 phone 52 to 58 dp, its label and, at 200% text, the line
+    being typed out of view, and a refusal over the station's actions 7 to 12 dp. With the keyboard
+    up, or when a third cannot hold the open list (144 dp: a phone on its side), the banner shows
+    the first message with "· 2 more messages" after its time and no button, and the list opens
+    again once the keyboard is down and there is room, if it was open. The first cut sized it from
+    the whole window, so with the keyboard up the list could leave the tab nothing.
   - **Screen readers and focus.** Each message is announced once as it arrives ("Message from
     Anitha N: …", polite), sender and text together. The banner is not a live region: one would
     say a message twice as it arrives and again on a second message, a dismissal or opening the

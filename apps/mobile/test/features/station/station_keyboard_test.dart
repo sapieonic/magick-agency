@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderCustomPaint;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
@@ -9,6 +10,7 @@ import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/softphone/softphone_copy.dart';
 import 'package:magick_agency_agent/features/station/parts/layouts.dart';
 import 'package:magick_agency_agent/features/station/station_copy.dart';
+import 'package:magick_agency_agent/features/station/supervisor_message_banner.dart';
 
 import '../softphone/softphone_harness.dart' as sp show pumpSoftphone, settle;
 import '../softphone/softphone_harness.dart' show callView, caretRect, expectNoOverflow, setPhoneInsets;
@@ -16,11 +18,12 @@ import 'station_harness.dart';
 import 'station_inbound_test.dart' show caller, inboundStation;
 
 /// The on-screen keyboard over a station screen (`docs/mobile.md`, the station's screens), in the
-/// app's shell (`ShellScaffold` nests the tab as `AppShell` does, with `ShellBody`): the page ends at
-/// the keyboard's top, not a keyboard's height above it; the pinned actions stay, on the keyboard,
-/// with the main one in view (AS1), taking at most part of the page; the note being typed keeps
-/// real room, with its label and save status in view; and a refusal that comes while the agent
-/// types is in view too.
+/// app's shell (`ShellScaffold` nests the tab in the app's own `ShellContent`, as `AppShell` does,
+/// under a supervisor's message when one is queued): the page ends at the keyboard's top, not a
+/// keyboard's height above it; the pinned actions stay, on the keyboard, with the main one in view
+/// (AS1), taking at most part of the page; the note being typed keeps real room, with its label and
+/// save status in view; a refusal that comes while the agent types is in view too; and the band's
+/// title and clock stay in view but on the smallest page.
 ///
 /// A phone as the testers' (about 411×917 dp, a 330 dp keyboard) and two smaller ones, with a 24 dp
 /// status bar and a 24 dp gesture bar at the bottom, and the app's own fonts (the test font draws
@@ -29,6 +32,27 @@ const _statusBar = 24.0;
 const _navBar = 24.0;
 const _phones = [(size: Size(411, 917), keyboard: 330.0), (size: Size(360, 800), keyboard: 300.0), (size: Size(360, 640), keyboard: 300.0)];
 const _refusal = 'Couldn’t end the call. You are still connected.';
+
+/// Three supervisor's messages queued (LF36): the banner over the tab shows the first, with how
+/// many more wait.
+final _messages = [
+  for (var i = 1; i <= 3; i++)
+    SupervisorMessageView(
+      id: 'm$i',
+      text: 'Message number $i, a line or two long so that it wraps on a small phone.',
+      from: 'Reshma Mohammad',
+      sentAt: DateTime(2026, 11, 19, 10, 5),
+    ),
+];
+
+/// The band's title, and its clock if it has one, are in view and nothing covers them.
+void _expectBandInView(WidgetTester tester, String why) {
+  expect(find.byKey(const Key('band-title')).hitTestable(), findsOneWidget, reason: '$why: the band\'s title is in view');
+  final clocks = [for (final k in ['wrapup-digits', 'talk-timer', 'inbound-lapse']) find.byKey(Key(k))].where((f) => f.evaluate().isNotEmpty);
+  for (final clock in clocks) {
+    expect(clock.hitTestable(), findsOneWidget, reason: '$why: the band\'s clock is in view');
+  }
+}
 
 /// The station page's scrolling content, as much of it as the agent can see.
 Rect _visibleContent(WidgetTester tester, Size size, double keyboard) {
@@ -161,11 +185,14 @@ void main() {
     final size = phone.size;
     final keyboard = phone.keyboard;
     for (final scale in const [1.0, 2.0]) {
+      for (final message in const [false, true]) {
       for (final s in screens) {
-        testWidgets('${s.name}, ${size.width.round()}×${size.height.round()} with a ${keyboard.round()} dp keyboard, ${scale}x text: '
+        testWidgets('${s.name}, ${size.width.round()}×${size.height.round()} with a ${keyboard.round()} dp keyboard, ${scale}x text'
+            '${message ? ', under three supervisor\'s messages' : ''}: '
             'the page ends at the keyboard, the note and its label are in view, the main action stays, and a refusal shows',
             (tester) async {
-          final h = await pumpStation(tester, s.view(), shell: true, statusBar: _statusBar, navBar: _navBar, size: size, textScale: scale);
+          final h = await pumpStation(tester, s.view(), shell: true, statusBar: _statusBar, navBar: _navBar, size: size, textScale: scale,
+              extra: [if (message) supervisorMessagesProvider.overrideWith((ref) => _messages)]);
           await settle(tester);
           await s.before?.call(tester);
           final action = find.byKey(Key(s.action));
@@ -187,22 +214,42 @@ void main() {
           final page = tester.getRect(find.byType(StationPage));
           expect(page.bottom, moreOrLessEquals(keyboardTop, epsilon: 0.5),
               reason: 'the page ends at the keyboard\'s top ($keyboardTop), not a keyboard\'s height above it: $page');
+          if (message) {
+            expect(tester.getSize(find.byKey(const Key('supervisor-message'))).height, SupervisorMessageBanner.least,
+                reason: 'the banner takes its one row while the keyboard is up');
+            expect(find.textContaining('· 2 more messages'), findsOneWidget, reason: 'with how many more wait');
+          }
+          // 360×640 with a 300 dp keyboard leaves a 316 dp page; under a message's row, 252. There
+          // the note keeps less (75 dp, 52 while a refusal shows over the actions), and the line
+          // being typed is what is kept in view.
+          final smallest = size.height < 700;
           var visible = _visibleContent(tester, size, keyboard);
-          expect(visible.height, greaterThanOrEqualTo(100), reason: 'the content keeps real room over the keyboard: $visible');
-          // The one case where the label does not fit with the line being typed: 360×640 with a
-          // 300 dp keyboard leaves a 316 dp page, and at 200% text "Note (needed)" puts the save
-          // status on a line of its own. The top bar (64), the whole of Save & next call on two
-          // lines with the area's padding (140) and the label, the status and the line being typed
-          // (125) need 329 dp.
-          final labelFits = !(s.label == StationCopy.notesRequired && size.height < 700 && scale > 1.5);
+          expect(visible.height, greaterThanOrEqualTo(smallest && message ? 70 : 100), reason: 'the content keeps real room over the keyboard: $visible');
+          // Where the label does not fit with the line being typed, on that smallest page: at 200%
+          // text "Note (needed)" puts the save status on a line of its own, and the top bar (64),
+          // the whole of Save & next call on two lines with the area's padding (140) and the label,
+          // the status and the line being typed (125) need 329 dp; under a message's row, at 200%
+          // text, and while a refusal shows over the actions.
+          final labelFits = !(smallest && scale > 1.5 && (message || s.label == StationCopy.notesRequired));
           _expectNoteInView(tester, visible, s.label, labelFits: labelFits);
+          // The band's title and clock stay in view (whole, or compact) but on the smallest page,
+          // where the band scrolls with the content.
+          if (page.height >= StationPage.keyboardTinyPage) _expectBandInView(tester, 'the keyboard up');
 
           // AS1: the main action stays, whole, on the keyboard, and takes a press; the area takes
-          // at most its share of the page.
+          // at most its share of the page. Under a message's row on the smallest page at 200% text,
+          // its share (113 dp) holds 89 dp of Save & next call on two lines (116): its first line
+          // and the most of it, which takes a press.
           final area = tester.getRect(actions);
           final main = tester.getRect(action);
-          expect(_inside(area, main), isTrue, reason: 'the main action $main is whole in the actions $area');
-          expect(main.bottom, lessThanOrEqualTo(keyboardTop + 0.5));
+          if (smallest && message && scale > 1.5) {
+            expect(main.intersect(area).height, greaterThanOrEqualTo(math.min(StationActionArea.mainRoom, main.height) - 0.5),
+                reason: 'at least 64 dp of the main action $main in the actions $area');
+            expect(main.top, greaterThanOrEqualTo(area.top - 0.5), reason: 'from its top');
+          } else {
+            expect(_inside(area, main), isTrue, reason: 'the main action $main is whole in the actions $area');
+            expect(main.bottom, lessThanOrEqualTo(keyboardTop + 0.5));
+          }
           expect(action.hitTestable(), findsOneWidget, reason: 'the main action takes a press with the keyboard up');
           expect(area.height + 24, lessThanOrEqualTo(page.height * StationActionArea.share + 0.5), reason: 'the actions take at most their share');
 
@@ -222,9 +269,10 @@ void main() {
               reason: 'at least 64 dp of the main action (all of a one-line one) stays in view: $mainNow');
           expect(action.hitTestable(), findsOneWidget, reason: 'and it takes a press');
           visible = _visibleContent(tester, size, keyboard);
-          expect(visible.height, greaterThanOrEqualTo(100), reason: 'the content keeps real room with the refusal: $visible');
-          _expectNoteInView(tester, visible, s.label, labelFits: labelFits);
+          expect(visible.height, greaterThanOrEqualTo(smallest && message ? 48 : 100), reason: 'the content keeps real room with the refusal: $visible');
+          _expectNoteInView(tester, visible, s.label, labelFits: labelFits && !(smallest && message));
           expect(tester.widget<EditableText>(editable).focusNode.hasFocus, isTrue);
+          if (page.height >= StationPage.keyboardTinyPage) _expectBandInView(tester, 'a refusal with the keyboard up');
 
           // The keyboard goes down: the actions are where they were, on the tab bar.
           await h.setView(s.view());
@@ -234,6 +282,7 @@ void main() {
           expect(tester.getRect(action), before, reason: 'the main action is back in its place');
           expect(tester.getRect(find.byType(StationPage)).bottom, moreOrLessEquals(bar.top, epsilon: 0.5));
         });
+      }
       }
     }
   }
@@ -269,31 +318,66 @@ void main() {
     }
   });
 
-  testWidgets('the band stays put with the keyboard up on a tall page, scrolls with the content on a short one, and stays for a hardware keyboard\'s strip', (tester) async {
+  testWidgets('the band with the keyboard up: whole on a tall page, its title and clock on a shorter one, scrolling with the '
+      'content on the shortest, and whole for a hardware keyboard\'s strip', (tester) async {
     Finder bandInScroll() => find.descendant(
       of: find.descendant(of: find.byType(StationPage), matching: find.byType(SingleChildScrollView)).first,
       matching: find.byKey(const Key('band-title')),
     );
-    final view = station(phase: AgentPhase.onCall, call: call(bridgedAt: t0.subtract(const Duration(minutes: 1))));
+    final subtitle = find.byKey(const Key('band-subtitle'));
+    final view = station(
+      phase: AgentPhase.wrapup,
+      call: call(bridgedAt: t0.subtract(const Duration(minutes: 3))),
+      release: hungUpRelease,
+      wrapup: wrapup(),
+    );
+    final message = [supervisorMessagesProvider.overrideWith((ref) => _messages)];
 
+    // The testers' phone: 917 - 24 - 330 leaves 563 dp, room for the whole band.
     await pumpStation(tester, view, shell: true, statusBar: _statusBar, navBar: _navBar, size: const Size(411, 917));
     await settle(tester);
     await _openKeyboard(tester, find.byKey(const Key('notes-field')), 330);
-    expect(bandInScroll(), findsNothing, reason: '917 - 24 - 330 leaves room: the band and its clock stay pinned');
-    expect(find.byKey(const Key('band-title')).hitTestable(), findsOneWidget);
+    expect(bandInScroll(), findsNothing, reason: 'the band and its clock stay pinned');
+    expect(subtitle, findsOneWidget, reason: 'whole');
+    _expectBandInView(tester, '411×917');
     await _slideKeyboard(tester, from: 330, to: 0);
 
+    // Under a supervisor's message (its one row) the page is 499 dp: the band keeps its title and
+    // clock, pinned, so the time left to choose is in view while the agent types.
+    await pumpStation(tester, view, shell: true, statusBar: _statusBar, navBar: _navBar, size: const Size(411, 917), extra: message);
+    await settle(tester);
+    await _openKeyboard(tester, find.byKey(const Key('notes-field')), 330);
+    expect(tester.getRect(find.byType(StationPage)).height, lessThan(StationPage.keyboardShortPage));
+    expect(bandInScroll(), findsNothing, reason: 'pinned');
+    expect(subtitle, findsNothing, reason: 'its title and clock only');
+    expect(tester.getSize(find.byKey(const Key('band-tone-happened'))).height, lessThanOrEqualTo(48.5), reason: 'one row');
+    _expectBandInView(tester, '411×917 under a message');
+    await _slideKeyboard(tester, from: 330, to: 0);
+    expect(subtitle, findsOneWidget, reason: 'whole again once the keyboard is down');
+
+    // 800 - 24 - 300 leaves 476 dp: its title and clock, pinned.
     await pumpStation(tester, view, shell: true, statusBar: _statusBar, navBar: _navBar, size: const Size(360, 800));
     await settle(tester);
     expect(bandInScroll(), findsNothing, reason: 'pinned while the keyboard is down');
     await _openKeyboard(tester, find.byKey(const Key('notes-field')), 300);
-    expect(bandInScroll(), findsOneWidget, reason: '800 - 24 - 300 is short: the band scrolls with the content');
+    expect(bandInScroll(), findsNothing, reason: '476 dp: pinned');
+    expect(subtitle, findsNothing, reason: 'its title and clock only');
+    _expectBandInView(tester, '360×800');
+    await _slideKeyboard(tester, from: 300, to: 0);
+    expect(subtitle, findsOneWidget, reason: 'whole again once the keyboard is down');
+
+    // 640 - 24 - 300 leaves 316 dp: the band scrolls with the content, and the note keeps the room.
+    await pumpStation(tester, view, shell: true, statusBar: _statusBar, navBar: _navBar, size: const Size(360, 640));
+    await settle(tester);
+    await _openKeyboard(tester, find.byKey(const Key('notes-field')), 300);
+    expect(tester.getRect(find.byType(StationPage)).height, lessThan(StationPage.keyboardTinyPage));
+    expect(bandInScroll(), findsOneWidget, reason: '316 dp: the band scrolls with the content');
     await _slideKeyboard(tester, from: 300, to: 0);
     expect(bandInScroll(), findsNothing, reason: 'pinned again once the keyboard is down');
 
     // A hardware keyboard's suggestion strip is not the on-screen keyboard (100 dp or less): on a
-    // 360×640 phone with three-button navigation (48 dp), a 50 dp strip over the buttons leaves a
-    // page under 520 dp, and the band pinned.
+    // 360×640 phone with three-button navigation (48 dp), a 98 dp strip over the buttons leaves a
+    // page under 520 dp, and the band pinned, whole.
     await pumpStation(tester, view, shell: true, statusBar: _statusBar, navBar: 48, size: const Size(360, 640));
     await settle(tester);
     expect(bandInScroll(), findsNothing, reason: 'pinned while the keyboard is down');
@@ -306,6 +390,79 @@ void main() {
     await settle(tester);
     expect(tester.getRect(find.byType(StationPage)).height, lessThan(StationPage.keyboardShortPage));
     expect(bandInScroll(), findsNothing, reason: 'a strip over the buttons (98 dp) leaves the band pinned');
+    expect(subtitle, findsOneWidget, reason: 'and whole');
+  });
+
+  testWidgets('keyboard down, 200% text on a 360×640 phone: What happened?\'s three buttons are whole and take a press', (tester) async {
+    await pumpStation(
+      tester,
+      station(
+        phase: AgentPhase.wrapup,
+        call: call(bridgedAt: t0.subtract(const Duration(minutes: 3))),
+        release: hungUpRelease,
+        wrapup: WrapupView(
+          endsAt: t0.subtract(const Duration(seconds: 1)),
+          secondsTotal: 30,
+          hold: WrapupHold.none,
+          dispositionSubmitted: false,
+          autoReturn: true,
+          redialRemaining: 2,
+        ),
+      ),
+      shell: true,
+      statusBar: _statusBar,
+      navBar: _navBar,
+      size: const Size(360, 640),
+      textScale: 2,
+    );
+    await settle(tester);
+    await expectNoOverflow(tester);
+    final area = tester.getRect(find.byKey(const Key('station-actions')));
+    for (final key in ['save-outcome', 'save-and-break', 'redial']) {
+      final button = find.byKey(Key(key));
+      expect(_inside(area, tester.getRect(button)), isTrue, reason: '$key ${tester.getRect(button)} is whole in the actions $area');
+      expect(button.hitTestable(), findsOneWidget, reason: '$key takes a press');
+    }
+  });
+
+  testWidgets('the actions show a scroll bar while some of them are out of view, and none when they all fit', (tester) async {
+    // What the actions' scroll bar draws (its thumb, when there is more to scroll to).
+    void Function(Canvas) scrollbar() {
+      final paint = tester.renderObject<RenderCustomPaint>(
+        find.descendant(of: find.byKey(const Key('station-actions-scrollbar')), matching: find.byType(CustomPaint)).first,
+      );
+      final painter = paint.foregroundPainter!;
+      return (canvas) => painter.paint(canvas, paint.size);
+    }
+
+    final view = station(
+      phase: AgentPhase.wrapup,
+      call: call(bridgedAt: t0.subtract(const Duration(minutes: 3))),
+      release: hungUpRelease,
+      wrapup: WrapupView(
+        endsAt: t0.subtract(const Duration(seconds: 1)),
+        secondsTotal: 30,
+        hold: WrapupHold.none,
+        dispositionSubmitted: false,
+        autoReturn: true,
+        redialRemaining: 2,
+      ),
+    );
+    // The testers' phone, keyboard down: Save & next call, Save & take break and Call again fit.
+    await pumpStation(tester, view, shell: true, statusBar: _statusBar, navBar: _navBar, size: const Size(411, 917));
+    await settle(tester);
+    expect(scrollbar(), paintsNothing, reason: 'everything in view: no scroll bar');
+
+    // 360×640 at 200% with the keyboard up: Save & next call stays, the others are a scroll away.
+    await pumpStation(tester, view, shell: true, statusBar: _statusBar, navBar: _navBar, size: const Size(360, 640), textScale: 2);
+    await settle(tester);
+    await _openKeyboard(tester, find.byKey(const Key('notes-field')), 300);
+    expect(find.byKey(const Key('redial')).hitTestable(), findsNothing, reason: 'Call again is a scroll away');
+    expect(
+      scrollbar(),
+      paints..something((method, args) => (method == #drawRect || method == #drawRRect) && (args[1] as Paint).color.a > 0),
+      reason: 'the scroll bar says there is more: its thumb is drawn',
+    );
   });
 
   testWidgets('a follow-up sheet over the station sits on the keyboard, with no room left for the keyboard under it', (tester) async {
@@ -374,5 +531,4 @@ void main() {
       await sp.settle(tester);
     }
   });
-
 }

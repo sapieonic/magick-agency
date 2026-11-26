@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/tokens.dart';
 import '../../core/station/station_view.dart';
+import '../../ui/keyboard.dart';
 import 'logic/format.dart';
 import 'station_copy.dart';
 
@@ -21,10 +22,12 @@ import 'station_copy.dart';
 ///
 /// Room: the banner takes at most a third of the room it is given (the shell gives it the space
 /// between the status bar and the keyboard or tab bar), never less than one message beside its
-/// Dismiss, and its text and list scroll inside, so the screen under it stays usable. When a third
-/// cannot hold the open list (the keyboard is up, or a phone on its side), it shows the first
-/// message only, with "· 2 more messages" after its time, until there is room again; the list opens
-/// again then if it was open.
+/// Dismiss ([least]), and its text and list scroll inside, so the screen under it stays usable.
+/// While the on-screen keyboard is up it takes only that one row, on any phone: the tab under it is
+/// being typed in, and on a small phone a third of the room would leave the note no line of its
+/// own. With the keyboard up, or when a third cannot hold the open list ([listRoom]: a phone on its
+/// side), it shows the first message only, with "· 2 more messages" after its time, until there is
+/// room again; the list opens again then if it was open.
 ///
 /// Each message is announced to a screen reader once, as it arrives (politely, after what is being
 /// read), sender and text together. The banner is not a live region: one would say a message twice
@@ -177,18 +180,21 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
       color: t.infoSubtle,
       child: DecoratedBox(
         decoration: BoxDecoration(border: Border(bottom: BorderSide(color: t.info.withValues(alpha: 0.4)))),
-        child: LayoutBuilder(
-          builder: (context, box) {
-            // The room it is given (the shell gives the space between the status bar and the
-            // keyboard or tab bar); placed with no bound, the window's height.
-            final room = box.maxHeight.isFinite ? box.maxHeight : MediaQuery.sizeOf(context).height;
-            final most = math.min(room, math.max(room / 3, SupervisorMessageBanner.least));
-            final listFits = messages.length > 1 && most >= SupervisorMessageBanner.listRoom;
-            return ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: most),
-              child: _content(context, messages, listFits: listFits, open: listFits && _expanded),
-            );
-          },
+        child: KeyboardOpenBuilder(
+          builder: (context, typing) => LayoutBuilder(
+            builder: (context, box) {
+              // The room it is given (the shell gives the space between the status bar and the
+              // keyboard or tab bar); placed with no bound, the window's height. While the keyboard
+              // is up the tab under it is being typed in: one row, whatever the room.
+              final room = box.maxHeight.isFinite ? box.maxHeight : MediaQuery.sizeOf(context).height;
+              final most = math.min(room, typing ? SupervisorMessageBanner.least : math.max(room / 3, SupervisorMessageBanner.least));
+              final listFits = messages.length > 1 && most >= SupervisorMessageBanner.listRoom;
+              return ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: most),
+                child: _content(context, messages, listFits: listFits, open: listFits && _expanded),
+              );
+            },
+          ),
         ),
       ),
     );

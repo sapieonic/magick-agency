@@ -522,7 +522,8 @@ abstract final class StationCopy {
   /// The control that opens the banner to every queued message ([n] waiting behind the one shown).
   static String showMoreMessages(int n) => n == 1 ? 'Show 1 more message' : 'Show $n more messages';
   static String messagesCount(int n) => n == 1 ? '1 message' : '$n messages';
-  /// After the sender and time when there is no room to open the list (the keyboard is up).
+  /// After the sender and time when the list is not open for want of room (the keyboard is up, or a
+  /// phone on its side).
   static String moreMessages(int n) => n == 1 ? '1 more message' : '$n more messages';
   static const showFewerMessages = 'Show less';
   static const dismissAllMessages = 'Dismiss all';

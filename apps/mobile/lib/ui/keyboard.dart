@@ -67,8 +67,8 @@ class _KeyboardOpenBuilderState extends State<KeyboardOpenBuilder> with WidgetsB
 /// again when the column's view gets shorter while it has ([KeepTypingInView]: a refusal appears
 /// under it), this scrolls the least that shows the first of these that fits the view: all of
 /// [child]; its top down to the end of the field being typed in; its top down to the line being
-/// typed. When none fits (large text, a small phone) it does nothing, and the caret keeps the place
-/// the field gave it.
+/// typed; the line being typed alone (large text on a small phone, with a refusal over the
+/// actions).
 class RevealWhileTyping extends StatefulWidget {
   const RevealWhileTyping({
     super.key,
@@ -150,8 +150,8 @@ class _RevealWhileTypingState extends State<RevealWhileTyping> with WidgetsBindi
     if (!position.hasViewportDimension) return;
     final room = position.viewportDimension;
     // All of it; else (large text, a small phone) its top down to the end of the box being typed
-    // in, leaving out the lines under it; else its top down to the line being typed; else nothing,
-    // and the caret keeps its place.
+    // in, leaving out the lines under it; else its top down to the line being typed; else that
+    // line alone.
     Rect? target = Offset.zero & box.size;
     if (target.height > room) {
       target = null;
@@ -164,9 +164,9 @@ class _RevealWhileTypingState extends State<RevealWhileTyping> with WidgetsBindi
       final editable = focus?.findAncestorStateOfType<EditableTextState>()?.renderEditable;
       final selection = editable?.selection;
       if (target == null && editable != null && editable.attached && selection != null && selection.isValid) {
-        final caret = editable.getLocalRectForCaret(selection.extent);
-        final end = MatrixUtils.transformRect(editable.getTransformTo(box), caret).bottom + 8;
-        if (end <= room) target = Rect.fromLTRB(0, 0, box.size.width, end);
+        final caret = MatrixUtils.transformRect(editable.getTransformTo(box), editable.getLocalRectForCaret(selection.extent));
+        final end = caret.bottom + 8;
+        target = end <= room ? Rect.fromLTRB(0, 0, box.size.width, end) : Rect.fromLTRB(0, caret.top - 4, box.size.width, end);
       }
     }
     if (target == null) return;

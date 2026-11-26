@@ -12,9 +12,10 @@ import 'shell_harness.dart';
 /// The supervisor's message banner in the real shell (LF36's addendum of 2026-11-26): it takes at
 /// most about a third of the room the shell has under the status bar (the keyboard and the tab bar
 /// already off it), never less than one message beside its Dismiss, and never overflows, so the tab
-/// under it keeps the rest: on a small phone with the keyboard up, at 200% text, and on its side.
-/// With no room for the open list (the keyboard up, a phone on its side) it shows the first message
-/// with how many more wait, and opens the list again once there is room. The app's own fonts are
+/// under it keeps the rest: at 200% text, and on a phone on its side. While the keyboard is up it
+/// takes only that one row, whatever the phone, so the note being typed keeps its room. With no
+/// room for the open list (the keyboard up, a phone on its side) it shows the first message with
+/// how many more wait, and opens the list again once there is room. The app's own fonts are
 /// loaded, so heights are the ones a phone lays out.
 
 class _Messages extends Notifier<List<SupervisorMessageView>> {
@@ -78,19 +79,20 @@ void main() {
   ({double banner, double body}) heights(WidgetTester tester) =>
       (banner: tester.getSize(banner).height, body: tester.getSize(body).height);
 
-  group('at most about a third of the room under the status bar, never an overflow', () {
+  group('at most about a third of the room under the status bar, one row with the keyboard up, never an overflow', () {
     // (phone, text scale, keyboard, messages (a long first one), open asked, the list shown, the
     // least the tab under it keeps)
     final cases = <(String, Size, double, double, int, bool, bool, double)>[
       ('360×640, twenty, open', const Size(360, 640), 1, 0, 20, false, true, 360),
       ('360×640 at 200%, twenty, open', const Size(360, 640), 2, 0, 20, false, true, 360),
-      ('360×640, keyboard 300, twenty, open asked', const Size(360, 640), 1, 300, 20, false, false, 200),
-      ('360×640 at 200%, keyboard 300, twenty, open asked', const Size(360, 640), 2, 300, 20, false, false, 200),
-      ('360×640 at 200%, keyboard 300, a 500-character first', const Size(360, 640), 2, 300, 2, true, false, 200),
-      ('360×640 at 200%, keyboard 330, twenty, open asked', const Size(360, 640), 2, 330, 20, false, false, 180),
+      ('360×640, keyboard 300, twenty, open asked', const Size(360, 640), 1, 300, 20, false, false, 252),
+      ('360×640 at 200%, keyboard 300, twenty, open asked', const Size(360, 640), 2, 300, 20, false, false, 252),
+      ('360×640 at 200%, keyboard 300, a 500-character first', const Size(360, 640), 2, 300, 2, true, false, 252),
+      ('360×640 at 200%, keyboard 330, twenty, open asked', const Size(360, 640), 2, 330, 20, false, false, 222),
+      ('360×800, keyboard 300, twenty, open asked', const Size(360, 800), 1, 300, 20, false, false, 412),
       ('411×917, twenty, open', const Size(411, 917), 1, 0, 20, false, true, 540),
-      ('411×917, keyboard 330, twenty, open', const Size(411, 917), 1, 330, 20, false, true, 370),
-      ('411×917 at 200%, keyboard 330, twenty, open', const Size(411, 917), 2, 330, 20, false, true, 370),
+      ('411×917, keyboard 330, twenty, open asked', const Size(411, 917), 1, 330, 20, false, false, 499),
+      ('411×917 at 200%, keyboard 330, twenty, open asked', const Size(411, 917), 2, 330, 20, false, false, 499),
       ('800×360 on its side, twenty, open asked', const Size(800, 360), 1, 0, 20, false, false, 170),
       ('800×360 on its side at 200%, twenty, open asked', const Size(800, 360), 2, 0, 20, false, false, 170),
       ('800×360 on its side, keyboard 180, twenty, open asked', const Size(800, 360), 1, 180, 20, false, false, 90),
@@ -111,7 +113,8 @@ void main() {
         expect(tester.takeException(), isNull, reason: 'no overflow');
         final h = heights(tester);
         final room = h.banner + h.body;
-        expect(h.banner, lessThanOrEqualTo(math.max(room / 3, 64) + 0.5), reason: 'a third of $room, or one row');
+        expect(h.banner, lessThanOrEqualTo((kb > 0 ? 64 : math.max(room / 3, 64)) + 0.5),
+            reason: kb > 0 ? 'one row while the keyboard is up' : 'a third of $room, or one row');
         expect(h.body, greaterThanOrEqualTo(least), reason: 'the tab under it keeps $least dp');
         expect(list.evaluate().isNotEmpty, listShown);
         if (n > 1 && !listShown) {
@@ -122,7 +125,8 @@ void main() {
   });
 
   testWidgets('the keyboard coming up closes the open list to the first message; going down opens it again', (tester) async {
-    await phone(tester, const Size(360, 640));
+    // The testers' phone: a third of the room under its keyboard would hold the list.
+    await phone(tester, const Size(411, 917));
     c.read(_messages.notifier).set([msg('m1'), msg('m2'), msg('m3')]);
     await tester.pumpAndSettle();
     final shut = heights(tester);
@@ -130,8 +134,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(list, findsOneWidget);
 
-    keyboard(tester, 300);
+    keyboard(tester, 330);
     await tester.pumpAndSettle();
+    expect(heights(tester).banner, 64, reason: 'one row while the keyboard is up');
     expect(list, findsNothing);
     expect(toggle, findsNothing, reason: 'no room for the list: no button that would open nothing');
     expect(find.text('Reshma Mohammad · 10:05 · 2 more messages'), findsOneWidget);

@@ -407,51 +407,51 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                          if (outcome != null) ...[
-                            _OutcomePanel(
-                              key: const Key('start-outcome'),
-                              outcome: outcome,
-                              busy: _starting,
-                              onSwitch: _switchFrom,
-                              onCloseSoftphone: _closeSoftphone,
-                              onRetry: () => _goOnDuty(mode),
-                              onBack: () => context.go(Routes.home),
-                            ),
-                            const SizedBox(height: Space.lg),
-                          ],
-                          _CheckGrid(results: _results, onFix: _fix),
-                          if (failed) ...[
-                            const SizedBox(height: Space.md),
-                            StepsCard(
-                              key: const Key('fix-steps'),
-                              title: StationCopy.whatToDo,
-                              tone: StationTone.problem,
-                              steps: block == DutyBlock.microphone
-                                  ? (mic?.fix == CheckFix.openSettings
-                                        ? const [PreflightCopy.stepOpenSettings, PreflightCopy.stepTurnOnMic, PreflightCopy.stepComeBack]
-                                        : const [PreflightCopy.stepPressAllow, PreflightCopy.stepAllowMic])
-                                  : const [StationCopy.stepCheckInternet, PreflightCopy.stepCheckAgain],
-                            ),
-                          ] else ...[
-                            const SizedBox(height: Space.md),
-                            WorkCard(
-                              campaignName: name,
-                              softphone: softphone,
-                              mode: mode,
-                              onMode: (m) => setState(() => _mode = m),
-                            ),
-                          ],
-                          if (_results.values.any((r) => r.status == CheckStatus.warn || r.status == CheckStatus.fail) && !failed)
-                            Align(
-                              child: TextButton.icon(
-                                key: const Key('check-again'),
-                                onPressed: _starting ? null : _runAll,
-                                icon: const Icon(Icons.refresh),
-                                label: const Text(PreflightCopy.checkAgain),
-                              ),
-                            ),
-                          const SizedBox(height: Space.sm),
-                          Text(PreflightCopy.keepOpen, style: text.bodySmall, textAlign: TextAlign.center),
+                                if (outcome != null) ...[
+                                  _OutcomePanel(
+                                    key: const Key('start-outcome'),
+                                    outcome: outcome,
+                                    busy: _starting,
+                                    onSwitch: _switchFrom,
+                                    onCloseSoftphone: _closeSoftphone,
+                                    onRetry: () => _goOnDuty(mode),
+                                    onBack: () => context.go(Routes.home),
+                                  ),
+                                  const SizedBox(height: Space.lg),
+                                ],
+                                _CheckGrid(results: _results, onFix: _fix),
+                                if (failed) ...[
+                                  const SizedBox(height: Space.md),
+                                  StepsCard(
+                                    key: const Key('fix-steps'),
+                                    title: StationCopy.whatToDo,
+                                    tone: StationTone.problem,
+                                    steps: block == DutyBlock.microphone
+                                        ? (mic?.fix == CheckFix.openSettings
+                                              ? const [PreflightCopy.stepOpenSettings, PreflightCopy.stepTurnOnMic, PreflightCopy.stepComeBack]
+                                              : const [PreflightCopy.stepPressAllow, PreflightCopy.stepAllowMic])
+                                        : const [StationCopy.stepCheckInternet, PreflightCopy.stepCheckAgain],
+                                  ),
+                                ] else ...[
+                                  const SizedBox(height: Space.md),
+                                  WorkCard(
+                                    campaignName: name,
+                                    softphone: softphone,
+                                    mode: mode,
+                                    onMode: (m) => setState(() => _mode = m),
+                                  ),
+                                ],
+                                if (_results.values.any((r) => r.status == CheckStatus.warn || r.status == CheckStatus.fail) && !failed)
+                                  Align(
+                                    child: TextButton.icon(
+                                      key: const Key('check-again'),
+                                      onPressed: _starting ? null : _runAll,
+                                      icon: const Icon(Icons.refresh),
+                                      label: const Text(PreflightCopy.checkAgain),
+                                    ),
+                                  ),
+                                const SizedBox(height: Space.sm),
+                                Text(PreflightCopy.keepOpen, style: text.bodySmall, textAlign: TextAlign.center),
                               ],
                             ),
                           ),

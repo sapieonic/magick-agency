@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:magick_agency_agent/app/shell.dart' show ShellBody;
+import 'package:magick_agency_agent/app/shell.dart' show ShellContent;
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
@@ -379,11 +379,11 @@ void setPhoneInsets(WidgetTester tester, {double statusBar = 0, double keyboard 
 }
 
 /// The app shell as it nests a tab: a Scaffold with the five-tab
-/// NavigationBar, around the branch's own navigator ([child]), nested with the
-/// app's own [ShellBody] in a column as `AppShell` nests it, so a tab gets the
-/// `MediaQuery` it gets in the app (the keyboard's inset included or not). The
-/// real shell hides the bar during a live call; this one always shows it, the
-/// tighter case.
+/// NavigationBar, around the branch's own navigator ([child]), in the app's own
+/// [ShellContent] as `AppShell` nests it, so a tab gets the `MediaQuery` it gets
+/// in the app (the keyboard's inset included or not), under a supervisor's
+/// message when one is queued (`supervisorMessagesProvider`). The real shell
+/// hides the bar during a live call; this one always shows it, the tighter case.
 class ShellScaffold extends StatelessWidget {
   const ShellScaffold({super.key, required this.selected, required this.child});
 
@@ -392,7 +392,7 @@ class ShellScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    body: Column(children: [Expanded(child: ShellBody(removeTop: false, child: child))]),
+    body: ShellContent(child: child),
     bottomNavigationBar: NavigationBar(
       selectedIndex: selected,
       destinations: const [
