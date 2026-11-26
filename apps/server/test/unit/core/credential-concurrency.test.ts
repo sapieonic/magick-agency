@@ -2,8 +2,10 @@
  * A tenant carrier account's own concurrency cap (docs/carriers.md CR13), the parts that need no
  * Redis: the compatibility path of `acquireTelephonyConcurrency` with a credential (taken after
  * the other scopes, every one handed back on a refusal), the guard host's credential handling
- * (an unreadable cap fails closed; a legacy account's credential scope is taken after its global
- * and account scopes and hands them back when full), the admission's refusal
+ * (an unreadable cap fails closed, not provider-scoped; every call on a credential takes its
+ * scope, capped or not, and only a cap refuses; a legacy account's credential scope is taken
+ * after its global and account scopes and hands them back when full), the admission metric
+ * (only admissions against a cap are samples), the admission's refusal
  * (`carrier_account_concurrency_limit`, 429), the release's per-scope fallback, and every
  * caller's reading of the new refusal as back-pressure. The Lua is proven against real Redis in
  * `test/integration/core/credential-concurrency.test.ts`.
@@ -60,6 +62,9 @@ import { countsTowardBreaker } from '../../../src/agency/carrier-refusal-breaker
 import { manualDialFailureFor } from '../../../src/agency/softphone/manual-dialer.js';
 import { trackWebrtcCallRejected } from '../../../src/analytics/posthog.js';
 import { CredentialConcurrencyGuard } from '../../../src/core/credential-concurrency-guard.js';
+import { ProviderConcurrencyGuard } from '../../../src/core/provider-concurrency-guard.js';
+import { providerConcurrencyRepository } from '@magick-agency/db/repositories/provider-concurrency.repository';
+import { trackCredentialConcurrencyAdmission } from '@magick-agency/observability/metrics/voice';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -108,34 +113,60 @@ describe('acquireTelephonyConcurrency with a credential', () => {
     expect(owner.concurrencyGuard.release).toHaveBeenCalledWith('k');
   });
 
-  it('compatibility path: a credential with no cap of its own takes no credential scope', async () => {
-    const owner = doubles('credential_full');
+  it('compatibility path: a credential with no cap of its own still takes its scope, with no cap', async () => {
+    const owner = doubles();
     owner.credentialConcurrencyGuard.resolveCap.mockResolvedValue(null);
     await expect(acquireTelephonyConcurrency(owner, 'k', 't', 'a', 'plivo', 60, 'cred-1'))
       .resolves.toMatchObject({ result: 'acquired' });
-    expect(owner.credentialConcurrencyGuard.tryAcquire).not.toHaveBeenCalled();
+    expect(owner.credentialConcurrencyGuard.tryAcquire).toHaveBeenCalledWith('k', 'cred-1', null, 'plivo', 60);
   });
 
-  it('compatibility path: an unreadable cap fails closed before anything is taken', async () => {
+  it('compatibility path: Redis failing refuses a capped call but admits an uncapped one (no cap to over-commit)', async () => {
+    const owner = doubles('redis_unavailable');
+    owner.credentialConcurrencyGuard.resolveCap.mockResolvedValue(null);
+    await expect(acquireTelephonyConcurrency(owner, 'k', 't', 'a', 'plivo', 60, 'cred-1'))
+      .resolves.toMatchObject({ result: 'acquired' });
+    expect(owner.concurrencyGuard.release).not.toHaveBeenCalled();
+  });
+
+  it('compatibility path: an unreadable cap fails closed before anything is taken, not provider-scoped', async () => {
     const owner = doubles();
     owner.credentialConcurrencyGuard.resolveCap.mockRejectedValue(new Error('db down'));
     await expect(acquireTelephonyConcurrency(owner, 'k', 't', 'a', 'plivo', 60, 'cred-1'))
-      .resolves.toEqual({ result: 'allocation_unavailable', providerScoped: true });
+      .resolves.toEqual({ result: 'allocation_unavailable', providerScoped: false });
     expect(owner.concurrencyGuard.tryAcquire).not.toHaveBeenCalled();
   });
 });
 
 describe('TelephonyGuardHost with a credential', () => {
-  it('fails closed (allocation_unavailable) when the cap cannot be read, taking nothing', async () => {
+  it('fails closed (allocation_unavailable) when the cap cannot be read, taking nothing; not provider-scoped, the mode unknown', async () => {
     const host = new TelephonyGuardHost(null);
     capRead.mockRejectedValue(new Error('db down'));
     const all = vi.spyOn(host.providerConcurrencyGuard, 'tryAcquireAll');
+    const legacyGlobal = vi.spyOn(host.concurrencyGuard, 'tryAcquire');
+    // A legacy account (the mocked allocation): the refusal is not provider-scoped.
     await expect(host.tryAcquireTelephonyConcurrency('k', 't', 'a', 'plivo', 60, 'cred-1'))
-      .resolves.toEqual({ result: 'allocation_unavailable', providerScoped: true });
+      .resolves.toEqual({ result: 'allocation_unavailable', providerScoped: false });
     expect(all).not.toHaveBeenCalled();
+    expect(legacyGlobal).not.toHaveBeenCalled();
+    // A credential last read as uncapped is refused too once its cap cannot be read (it may
+    // have been capped since): the cache has expired or been dropped.
+    capRead.mockResolvedValue(null);
+    await expect(host.tryAcquireTelephonyConcurrency('k1', 't', 'a', 'plivo', 60, 'cred-2')).resolves.toMatchObject({ result: 'acquired' });
+    host.credentialConcurrencyGuard.invalidateCap('cred-2');
+    capRead.mockRejectedValue(new Error('db down'));
+    await expect(host.tryAcquireTelephonyConcurrency('k2', 't', 'a', 'plivo', 60, 'cred-2'))
+      .resolves.toEqual({ result: 'allocation_unavailable', providerScoped: false });
   });
 
-  it('hands the composite the credential scope with its cap and keys (CR13), and none for an uncapped one', async () => {
+  it('the provider allocation\'s own refusal stays provider-scoped (the provider guard answered)', async () => {
+    const host = new TelephonyGuardHost(null);
+    vi.mocked(providerConcurrencyRepository.getProviderLimit).mockRejectedValueOnce(new Error('db down'));
+    await expect(host.tryAcquireTelephonyConcurrency('k', 't', 'a-unread', 'plivo', 60, 'cred-1'))
+      .resolves.toEqual({ result: 'allocation_unavailable', providerScoped: true });
+  });
+
+  it('hands the composite the credential scope with its cap and keys (CR13), and an uncapped one with no cap', async () => {
     const host = new TelephonyGuardHost(null);
     const all = vi.spyOn(host.providerConcurrencyGuard, 'tryAcquireAll')
       .mockResolvedValue({ result: 'acquired', providerScoped: true, newlyAcquired: true });
@@ -149,7 +180,12 @@ describe('TelephonyGuardHost with a credential', () => {
     capRead.mockResolvedValue(null);
     host.credentialConcurrencyGuard.invalidateCap('cred-1');
     await host.tryAcquireTelephonyConcurrency('k2', 't', 'a', 'plivo', 60, 'cred-1');
-    expect(all).toHaveBeenLastCalledWith('k2', 't', 'a', 'plivo', 60, null);
+    expect(all).toHaveBeenLastCalledWith('k2', 't', 'a', 'plivo', 60, {
+      credentialId: 'cred-1', cap: null,
+      counter: 'test:active_calls:credential:cred-1',
+      lock: 'test:active_calls:credential:cred-1:lock:k2',
+      generation: 'test:active_calls:credential:cred-1:generation',
+    });
     await host.tryAcquireTelephonyConcurrency('k3', 't', 'a', 'voicelink', 60);
     expect(all).toHaveBeenLastCalledWith('k3', 't', 'a', 'voicelink', 60, null);
   });
@@ -171,13 +207,48 @@ describe('TelephonyGuardHost with a credential', () => {
 
   it('legacy account, no Redis: a capped credential is refused (no process-local share of a carrier\'s cap)', async () => {
     const host = new TelephonyGuardHost(null);
+    const take = vi.spyOn(host.credentialConcurrencyGuard, 'tryAcquire');
     await expect(host.tryAcquireTelephonyConcurrency('k', 't', 'a', 'plivo', 60, 'cred-1'))
       .resolves.toEqual({ result: 'redis_unavailable', providerScoped: false });
-    // An uncapped credential is admitted as before.
+    // An uncapped credential is admitted as before: its scope is asked for (with no cap) and,
+    // Redis being down, the call goes ahead without the lease.
     capRead.mockResolvedValue(null);
     host.credentialConcurrencyGuard.invalidateCap('cred-1');
     await expect(host.tryAcquireTelephonyConcurrency('k2', 't', 'a', 'plivo', 60, 'cred-1'))
       .resolves.toMatchObject({ result: 'acquired' });
+    expect(take).toHaveBeenLastCalledWith('k2', 'cred-1', null, 'plivo', 60);
+  });
+});
+
+describe('the credential admission metric counts only admissions against a cap (CR13)', () => {
+  /** A Redis double whose every script answers `reply`. */
+  const redisAnswering = (reply: number) => ({ eval: vi.fn().mockResolvedValue(reply), options: {} });
+
+  it('the credential guard alone: a sample with a cap, none without', async () => {
+    const guard = new CredentialConcurrencyGuard(redisAnswering(1) as never, 'p:', 300);
+    await expect(guard.tryAcquire('k', 'cred-1', null, 'plivo')).resolves.toBe('acquired');
+    await expect(new CredentialConcurrencyGuard(null, 'p:', 300).tryAcquire('k', 'cred-1', null, 'plivo')).resolves.toBe('redis_unavailable');
+    expect(trackCredentialConcurrencyAdmission).not.toHaveBeenCalled();
+    await expect(guard.tryAcquire('k', 'cred-1', 2, 'plivo')).resolves.toBe('acquired');
+    expect(trackCredentialConcurrencyAdmission).toHaveBeenCalledExactlyOnceWith('plivo', 'acquired');
+  });
+
+  it('the composite: a sample with a cap, none without; the Lua is told \'none\' for no cap', async () => {
+    vi.mocked(providerConcurrencyRepository.getProviderLimit)
+      .mockResolvedValueOnce({ mode: 'provider_breakdown', limit: 5, total: 10, version: 1 } as never);
+    const redis = redisAnswering(1);
+    const guard = new ProviderConcurrencyGuard(redis as never, 'p:', 300, 100);
+    const scope = (cap: number | null) => ({ credentialId: 'cred-1', cap, counter: 'c', lock: 'l', generation: 'g' });
+    await expect(guard.tryAcquireAll('k', 't', 'a', 'plivo', 60, scope(null))).resolves.toMatchObject({ result: 'acquired' });
+    expect(trackCredentialConcurrencyAdmission).not.toHaveBeenCalled();
+    const evalCall = redis.eval.mock.calls[0]!;
+    // 12 keys (four scopes), then the three limits, the TTL and the credential's 'none'.
+    expect(evalCall[1]).toBe(12);
+    expect(evalCall.slice(-5)).toEqual([100, 10, 5, 60, 'none']);
+    // The allocation is cached: the second admission is provider mode too.
+    await expect(guard.tryAcquireAll('k2', 't', 'a', 'plivo', 60, scope(3))).resolves.toMatchObject({ result: 'acquired' });
+    expect(redis.eval.mock.calls[1]!.slice(-1)).toEqual([3]);
+    expect(trackCredentialConcurrencyAdmission).toHaveBeenCalledExactlyOnceWith('plivo', 'acquired');
   });
 });
 

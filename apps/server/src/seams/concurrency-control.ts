@@ -68,7 +68,8 @@ export interface ConcurrencyControl {
   invalidateCredentialLimit(credentialId: string): Promise<void>;
   /**
    * `credentialConcurrencyGuard.getCounts(credentialIds)`: the live calls on each carrier
-   * account with a cap of its own. `unavailable` is a Redis fault, never "zero calls".
+   * account (every call on it is counted, capped or not). `unavailable` is a Redis fault,
+   * never "zero calls".
    */
   getCredentialCounts(credentialIds: readonly string[]): Promise<CredentialCounts>;
 }

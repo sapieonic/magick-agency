@@ -124,10 +124,13 @@ export class TelephonyGuardHost {
   /** Single entry point for telephony capacity. Provider-mode accounts acquire
    * global, account and provider leases atomically; legacy accounts retain the
    * established two-scope behavior until explicitly migrated. A call on a tenant carrier
-   * account (`credentialId`) whose credential has a cap of its own also takes that
-   * account's scope (CR13): inside the same transaction in provider mode, after the
-   * global and account scopes (handing them back on a refusal) in legacy mode. `callId`
-   * is the lease key. */
+   * account (`credentialId`) also takes that account's scope (CR13), whether or not it has
+   * a cap of its own, so its counter is the true number of calls live on it and a cap set
+   * later binds at once; only a cap can refuse it (`credential_full`). In provider mode the
+   * scope is inside the same transaction; in legacy mode it is taken after the global and
+   * account scopes (handing them back on a refusal). An unreadable cap refuses any call on
+   * the credential (`allocation_unavailable`, `providerScoped: false`: nothing was asked of
+   * the provider guard). `callId` is the lease key. */
   async tryAcquireTelephonyConcurrency(
     callId: string,
     tenantId: string,
@@ -153,9 +156,11 @@ export class TelephonyGuardHost {
       try {
         credential = await this.credentialConcurrencyGuard.scopeFor(credentialId, callId);
       } catch (err) {
-        // The cap could not be read: fail closed, as an unreadable provider allocation does.
+        // The cap could not be read: fail closed, as an unreadable provider allocation does,
+        // for an uncapped credential too (it may have been capped since its last read). Read
+        // before the allocation, so the account's mode is not known: not provider-scoped.
         log.error({ err, tenantId, accountId, provider, credentialId }, 'Carrier account cap unavailable; failing closed');
-        return { result: 'allocation_unavailable', providerScoped: true };
+        return { result: 'allocation_unavailable', providerScoped: false };
       }
     }
     const composite = await this.providerConcurrencyGuard.tryAcquireAll(
@@ -177,7 +182,10 @@ export class TelephonyGuardHost {
         const taken = await this.credentialConcurrencyGuard.tryAcquire(
           callId, credential.credentialId, credential.cap, provider.toLowerCase(), ttlSecondsOverride,
         );
-        if (taken === 'credential_full' || taken === 'redis_unavailable') {
+        // A capped call is refused when Redis cannot count it (no process-local share of a
+        // carrier's cap). An uncapped one has no cap to over-commit: it is admitted without
+        // the lease, as it was before every call took one, and its release is a no-op.
+        if (taken === 'credential_full' || (taken === 'redis_unavailable' && credential.cap !== null)) {
           await Promise.allSettled([
             this.accountConcurrencyGuard.release(callId, tenantId, accountId),
             this.concurrencyGuard.release(callId),

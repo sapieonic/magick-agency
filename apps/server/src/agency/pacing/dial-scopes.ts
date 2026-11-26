@@ -42,9 +42,12 @@
  * shared across accounts, safe inside one process without any lock or Redis reservation.
  *
  * ── Failure direction ─────────────────────────────────────────────────────────
- * As admission's: a capped call is refused when its cap or its live count cannot be read
- * (`allocation_unavailable`, `redis_unavailable`), so a scope that cannot be read leaves NO room
- * and the tick plans 0 for that campaign (`no_slots`), rather than dial into refusals.
+ * As admission's: a call on a carrier account is refused when its cap cannot be read, capped or
+ * not (`allocation_unavailable`), and a capped one when its live count cannot be
+ * (`redis_unavailable`), so a scope that cannot be read leaves NO room and the tick plans 0 for
+ * that campaign (`no_slots`), rather than dial into refusals. The live count is every call on
+ * the carrier account, whether or not it had a cap when the call was admitted (CR13), so a cap
+ * set on an account with calls already live leaves no room until enough of them end.
  */
 import { providerConcurrencyRepository } from '@magick-agency/db/repositories/provider-concurrency.repository';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';

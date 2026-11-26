@@ -4,8 +4,15 @@
  * calls live on it at once. A credential serves every account of its tenant (B20), so the
  * scope is tenant-wide per credential: its counter is keyed by the credential id alone,
  * never by account. It is IN ADDITION to the global, account and per-account carrier scopes
- * (B22). A call on the service's own account (no credential) and a call on a credential
- * with no cap take no credential lease.
+ * (B22). A call on the service's own account (no credential) takes no credential lease.
+ *
+ * Every call on a credential takes its lease and moves its counter, whatever the cap: the cap
+ * only decides whether admission compares against a limit. A credential with no cap is never
+ * full (`credential_full` needs a cap), but its counter is the true number of calls live on it,
+ * so a cap set later binds at once against the calls already live (setting a cap of 10 on a
+ * carrier account with 30 live calls admits nothing until fewer than 10 remain), and pacing's
+ * room and the super-admin's "N of M in use" read that true count. The admission metric
+ * (`credential_concurrency_admission_total`) records only admissions against a cap.
  *
  * Keys mirror the other scopes (`<prefix>active_calls:credential:<credentialId>`, its
  * `:lock:<concurrencyKey>` leases and `:generation` fence), so the composite Lua in
@@ -15,7 +22,13 @@
  *
  * No process-local fallback: when Redis is down a capped call is refused
  * (`redis_unavailable`), as a provider-breakdown account's is, because every process
- * admitting the whole cap on its own would over-commit the carrier account.
+ * admitting the whole cap on its own would over-commit the carrier account. An uncapped call
+ * on a legacy account is admitted without the lease then (it has no cap to over-commit; its
+ * count is best effort until it ends), as it was before every call took one.
+ *
+ * An unreadable cap refuses every call on the credential, capped or not
+ * (`allocation_unavailable`): a credential read as uncapped may have been capped since, and
+ * the cap cache already rides out a read for {@link CREDENTIAL_CAP_CACHE_TTL_MS}.
  */
 import type Redis from 'ioredis';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
@@ -29,9 +42,21 @@ import {
 export const CREDENTIAL_CAP_CACHE_TTL_MS = 5_000;
 const CAP_CACHE_MAX_ENTRIES = 10_000;
 
+/**
+ * The limit argument of a credential scope with no cap of its own: the Lua takes the lease and
+ * moves the counter but never compares (here and in the composite in
+ * `provider-concurrency-guard.ts`).
+ */
+export const NO_CREDENTIAL_CAP = 'none';
+
+/** The Lua limit argument for `cap`. */
+export function credentialCapArg(cap: number | null): number | string {
+  return cap === null ? NO_CREDENTIAL_CAP : cap;
+}
+
 const ACQUIRE_SCRIPT = `
 if redis.call('EXISTS', KEYS[2]) == 1 then return 2 end
-if tonumber(redis.call('GET', KEYS[1]) or '0') >= tonumber(ARGV[1]) then return 0 end
+if ARGV[1] ~= '${NO_CREDENTIAL_CAP}' and tonumber(redis.call('GET', KEYS[1]) or '0') >= tonumber(ARGV[1]) then return 0 end
 redis.call('INCR', KEYS[1])
 redis.call('SET', KEYS[2], '1', 'EX', tonumber(ARGV[2]))
 redis.call('INCR', KEYS[3])
@@ -62,10 +87,10 @@ export interface CredentialScopeKeys {
   generation: string;
 }
 
-/** A credential scope a call must take: its keys and the cap read at admission. */
+/** A credential scope a call must take: its keys and the cap read at admission (null: none of its own). */
 export interface CredentialScope extends CredentialScopeKeys {
   credentialId: string;
-  cap: number;
+  cap: number | null;
 }
 
 export function credentialCounterKey(keyPrefix: string, credentialId: string): string {
@@ -122,10 +147,12 @@ export class CredentialConcurrencyGuard {
     this.capCache.delete(credentialId);
   }
 
-  /** The scope a call on `credentialId` must take, or null when it has no cap of its own. */
-  async scopeFor(credentialId: string, callId: string): Promise<CredentialScope | null> {
+  /**
+   * The scope a call on `credentialId` must take, with or without a cap of its own (`cap`
+   * null: counted, never full). Throws when the cap cannot be read (see {@link resolveCap}).
+   */
+  async scopeFor(credentialId: string, callId: string): Promise<CredentialScope> {
     const cap = await this.resolveCap(credentialId);
-    if (cap === null) return null;
     return { credentialId, cap, ...credentialScopeKeys(this.keyPrefix, credentialId, callId) };
   }
 
@@ -135,29 +162,37 @@ export class CredentialConcurrencyGuard {
 
   /**
    * Take this scope alone (the legacy-total path and the compatibility path, which take the
-   * other scopes through their own guards). Refuses without moving the counter when full.
+   * other scopes through their own guards). With a cap, refuses without moving the counter
+   * when full; with none (`cap` null), never full. `redis_unavailable` is the caller's to
+   * judge: it refuses a capped call and admits an uncapped one without the lease.
    */
   async tryAcquire(
     callId: string,
     credentialId: string,
-    cap: number,
+    cap: number | null,
     provider: string,
     ttlSecondsOverride?: number,
   ): Promise<CredentialAcquireResult> {
+    // Only an admission against a cap is a sample of the admission metric.
+    const track = (outcome: CredentialAcquireResult) => {
+      if (cap !== null) trackCredentialConcurrencyAdmission(provider, outcome);
+    };
     if (!this.redis) {
-      trackCredentialConcurrencyAdmission(provider, 'redis_unavailable');
+      track('redis_unavailable');
       return 'redis_unavailable';
     }
     const keys = this.keysFor(credentialId, callId);
     const ttl = ttlSecondsOverride && ttlSecondsOverride > 0 ? ttlSecondsOverride : this.lockTtlSeconds;
     try {
-      const result = await this.redis.eval(ACQUIRE_SCRIPT, 3, keys.counter, keys.lock, keys.generation, cap, ttl);
+      const result = await this.redis.eval(
+        ACQUIRE_SCRIPT, 3, keys.counter, keys.lock, keys.generation, credentialCapArg(cap), ttl,
+      );
       const outcome: CredentialAcquireResult = result === 1 ? 'acquired' : result === 2 ? 'already_owned' : 'credential_full';
-      trackCredentialConcurrencyAdmission(provider, outcome);
+      track(outcome);
       return outcome;
     } catch (err) {
-      logger.error({ err, callId, credentialId }, 'Redis unavailable for the credential concurrency check; failing closed');
-      trackCredentialConcurrencyAdmission(provider, 'redis_unavailable');
+      logger.error({ err, callId, credentialId, capped: cap !== null }, 'Redis unavailable for the credential concurrency check');
+      track('redis_unavailable');
       return 'redis_unavailable';
     }
   }
@@ -174,8 +209,9 @@ export class CredentialConcurrencyGuard {
   }
 
   /**
-   * Live leases per credential (the counters), for the super-admin's usage read. Best
-   * effort: `unavailable` is a Redis fault, never "no calls".
+   * Live leases per credential (the counters: every call on it, capped or not), for the
+   * super-admin's usage read and pacing's room. Best effort: `unavailable` is a Redis fault,
+   * never "no calls".
    */
   async getCounts(credentialIds: readonly string[]): Promise<CredentialCounts> {
     const counts = new Map<string, number>();

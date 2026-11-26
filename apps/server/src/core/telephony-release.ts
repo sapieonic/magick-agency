@@ -8,9 +8,9 @@ const log = createChildLogger({ component: 'telephony-release' });
  *
  * - `composite` — the atomic transaction released a plausibly complete lease. A
  *   complete lease is 2 scopes (legacy: global + account) or 3 (provider mode), one
- *   more for a call on a carrier account with a cap of its own (CR13), and the helper
- *   cannot tell those apart — it does not know the account's allocation mode or the
- *   credential's cap — so any count above 1 is deliberately accepted. That ambiguity is why `partial` below
+ *   more for a call on a tenant carrier account, capped or not (CR13), and the helper
+ *   cannot tell those apart — it does not know the account's allocation mode — so any
+ *   count above 1 is deliberately accepted. That ambiguity is why `partial` below
  *   only catches the case that is unambiguous.
  * - `partial` — exactly ONE scope was released. That can never be a complete
  *   telephony lease, so the rest are still parked: a wrong tenant/account (the
@@ -144,8 +144,9 @@ export interface TelephonyReleaseParams {
   provider: string | undefined;
   /**
    * The tenant carrier account the call was placed on (CR13), so its own scope is handed
-   * back too. Null or absent: the service's own account, which takes no credential scope.
-   * Releasing a credential lease the call never took (no cap at admission) is a no-op.
+   * back too (every call on one takes it, capped or not). Null or absent: the service's own
+   * account, which takes no credential scope. Releasing a credential lease the call never
+   * took (an uncapped call on a legacy account admitted while Redis was down) is a no-op.
    */
   credentialId?: string | null | undefined;
   source: TelephonyReleaseSource;
@@ -355,10 +356,10 @@ async function classifyComposite(
   // sets one layer down in `releaseAll`.
   if (status === 'released' && typeof scopes === 'number' && Number.isInteger(scopes) && scopes >= 0) {
     if (scopes === 0) return 'noop';
-    // 1 is never a complete lease (legacy holds 2, provider mode 3, one more with a
-    // carrier account's own cap), so the rest are still parked. 2 and 3 are ambiguous
-    // — complete or partial depending on the mode and the cap — and the helper cannot
-    // tell, so they are accepted rather than guessed at.
+    // 1 is never a complete lease (legacy holds 2, provider mode 3, one more on a
+    // tenant carrier account), so the rest are still parked. 2 and 3 are ambiguous
+    // — complete or partial depending on the mode and the carrier account — and the
+    // helper cannot tell, so they are accepted rather than guessed at.
     return scopes === 1 ? 'partial' : 'composite';
   }
 

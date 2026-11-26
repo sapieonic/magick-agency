@@ -1,7 +1,7 @@
 /**
  * Admission for one bridge call: take the shared concurrency slots (global,
- * account, provider and, on a tenant carrier account with a cap of its own, that
- * account's: CR13) through the guard host, or refuse with the
+ * account, provider and, on a tenant carrier account, that account's, capped or
+ * not: CR13) through the guard host, or refuse with the
  * {@link WebRtcCallError} whose code and HTTP status the caller surfaces. Split out
  * of `WebRtcBridgeManager.placeOutboundLeg`. No metrics are imported here; a
  * refusal is reported to product analytics, as before.
