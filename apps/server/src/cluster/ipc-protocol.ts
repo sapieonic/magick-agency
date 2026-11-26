@@ -240,6 +240,8 @@ export interface StationBroadcastBody { campaignId: string; frame: AgencyStation
 export interface StationSendBody { sessionId: string; frame: AgencyStationServerFrame }
 export interface PacingRevokeBody { campaignId: string | null; upTo: number }
 export interface AccountScopeBody { tenantId: string; accountId: string }
+/** One tenant carrier account (a `telephony_credentials` id). */
+export interface CredentialScopeBody { credentialId: string }
 export interface AttemptIdsBody { attemptIds: string[] }
 export interface DialExecuteBody { cmd: DialCommand; grant: number }
 export interface CoreInjectBody { method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; url: string; headers: Record<string, string>; payload?: string }
@@ -262,8 +264,19 @@ export interface CarrierPlivoCallbackBody {
 /** What Plivo is answered with: the answer callback's XML, or a status body. */
 export interface CarrierPlivoCallbackAnswer { statusCode: number; contentType: 'text/xml' | 'application/json'; body: string }
 export interface SessionBody { sessionId: string }
-/** The slots one live call holds, so the primary can release them if its worker dies. */
-export interface CallLease { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }
+/**
+ * The slots one live call holds, so the primary can release them if its worker dies.
+ * `credentialId`: the tenant carrier account it was admitted on (CR13), null on the service's
+ * own account; a lease without the field (an older worker) reads as null.
+ */
+export interface CallLease {
+  callId: string;
+  concurrencyKey: string;
+  tenantId: string;
+  accountId: string;
+  provider: string;
+  credentialId: string | null;
+}
 export interface ReaperSnapshotBody {
   activeAttemptIds: string[];
   /** Attempts the worker's dialer could not write `ended`, each saying whether its dial's outcome is unknown. */
@@ -343,6 +356,9 @@ export function parsePacingRevoke(raw: unknown): PacingRevokeBody | null {
 }
 export function parseAccountScope(raw: unknown): AccountScopeBody | null {
   return isRecord(raw) && isId(raw['tenantId']) && isId(raw['accountId']) ? { tenantId: raw['tenantId'], accountId: raw['accountId'] } : null;
+}
+export function parseCredentialScope(raw: unknown): CredentialScopeBody | null {
+  return isRecord(raw) && isId(raw['credentialId']) ? { credentialId: raw['credentialId'] } : null;
 }
 export function parseAttemptIds(raw: unknown): AttemptIdsBody | null {
   return isRecord(raw) && isIdList(raw['attemptIds']) ? { attemptIds: raw['attemptIds'] } : null;
@@ -449,7 +465,9 @@ export function parseReaperSnapshot(raw: unknown): ReaperSnapshotBody | null {
   const out: CallLease[] = [];
   for (const l of leases) {
     if (!isRecord(l) || !isId(l['callId']) || !isId(l['concurrencyKey']) || !isId(l['tenantId']) || !isId(l['accountId']) || !isId(l['provider'])) return null;
-    out.push({ callId: l['callId'], concurrencyKey: l['concurrencyKey'], tenantId: l['tenantId'], accountId: l['accountId'], provider: l['provider'] });
+    const credentialId = l['credentialId'] ?? null;
+    if (!nullableId(credentialId)) return null;
+    out.push({ callId: l['callId'], concurrencyKey: l['concurrencyKey'], tenantId: l['tenantId'], accountId: l['accountId'], provider: l['provider'], credentialId });
   }
   return { activeAttemptIds, unrecordedEnds, manualActiveIds, activeCallIds, leases: out };
 }
@@ -510,6 +528,8 @@ export interface IpcEventMap {
   'station.broadcast': StationBroadcastBody;
   'station.send': StationSendBody;
   'concurrency.invalidate': AccountScopeBody;
+  /** Primary → every media worker: a carrier account's own cap changed (CR13). */
+  'concurrency.invalidate_credential': CredentialScopeBody;
   /** Primary → every media worker: drop the dialable caller-ID cache (PL13, `campaign-dialability.ts`). */
   'dialable.invalidate': EmptyBody;
   'reaper.forget_unrecorded': AttemptIdsBody;
@@ -551,6 +571,7 @@ export const IPC_EVENT_DECODERS: { readonly [K in IpcEventType]: Decoder<IpcEven
   'station.broadcast': parseStationBroadcast,
   'station.send': parseStationSend,
   'concurrency.invalidate': parseAccountScope,
+  'concurrency.invalidate_credential': parseCredentialScope,
   'dialable.invalidate': parseEmptyBody,
   'reaper.forget_unrecorded': parseAttemptIds,
   'voice.wake_self_heal': parseEmptyBody,

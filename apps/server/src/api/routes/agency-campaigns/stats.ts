@@ -200,11 +200,12 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
         },
         null,
       ),
-      // What the dial itself would rotate, for a running campaign on a tenant's own
-      // carrier account (PL13); cached by the dial path, so a poll costs nothing extra.
+      // What the dial itself would rotate, for a running campaign (PL13 on a tenant's own
+      // carrier account, CR9 on the service's); cached by the dial path, so a poll costs
+      // nothing extra.
       bestEffort<number | null>(
         'agency.dialable_caller_ids',
-        async () => (running && campaign.telephony_credential_id ? (await dialableCallerIds(campaign)).length : null),
+        async () => (running ? (await dialableCallerIds(campaign)).length : null),
         null,
       ),
       // Whether the account gives the campaign's carrier no lines (PL14), while running.

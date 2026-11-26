@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 
 // The refusal breaker's count (PL11): in Redis per campaign with a TTL, cleared by a placed
 // call and by tripping, and counted in this process while Redis errors, so a Redis fault never
-// fails a dial and a refusal streak still trips.
+// fails a dial and a refusal streak still trips. Its API streak (CR4) is a second count beside
+// it, with its own key and higher threshold, cleared with it.
 
 vi.mock('@magick-agency/observability', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -10,9 +11,13 @@ vi.mock('@magick-agency/observability', () => ({
 }));
 vi.mock('../../../src/config/index.js', () => ({ config: { redis: { keyPrefix: '' }, telephony: {} } }));
 
-import { CarrierRefusalBreaker, countsTowardBreaker } from '../../../src/agency/carrier-refusal-breaker.js';
+import {
+  CARRIER_API_REFUSAL_BREAKER_THRESHOLD, CarrierRefusalBreaker, countsTowardBreaker, refusalStreakOf,
+} from '../../../src/agency/carrier-refusal-breaker.js';
 import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
-import { CarrierDialNotSentError, CarrierDialRefusedError, CarrierRequestTimeoutError } from '../../../src/telephony/carrier-errors.js';
+import {
+  CarrierApiRefusedError, CarrierDialNotSentError, CarrierDialRefusedError, CarrierRequestTimeoutError,
+} from '../../../src/telephony/carrier-errors.js';
 
 /** Enough of ioredis for the breaker: MULTI INCR/EXPIRE/EXEC and DEL, with TTLs recorded. */
 function fakeRedis() {
@@ -31,8 +36,14 @@ function fakeRedis() {
       };
       return chain;
     },
-    dels: [] as string[],
-    async del(key: string) { redis.dels.push(key); if (failing) throw new Error('redis down'); values.delete(key); ttls.delete(key); return 1; },
+    /** Each DEL's keys, in order. */
+    dels: [] as string[][],
+    async del(...keys: string[]) {
+      redis.dels.push(keys);
+      if (failing) throw new Error('redis down');
+      for (const key of keys) { values.delete(key); ttls.delete(key); }
+      return keys.length;
+    },
   };
   return redis;
 }
@@ -80,16 +91,17 @@ describe('CarrierRefusalBreaker', () => {
 });
 
 describe('CarrierRefusalBreaker: a placed call\'s clear', () => {
-  const KEY = 'agency:carrier-refusals:c1';
+  const KEY = ['agency:carrier-refusals:c1', 'agency:carrier-api-refusals:c1'];
 
   it('as the sole counter: clears once after a start, then only after a refusal', async () => {
     const redis = fakeRedis();
     const b = new CarrierRefusalBreaker(redis as any, '', { threshold: 5, soleCounter: true });
     // The first placed call after a start clears a streak a previous process may have left.
-    redis.values.set(KEY, 3);
+    redis.values.set(KEY[0]!, 3);
+    redis.values.set(KEY[1]!, 7);
     await b.notePlaced('c1');
     expect(redis.dels).toEqual([KEY]);
-    expect(redis.values.has(KEY)).toBe(false);
+    expect(redis.values.size).toBe(0);
     // No refusal since: no DEL.
     await b.notePlaced('c1');
     await b.notePlaced('c1');
@@ -101,7 +113,7 @@ describe('CarrierRefusalBreaker: a placed call\'s clear', () => {
     expect(redis.dels).toEqual([KEY, KEY]);
     // Per campaign: another campaign's first placed call clears its own key.
     await b.notePlaced('c2');
-    expect(redis.dels).toEqual([KEY, KEY, 'agency:carrier-refusals:c2']);
+    expect(redis.dels).toEqual([KEY, KEY, ['agency:carrier-refusals:c2', 'agency:carrier-api-refusals:c2']]);
   });
 
   it('as the sole counter: a refusal noted while a clear is in flight is not covered by it', async () => {
@@ -132,6 +144,64 @@ describe('CarrierRefusalBreaker: a placed call\'s clear', () => {
     await b.notePlaced('c1');
     await b.notePlaced('c1');
     expect(redis.dels).toHaveLength(3);
+  });
+});
+
+describe('CarrierRefusalBreaker: the API streak (CR4)', () => {
+  it('counts under its own key and trips at its own, higher threshold, not before', async () => {
+    const redis = fakeRedis();
+    const b = new CarrierRefusalBreaker(redis as any, 'p:', { ttlSeconds: 900 });
+    for (let i = 1; i < CARRIER_API_REFUSAL_BREAKER_THRESHOLD; i++) expect(await b.noteRefusal('c1', 'api')).toBe(false);
+    expect(redis.values.get('p:agency:carrier-api-refusals:c1')).toBe(CARRIER_API_REFUSAL_BREAKER_THRESHOLD - 1);
+    expect(redis.ttls.get('p:agency:carrier-api-refusals:c1')).toBe(900);
+    expect(redis.values.has('p:agency:carrier-refusals:c1')).toBe(false);
+    expect(await b.noteRefusal('c1', 'api')).toBe(true);
+    // A trip clears both streaks: the resumed campaign starts afresh.
+    expect(redis.dels).toEqual([['p:agency:carrier-refusals:c1', 'p:agency:carrier-api-refusals:c1']]);
+    expect(redis.values.size).toBe(0);
+  });
+
+  it('the two streaks count apart: neither kind moves the other`s count', async () => {
+    const redis = fakeRedis();
+    const b = new CarrierRefusalBreaker(redis as any, '', { threshold: 2, apiThreshold: 3 });
+    expect(await b.noteRefusal('c1', 'api')).toBe(false);
+    expect(await b.noteRefusal('c1', 'api')).toBe(false);
+    expect(await b.noteRefusal('c1', 'account')).toBe(false);
+    expect(redis.values.get('agency:carrier-refusals:c1')).toBe(1);
+    expect(redis.values.get('agency:carrier-api-refusals:c1')).toBe(2);
+    expect(await b.noteRefusal('c1')).toBe(true); // `account` by default
+  });
+
+  it('a placed call clears it', async () => {
+    const redis = fakeRedis();
+    const b = new CarrierRefusalBreaker(redis as any, '', { apiThreshold: 2 });
+    expect(await b.noteRefusal('c1', 'api')).toBe(false);
+    await b.notePlaced('c1');
+    expect(await b.noteRefusal('c1', 'api')).toBe(false);
+  });
+
+  it('counts in this process while Redis errors, apart from PL11`s count', async () => {
+    const redis = fakeRedis();
+    redis.fail(true);
+    const b = new CarrierRefusalBreaker(redis as any, '', { threshold: 2, apiThreshold: 2 });
+    expect(await b.noteRefusal('c1', 'api')).toBe(false);
+    expect(await b.noteRefusal('c1', 'account')).toBe(false);
+    expect(await b.noteRefusal('c1', 'api')).toBe(true);
+  });
+});
+
+describe('refusalStreakOf', () => {
+  const wrap = (code: any, cause: unknown) => Object.assign(new WebRtcCallError('x', code, 502), { cause });
+  it('an API refusal is the `api` streak only; a 4xx the `account` streak only; the rest neither', () => {
+    const api = wrap('telephony_init_failed', new CarrierApiRefusedError('voicelink', 401, 'VoiceLink /v1/add_lead error 401'));
+    expect(refusalStreakOf(api)).toBe('api');
+    expect(countsTowardBreaker(api)).toBe(false);
+    expect(refusalStreakOf(wrap('telephony_init_failed', new CarrierDialRefusedError('plivo', 403, 'x')))).toBe('account');
+    expect(refusalStreakOf(wrap('telephony_init_failed', new Error('VoiceLink /v1/add_lead error 401')))).toBeNull();
+    expect(refusalStreakOf(wrap('carrier_auth_rejected', new Error('401')))).toBeNull();
+    // A 401 refusal whose outcome is somehow unknown is not counted as an API refusal.
+    expect(refusalStreakOf(wrap('telephony_init_failed',
+      Object.assign(new CarrierApiRefusedError('voicelink', 401, 'x'), { cause: new CarrierRequestTimeoutError('op', 1, true) })))).toBeNull();
   });
 });
 

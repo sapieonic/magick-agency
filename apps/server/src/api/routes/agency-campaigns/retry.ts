@@ -27,7 +27,8 @@ import type { AgencyCampaignActor } from '@magick-agency/contracts/agency';
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
-import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, contextColumnsRejected, ownedCampaign } from './guards.js';
+import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierFieldsChanged, carrierRejected, configRejected, contextColumnsRejected, ownedCampaign, replyCarrierRefusal } from './guards.js';
+import { serviceCallerIdsJudged, servicePinnedRefusalLocked } from '../../../agency/campaign-carrier.js';
 import { ACTOR_NAME_MAX, ACTOR_USER_ID_MAX } from './lifecycle.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { trimCallerIds } from '../../../agency/campaign-stored-values.js';
@@ -346,15 +347,24 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
       && await abandonAnnouncementRejected(request, reply, overrides['abandon_announcement_id'])) return reply;
     if ('analysis_profile_id' in overrides
       && await analysisProfileRejected(request, reply, overrides['analysis_profile_id'])) return reply;
-    // The carrier account, by the same rule: judged only when an override touches the
-    // carrier, the credential or the caller IDs, and then on the merged result, exactly as
-    // a PATCH would be. An inherited pin is not re-judged here (its campaign cannot START
-    // while the credential is not active, `campaignCredentialStartRefusal`).
-    if (await carrierRejected(request, reply, overrides, {
+    // The carrier account, by the same rule: judged when an override touches the carrier,
+    // the credential or the caller IDs, and then on the merged result, exactly as a PATCH
+    // would be. An inherited pin is not re-judged here (its campaign cannot START while the
+    // credential is not active, `campaignCredentialStartRefusal`), nor a tenant account's
+    // inherited numbers (one retired since is skipped at the dial, PL13). On the service's own
+    // account EVERY caller ID is judged against CR9, inherited or not, as a change of carrier
+    // account would be: a number of the parent's may have moved onto a tenant's account since
+    // the parent was written (CR6 refuses a move only while an unfinished campaign holds it),
+    // and the child would dial it on the service's account.
+    const carrierEffective = {
       telephony_provider: 'telephony_provider' in overrides ? overrides['telephony_provider'] : parent.telephony_provider,
       telephony_credential_id: 'telephony_credential_id' in overrides ? overrides['telephony_credential_id'] : parent.telephony_credential_id,
       caller_ids: (overrides['caller_ids'] as string[] | undefined) ?? parent.caller_ids,
-    }, parent)) return reply;
+    };
+    const carrierOpts = { judgeAllServiceCallerIds: true };
+    if (await carrierRejected(request, reply, overrides, carrierEffective, parent, carrierOpts)) return reply;
+    // ... and again in the create's transaction, with the numbers' rows held `FOR SHARE`.
+    const lockedCallerIds = serviceCallerIdsJudged(carrierEffective, carrierFieldsChanged(overrides), parent, carrierOpts);
 
     const generation = parent.retry_generation + 1;
     const requestedName = typeof body['name'] === 'string' ? body['name'].trim() : '';
@@ -386,7 +396,9 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
       // The `inherited` history rows' actor. Only a UUID can reach that column's
       // `uuid` cast; anything else is recorded as the system rather than a 22P02.
       actorUserId: retryActor && UUID_RE.test(retryActor.user_id) ? retryActor.user_id : null,
+      ...(lockedCallerIds.length > 0 ? { refuse: (client) => servicePinnedRefusalLocked(client, lockedCallerIds) } : {}),
     });
+    if (result.status === 'refused') return replyCarrierRefusal(reply, result.refusal);
 
     // Nothing was created in either refusal — the transaction rolled back before
     // the campaign INSERT. That is the point of both: a supervisor cannot delete a

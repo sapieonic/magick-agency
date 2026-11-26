@@ -1,6 +1,8 @@
-// `GET /proxy/agency/carriers` (decisions B18–B22): the service's own carriers, then the
+// `GET /proxy/agency/carriers` (decisions B18–B22, CR10): the service's own carriers, then the
 // tenant's ACTIVE credentials on active carriers that take them, with id, carrier and label
-// only. Which kind a carrier is comes from its credential spec, not its name. The RBAC floor
+// only. Which kind a carrier is comes from its catalogue entry's account modes, not its name:
+// read here from a catalogue double (`test/helpers/carrier-catalog-double.ts`) that pins
+// VoiceLink service-only unless a test makes it take both modes. The RBAC floor
 // (`agency.campaigns.read`) is pinned by `proxy-agency-campaigns.routes.test.ts`.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -8,12 +10,16 @@ import Fastify, { type FastifyInstance } from 'fastify';
 const mocks = vi.hoisted(() => ({
   providers: vi.fn(),
   credentials: vi.fn(),
-  dialReady: vi.fn((_provider: string) => true),
+  dialReady: vi.fn((_provider: string, _account: 'service' | 'tenant') => true),
 }));
 
 // Whether a carrier can dial from this server (PL12) is its own module's question
 // (`carrier-dial-readiness.test.ts`); here it is scripted.
 vi.mock('../../../../src/telephony/carrier-dial-readiness.js', () => ({ carrierDialReady: mocks.dialReady }));
+
+const carriers = vi.hoisted(() => ({} as Record<string, { accounts: { service: boolean; tenant: boolean } } | undefined>));
+vi.mock('../../../../src/telephony/carrier-catalog.js', async (importOriginal) =>
+  (await import('../../../helpers/carrier-catalog-double.js')).catalogDouble(await importOriginal(), carriers));
 
 vi.mock('../../../../src/rbac/rbac.middleware.js', () => ({ requirePermission: () => async () => {} }));
 vi.mock('../../../../src/db/repositories/telephony-provider.repository.js', () => ({
@@ -37,6 +43,7 @@ let app: FastifyInstance;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  carriers['voicelink'] = { accounts: { service: true, tenant: false } };
   mocks.dialReady.mockImplementation(() => true);
   mocks.providers.mockResolvedValue([{ name: 'plivo', status: 'active' }, { name: 'voicelink', status: 'active' }]);
   mocks.credentials.mockResolvedValue([
@@ -83,12 +90,37 @@ describe('GET /proxy/agency/carriers', () => {
     expect(res.json().carriers).toEqual([
       { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' },
     ]);
-    expect(mocks.dialReady).toHaveBeenCalledWith('plivo');
+    expect(mocks.dialReady).toHaveBeenCalledWith('plivo', 'tenant');
   });
 
   it('a tenant with no credentials sees only the service carrier', async () => {
     mocks.credentials.mockResolvedValue([]);
     const res = await app.inject({ method: 'GET', url: '/proxy/agency/carriers' });
     expect(res.json().carriers).toHaveLength(1);
+  });
+
+  it('a carrier with both modes offers its service account AND the tenant`s active credentials on it (CR10)', async () => {
+    carriers['voicelink'] = { accounts: { service: true, tenant: true } };
+    mocks.credentials.mockResolvedValue([
+      cred({ id: 'cred-1', label: 'Main' }),
+      cred({ id: 'vl-1', provider: 'voicelink', label: 'Own line' }),
+      cred({ id: 'vl-2', provider: 'voicelink', label: 'Old line', status: 'disabled' }),
+    ]);
+    const res = await app.inject({ method: 'GET', url: '/proxy/agency/carriers' });
+    expect(res.json().carriers).toEqual([
+      // The service's account carries no label: the console names it by the carrier's alias alone.
+      { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' },
+      { telephony_provider: 'plivo', telephony_credential_id: 'cred-1', label: 'Main', status: 'active' },
+      { telephony_provider: 'voicelink', telephony_credential_id: 'vl-1', label: 'Own line', status: 'active' },
+    ]);
+    expect(mocks.dialReady).toHaveBeenCalledWith('voicelink', 'tenant');
+  });
+
+  it('a service-only carrier offers none of a tenant`s credentials on it (none can be made, but one stored is not offered)', async () => {
+    mocks.credentials.mockResolvedValue([cred({ id: 'vl-1', provider: 'voicelink', label: 'Own line' })]);
+    const res = await app.inject({ method: 'GET', url: '/proxy/agency/carriers' });
+    expect(res.json().carriers).toEqual([
+      { telephony_provider: 'voicelink', telephony_credential_id: null, label: null, status: 'active' },
+    ]);
   });
 });

@@ -16,8 +16,9 @@
  * `agency_campaign.agent_caller_id_set` / `_cleared` (`cause: 'supervisor'`), ids and the number
  * only (DN10). Part of `proxy-agency-assignment.routes.ts`.
  *
- * On a campaign pinned to a tenant's own carrier account, "the campaign's caller IDs" here are
- * the DIALABLE ones (PL13, `dialableCallerIds`), the pool every dial path decides over: the GET
+ * "The campaign's caller IDs" here are the DIALABLE ones (`dialableCallerIds`: on a tenant's own
+ * carrier account those still active on it, PL13; on the service's own account none pinned to a
+ * credential, CR9), the pool every dial path decides over: the GET
  * lists only those (a dedicated number the account no longer has reads `in_campaign: false`,
  * flagged in the console, and the rotation leaves it out), and the PUT refuses a stored number
  * the account no longer has with the same `409 caller_id_not_in_campaign`, its
@@ -145,7 +146,7 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
   }, async (request, reply) => {
     const campaign = await guardSupervisedCampaign(request, reply, { gated: false });
     if (!campaign) return reply;
-    // A pinned campaign's caller IDs as the dial paths see them: the dialable ones (PL13).
+    // The campaign's caller IDs as the dial paths see them: the dialable ones (PL13, CR9).
     const [rows, dialable] = await Promise.all([
       agencyAgentCallerIdRepository.listForCampaign(campaign.tenant_id, campaign.id),
       withDialableCallerIds(campaign),
@@ -173,10 +174,11 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
     if (!isUuid(userId)) return refuse(reply, 404, 'agent_not_staffed', AGENT_CALLER_ID_MESSAGES.agent_not_staffed);
     const agentId = userId.toLowerCase();
 
-    // A pinned campaign dials only the stored numbers still active on its carrier account
-    // (PL13), so only those can be dedicated. Null on the service's own account: no read.
-    const dialable = campaign.telephony_credential_id ? await dialableCallerIds(campaign) : null;
-    if (dialable && !dialable.includes(body.callerId) && usableCallerIds(campaign).includes(body.callerId)) {
+    // A campaign dials only its dialable numbers: on a tenant's account those still active on
+    // it (PL13), on the service's own account none pinned to a credential (CR9). Only those can
+    // be dedicated.
+    const dialable = await dialableCallerIds(campaign);
+    if (!dialable.includes(body.callerId) && usableCallerIds(campaign).includes(body.callerId)) {
       return refuse(reply, 409, 'caller_id_not_in_campaign', AGENT_CALLER_ID_MESSAGES.caller_id_not_dialable,
         { caller_ids: dialable });
     }

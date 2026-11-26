@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import { getPool } from '../../connection.js';
 import type { AuditLogRecord, CreateAuditLogInput } from '../../models/platform/audit.model.js';
 
@@ -51,9 +52,14 @@ const ORDER_BY_OFFSET = 'created_at DESC, id DESC';
 const ORDER_BY_KEYSET = `${MS_TRUNC_CREATED_AT} DESC, id DESC`;
 
 export class AuditRepository {
-  async insertBatch(events: CreateAuditLogInput[]): Promise<void> {
+  /**
+   * Insert `events` in one statement. `client` joins a caller's transaction, so a row can
+   * commit (or roll back) with the write it records (the CR9 caller-ID clean-up script); the
+   * buffered logger passes none and writes on the pool.
+   */
+  async insertBatch(events: CreateAuditLogInput[], client?: Pick<PoolClient, 'query'>): Promise<void> {
     if (events.length === 0) return;
-    const pool = getPool();
+    const pool = client ?? getPool();
 
     const values: unknown[] = [];
     const placeholders: string[] = [];

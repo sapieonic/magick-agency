@@ -9,6 +9,11 @@ vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
+// `quiet`: a made-up carrier on tenant accounts that takes no inbound calls (CR11). Plivo is real.
+const carriers = vi.hoisted(() => ({ quiet: { accounts: { service: false, tenant: true }, inbound: false } }));
+vi.mock('../../../src/telephony/carrier-catalog.js', async (importOriginal) =>
+  (await import('../../helpers/carrier-catalog-double.js')).catalogDouble(await importOriginal(), carriers));
+
 import type { PhoneNumberInboundLinkRecord } from '@magick-agency/db/models/phone-number.model';
 import type { TelephonyCredentialInboundRecord } from '@magick-agency/db/models/telephony-credential.model';
 import {
@@ -37,7 +42,7 @@ function inboundRecord(over: Partial<TelephonyCredentialInboundRecord> = {}): Te
 
 function numberRecord(over: Partial<PhoneNumberInboundLinkRecord> = {}): PhoneNumberInboundLinkRecord {
   return {
-    phone_number_id: 'pn-1', phone_number: '+14155550101', status: 'active', telephony_credential_id: CRED,
+    phone_number_id: 'pn-1', phone_number: '+14155550101', status: 'active', provider_name: 'plivo', telephony_credential_id: CRED,
     inbound_linked_at: null, inbound_previous_app_id: null, credential_label: 'Main', credential_status: 'active',
     credential_tenant_id: TENANT, credential_app_id: 'app-1', assigned: true, route_id: null, route_name: null,
     route_account_id: null, ...over,
@@ -287,5 +292,34 @@ describe('TelephonyInboundService', () => {
     const own = await svc.numberState('own');
     expect(own.ok && own.value.unrouted_missed).toBeNull();
     expect(unroutedAsked).toHaveLength(1);
+  });
+
+  it('a carrier without inbound (CR11): every action, Link included, is refused inbound_not_supported and nothing reaches the carrier; the reads still answer', async () => {
+    stored = inboundRecord({ provider: 'quiet', app_id: 'app-1' });
+    numbers = [
+      numberRecord({ phone_number_id: 'pn-q', provider_name: 'quiet' }),
+      numberRecord({ phone_number_id: 'pn-ql', provider_name: 'quiet', inbound_linked_at: new Date() }),
+    ];
+    const results = [
+      await svc.enable(CRED, ACTOR), await svc.disable(CRED, ACTOR), await svc.repoint(CRED, ACTOR), await svc.health(CRED),
+      await svc.link('pn-q', ACTOR), await svc.unlink('pn-ql', ACTOR),
+    ];
+    for (const r of results) {
+      expect(r).toEqual({
+        ok: false, code: 'inbound_not_supported',
+        message: 'This carrier does not take inbound calls here, so inbound cannot be set up on it. Nothing was changed.',
+      });
+    }
+    for (const call of Object.values(carrier)) expect(call).not.toHaveBeenCalled();
+    expect(audit).not.toHaveBeenCalled();
+    expect((await svc.state(CRED)).ok).toBe(true);
+    expect((await svc.numberState('pn-q')).ok).toBe(true);
+  });
+
+  it('Plivo takes inbound: the same actions reach the carrier (the gate is the catalogue, not the name)', async () => {
+    numbers = [numberRecord({ phone_number_id: 'pn-p', provider_name: 'plivo' })];
+    expect((await svc.enable(CRED, ACTOR)).ok).toBe(true);
+    expect((await svc.link('pn-p', ACTOR)).ok).toBe(true);
+    expect(carrier.setNumberApp).toHaveBeenCalled();
   });
 });

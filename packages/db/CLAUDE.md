@@ -45,7 +45,8 @@ before writing a repository or a migration.
   0073 an account's inbound calls by caller, for the inbound calls in customer history, 0074
   marks every Insights rollup bucket dirty so it is rebuilt with the 3 s abandonment grace, 0075
   the abandonment grace per campaign (`abandonment_grace_ms`) and the grace stamped on each
-  attempt (`bridge_grace_ms`), 0076 validates 0075's attempt CHECK).
+  attempt (`bridge_grace_ms`), 0076 validates 0075's attempt CHECK, 0077 a concurrency cap per carrier
+  account (`telephony_credentials.max_concurrent_calls`, CR13)).
   node-pg-migrate,
 
   one file per migration, one transaction, exactly one `-- up migration` and one

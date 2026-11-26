@@ -3,7 +3,7 @@ import { API_BASE } from '../config';
 import { apiFetch } from './client';
 import { buildAuthHeaders } from './authHeaders';
 import { captureApiError } from './error-analytics';
-import { recordingRefusal } from './agencySpine';
+import { readyRecording, recordingRefusal, RECORDING_FETCH_ACCEPT } from './agencySpine';
 import { trackAgencyRecordingOutcome } from '../analytics/events';
 import { errorStatus } from '../utils/agencyErrors';
 import {
@@ -376,16 +376,16 @@ export async function fetchManualCallRecordingBlobUrl(
 ): Promise<RecordingOutcome> {
   const url = `${SOFTPHONE_BASE}/calls/${encodeURIComponent(callId)}/recording`;
   const headers = await buildAuthHeaders(tenantId, accountId);
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, { headers: { ...headers, Accept: RECORDING_FETCH_ACCEPT } });
   if (!res.ok) {
     captureApiError(url, res);
     const outcome = await recordingRefusal(res);
     if (outcome.status !== 'ready') trackAgencyRecordingOutcome({ status: outcome.status });
     return outcome;
   }
-  const blob = await res.blob();
-  trackAgencyRecordingOutcome({ status: 'ok' });
-  return { status: 'ready', url: URL.createObjectURL(blob), mimeType: res.headers.get('content-type') ?? blob.type ?? null };
+  // The bytes as a blob URL, or the carrier's own URL for a pinned call on a carrier whose
+  // recordings are public (docs/carriers.md CR12).
+  return readyRecording(res);
 }
 
 // ─── Sessions ───────────────────────────────────────────────────────────────

@@ -18,7 +18,9 @@ import { callCore } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { softphoneListQuerySchema } from '../helpers/softphone-list-query.js';
 import { definedQueryString } from '../helpers/query-string.js';
-import { decodeRawErrorBody, shapeMediaCall } from '../proxy-agency-calls.routes.js';
+import {
+  decodeRawErrorBody, recordingAcceptHeader, sendRecordingPointer, shapeMediaCall,
+} from '../proxy-agency-calls.routes.js';
 import { callListenSessions } from '../helpers/listen.js';
 import { noStore } from '../helpers/no-store.js';
 import { createChildLogger } from '@magick-agency/observability';
@@ -206,9 +208,12 @@ export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise
       tenantId: request.tenantId!,
       accountId: request.accountId,
       rawResponse: true,
-      ...(typeof range === 'string' && range.length > 0 ? { headers: { range } } : {}),
+      headers: { ...recordingAcceptHeader(request), ...(typeof range === 'string' && range.length > 0 ? { range } : {}) },
     });
     if (result.status >= 400) return reply.code(result.status).send(decodeRawErrorBody(result.body));
+    // CR12: the carrier URL itself (a redirect, or JSON when asked), never dressed as audio.
+    const pointer = sendRecordingPointer(reply, result);
+    if (pointer) return pointer;
     reply.code(result.status);
     reply.header('Content-Type', result.headers.get('content-type') || 'audio/mpeg');
     const contentLength = result.headers.get('content-length');

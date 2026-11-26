@@ -2068,6 +2068,22 @@ of `agency_call_attempts` under SHARE UPDATE EXCLUSIVE, reads and writes proceed
 holds the default, so it cannot fail. **Down** is a no-op (0075's Down drops the CHECK). **Tests**: as
 0075.
 
+### 0077 — `migrations/0077_credential_concurrency_cap.sql`
+
+A concurrency cap per carrier account (docs/carriers.md CR13).
+**`telephony_credentials.max_concurrent_calls`** (INTEGER, nullable, no default): at most this many live
+calls on the tenant's carrier account at once, across every account of the tenant (a credential serves
+them all, B20). NULL is no cap of its own, so every existing credential keeps none. In addition to the
+global, account and per-account carrier scopes (B22); the server takes it in the same Redis transaction as
+those, keyed by the credential id, and reads it here (cached a few seconds). Set at create or by the
+super-admin's `PATCH /telephony-credentials/:id/concurrency` (`setConcurrencyCap`, refused once revoked);
+read by `getConcurrencyCap`. **`chk_telephony_credentials_max_concurrent_calls`**: NULL or > 0 (the API
+bounds it at 1000). A catalogue-only ADD COLUMN on a table of a few rows per tenant, under `SET LOCAL
+lock_timeout = '10s'` (every tenant dial reads it). **Down** drops the CHECK and the column: every cap is
+lost. **Tests**: `test/integration/db/credential-concurrency-cap-migration.test.ts` (the column, the CHECK
+both ways, the lock timeout, down then up), `repositories/telephony-credential.repository.test.ts` (create,
+set, clear, the revoked refusal, the read) and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

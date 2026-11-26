@@ -7,8 +7,9 @@
  * Covers: Enable / Health / Re-point / Disable of the Application; Link / Unlink of a number
  * (its previous app kept and restored); the §8.2 cascade from unassign and a sync that retires the
  * number; a credential disable that keeps every link and route, and an enable that answers them
- * again; revoke refused while inbound is enabled; and the partial failures (the carrier accepts
- * and our write fails, and the other way round).
+ * again; revoke refused while inbound is enabled; the partial failures (the carrier accepts
+ * and our write fails, and the other way round); and every action refused on a carrier that takes
+ * no inbound calls (CR11).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -25,6 +26,7 @@ vi.hoisted(() => {
 
 import jwt from 'jsonwebtoken';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
+import { phoneNumberRepository } from '@magick-agency/db/repositories/phone-number.repository';
 import { getTestPool } from '../../../../../packages/db/test/helpers/test-db.js';
 import { trackSuperAdminAuditWrites } from '../../helpers/drain-super-admin-audit.js';
 import { agencyInboundRouteRepository } from '../../../src/db/repositories/agency.repository.js';
@@ -392,6 +394,39 @@ describe('inbound on a Plivo credential, operator side (integration, mock Plivo)
       expect(res.statusCode).toBe(409);
       expect(res.json()).toMatchObject({ error: 'phone_number_not_linkable' });
       expect((await get(`/phone-numbers/${numberId}/inbound`)).json().link_blocker).toBe('not_assigned');
+    });
+  });
+
+  describe('a carrier that takes no inbound calls (CR11)', () => {
+    it('every action on its credential and on a number pinned to it, Link included, is 409 inbound_not_supported and nothing reaches Plivo', async () => {
+      // VoiceLink declares no inbound (docs/carriers.md CR11), on either of its accounts.
+      const credentialId = (await getTestPool().query<{ id: string }>(
+        `INSERT INTO telephony_credentials (tenant_id, provider, label, account_ref) VALUES ($1, 'voicelink', 'Own line', 'vl-inbound-test') RETURNING id`,
+        [TENANT])).rows[0]!.id;
+      const providerId = (await getTestPool().query<{ id: string }>(`SELECT id FROM telephony_providers WHERE name = 'voicelink'`)).rows[0]!.id;
+      const pinned = await phoneNumberRepository.createPinned({ phone_number: '+919800000077', provider_id: providerId, max_concurrent_calls: 1 }, credentialId);
+      if (!pinned.ok) throw new Error('pin refused');
+      const service = (await getTestPool().query<{ id: string }>(
+        `INSERT INTO phone_numbers (phone_number, provider_id) VALUES ('+919000000077', $1) RETURNING id`, [providerId])).rows[0]!.id;
+      const before = rig.carrier.requests.length;
+      const answers = [
+        await post(`/telephony-credentials/${credentialId}/inbound/enable`),
+        await post(`/telephony-credentials/${credentialId}/inbound/disable`),
+        await post(`/telephony-credentials/${credentialId}/inbound/repoint`),
+        await get(`/telephony-credentials/${credentialId}/inbound/health`),
+        await post(`/phone-numbers/${pinned.phoneNumber.id}/inbound/link`),
+        await post(`/phone-numbers/${pinned.phoneNumber.id}/inbound/unlink`),
+        await post(`/phone-numbers/${service}/inbound/link`),
+      ];
+      for (const res of answers) {
+        expect(res.statusCode, res.body).toBe(409);
+        expect(res.json()).toMatchObject({ error: 'inbound_not_supported' });
+      }
+      expect(rig.carrier.requests.length).toBe(before);
+      expect(await auditRows('telephony_credential.inbound_enabled')).toEqual([]);
+      // The reads still answer: nothing enabled, nothing linked.
+      expect((await get(`/telephony-credentials/${credentialId}/inbound`)).json().inbound).toMatchObject({ enabled: false });
+      expect((await get(`/phone-numbers/${pinned.phoneNumber.id}/inbound`)).json().link).toMatchObject({ linked: false });
     });
   });
 

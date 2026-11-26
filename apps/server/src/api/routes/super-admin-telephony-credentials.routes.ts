@@ -4,18 +4,22 @@ import { superAdminMiddleware } from '../../auth/super-admin.middleware.js';
 import { recordSuperAdminAudit } from '../../audit/super-admin-audit.js';
 import { createChildLogger } from '@magick-agency/observability';
 import type { TelephonyCredentialRecord } from '@magick-agency/db/models/telephony-credential.model';
-import type {
-  TelephonyCredentialErrorCode,
-  TelephonyCredentialProvidersResponse,
-  TelephonyCredentialSyncNumbersResponse,
+import {
+  TELEPHONY_CREDENTIAL_MAX_CONCURRENT_CALLS,
+  type TelephonyCredentialErrorCode,
+  type TelephonyCredentialProvidersResponse,
+  type TelephonyCredentialSyncNumbersResponse,
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { getTelephonyCredentialService, getTelephonyInboundService } from '../../telephony/credentials/index.js';
 import type { ServiceResult, TelephonyCredentialService } from '../../telephony/credentials/credential-service.js';
 import type { TelephonyInboundService } from '../../telephony/credentials/inbound-service.js';
 import { registerSuperAdminInboundRoutes } from './super-admin-telephony-credentials/inbound.js';
 import { credentialSpecs } from '../../telephony/credentials/credential-specs.js';
+import { carrierNumberSource } from '../../telephony/carrier-number-source.js';
+import { carrierSupportsInbound } from '../../telephony/carrier-catalog.js';
 import { safeIssues } from '../../telephony/credentials/safe-issues.js';
 import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.js';
+import { getConcurrencyControl } from '../../seams/concurrency-control.js';
 
 /*
  * Super-admin management of per-tenant carrier credentials (decisions B18–B22). The
@@ -30,6 +34,10 @@ import { invalidateDialableCallerIds } from '../../agency/campaign-dialability.j
  *    A disable keeps every link and route: the credential's calls are answered with the closed
  *    message while it is disabled, and an enable answers them as before (docs/inbound.md §10). A
  *    revoke is refused while inbound is enabled (`inbound_enabled`).
+ *  - A credential's own concurrency cap (docs/carriers.md CR13): set at create or with
+ *    `PATCH /:id/concurrency` (audited with the old and new cap), which then drops the
+ *    admission's cached cap through the concurrency seam. The list and the detail read the
+ *    calls its cap counts now from the admission's counters, best effort.
  */
 
 const log = createChildLogger({ component: 'super-admin-telephony-credentials' });
@@ -63,6 +71,9 @@ const STATUS: Record<TelephonyCredentialErrorCode, number> = {
   phone_number_not_linked: 409,
   carrier_number_missing: 409,
   carrier_refused: 422,
+  account_ref_reserved: 409,
+  // The carrier takes no inbound calls here (CR11): nothing an operator can retry.
+  inbound_not_supported: 409,
 };
 
 const idParams = z.object({ id: z.string().uuid() });
@@ -71,13 +82,17 @@ const label = z.string().trim().min(1).max(100);
 // them, and nothing below may echo one.
 const fields = z.record(z.string().max(64), z.string().max(512)).refine((f) => Object.keys(f).length <= 16, 'Too many fields');
 
+/** CR13: a credential's own cap, or null for none. */
+const concurrencyCap = z.number().int().min(1).max(TELEPHONY_CREDENTIAL_MAX_CONCURRENT_CALLS).nullable();
 const createBody = z.object({
   tenant_id: z.string().uuid(),
   provider: z.string().trim().min(1).max(50),
   label,
   fields,
+  max_concurrent_calls: concurrencyCap.optional(),
 }).strict();
 const updateBody = z.object({ label }).strict();
+const concurrencyBody = z.object({ max_concurrent_calls: concurrencyCap }).strict();
 const rotateBody = z.object({ fields, expected_version: z.number().int().min(1) }).strict();
 const listQuery = z.object({
   tenant_id: z.string().uuid().optional(),
@@ -101,6 +116,23 @@ function sendFailure(reply: FastifyReply, r: Extract<ServiceResult<unknown>, { o
   return reply.code(STATUS[r.code]).send({ error: r.code, message: r.message, ...(r.details ? { details: r.details } : {}) });
 }
 
+/**
+ * The live calls each capped credential's own cap counts now (CR13), by id. Best effort: a
+ * Redis fault, or the seam not wired, answers no counts rather than failing the read.
+ */
+async function concurrencyInUse(rows: readonly TelephonyCredentialRecord[]): Promise<Record<string, number>> {
+  const capped = rows.filter((r) => typeof r.max_concurrent_calls === 'number').map((r) => r.id);
+  if (capped.length === 0) return {};
+  try {
+    const read = await getConcurrencyControl().getCredentialCounts(capped);
+    if (read.status !== 'available') return {};
+    return Object.fromEntries(capped.map((id) => [id, read.counts.get(id) ?? 0]));
+  } catch (err) {
+    log.warn({ err }, 'Could not read the carrier accounts\' live calls');
+    return {};
+  }
+}
+
 function audit(request: FastifyRequest, action: string, row: TelephonyCredentialRecord, extra: Record<string, unknown> = {}) {
   void recordSuperAdminAudit({
     admin_id: request.superAdmin!.id,
@@ -110,7 +142,8 @@ function audit(request: FastifyRequest, action: string, row: TelephonyCredential
     resource_id: row.id,
     details: {
       tenant_id: row.tenant_id, provider: row.provider, label: row.label,
-      account_ref: row.account_ref, status: row.status, secret_version: row.secret_version, ...extra,
+      account_ref: row.account_ref, status: row.status, secret_version: row.secret_version,
+      max_concurrent_calls: row.max_concurrent_calls, ...extra,
     },
   });
 }
@@ -126,10 +159,21 @@ export async function superAdminTelephonyCredentialRoutes(
 
   registerSuperAdminInboundRoutes(app, { inbound, sendFailure });
 
-  /** GET /super-admin/telephony-credential-providers — the carriers that accept tenant credentials, and their forms. */
+  /**
+   * GET /super-admin/telephony-credential-providers — the carriers that accept tenant credentials,
+   * their forms, and what the console may offer on their credentials: "Sync numbers" only where
+   * `number_source` is `sync`, the inbound controls only where `supports_inbound` (CR6, CR11).
+   */
   app.get('/telephony-credential-providers', async (_request, reply) => {
     const body: TelephonyCredentialProvidersResponse = {
-      providers: credentialSpecs().map((s) => ({ provider: s.provider, display_name: s.displayName, fields: s.fields })),
+      providers: credentialSpecs().map((s) => ({
+        provider: s.provider,
+        display_name: s.displayName,
+        fields: s.fields,
+        // A spec exists only for a carrier that takes tenant accounts, so this is never null.
+        number_source: carrierNumberSource(s.provider) ?? 'manual',
+        supports_inbound: carrierSupportsInbound(s.provider),
+      })),
       store_available: service().storeAvailable,
     };
     return reply.send(body);
@@ -144,7 +188,7 @@ export async function superAdminTelephonyCredentialRoutes(
       ...(q.data.provider ? { provider: q.data.provider } : {}),
       includeRevoked: q.data.include_revoked === 'true',
     });
-    return reply.send({ credentials });
+    return reply.send({ credentials, concurrent_calls_in_use: await concurrencyInUse(credentials) });
   });
 
   /** GET /super-admin/telephony-credentials/:id — with usage. */
@@ -153,8 +197,15 @@ export async function superAdminTelephonyCredentialRoutes(
     if (!p.success) return reply.code(404).send({ error: 'not_found', message: 'Credential not found' });
     const credential = await service().get(p.data.id);
     if (!credential) return reply.code(404).send({ error: 'not_found', message: 'Credential not found' });
-    const usage = await service().usage(p.data.id);
-    return reply.send({ credential, usage: { campaigns: usage.campaigns, in_flight_calls: usage.inFlightCalls } });
+    const [usage, inUse] = await Promise.all([service().usage(p.data.id), concurrencyInUse([credential])]);
+    return reply.send({
+      credential,
+      usage: {
+        campaigns: usage.campaigns,
+        in_flight_calls: usage.inFlightCalls,
+        concurrent_calls_in_use: inUse[credential.id] ?? null,
+      },
+    });
   });
 
   /** POST /super-admin/telephony-credentials — verified with the carrier before it is stored. */
@@ -164,6 +215,7 @@ export async function superAdminTelephonyCredentialRoutes(
     const r = await service().create({
       tenantId: b.data.tenant_id, provider: b.data.provider, label: b.data.label,
       fields: b.data.fields, adminId: request.superAdmin!.id,
+      maxConcurrentCalls: b.data.max_concurrent_calls ?? null,
     });
     if (!r.ok) return sendFailure(reply, r);
     log.info({ credentialId: r.value.id, tenantId: r.value.tenant_id, provider: r.value.provider }, 'Telephony credential created');
@@ -180,6 +232,33 @@ export async function superAdminTelephonyCredentialRoutes(
     const r = await service().rename(p.data.id, b.data.label, request.superAdmin!.id);
     if (!r.ok) return sendFailure(reply, r);
     audit(request, 'update_telephony_credential', r.value);
+    return reply.send({ credential: r.value });
+  });
+
+  /**
+   * PATCH /super-admin/telephony-credentials/:id/concurrency — set or clear the carrier account's
+   * own concurrency cap (CR13). Refused once revoked. Lowering it below the calls live now ends
+   * none of them: new calls wait until enough have ended. Audited with the old and new cap.
+   */
+  app.patch('/telephony-credentials/:id/concurrency', async (request, reply) => {
+    const p = idParams.safeParse(request.params);
+    if (!p.success) return reply.code(404).send({ error: 'not_found', message: 'Credential not found' });
+    const b = concurrencyBody.safeParse(request.body);
+    if (!b.success) return badRequest(reply, b.error);
+    const before = await service().get(p.data.id);
+    const r = await service().setConcurrencyCap(p.data.id, b.data.max_concurrent_calls, request.superAdmin!.id);
+    if (!r.ok) return sendFailure(reply, r);
+    // The write committed: the next admission must read it, on every process. A failure here
+    // leaves the old cap cached for at most its few seconds, so it is logged, not answered.
+    try {
+      await getConcurrencyControl().invalidateCredentialLimit(r.value.id);
+    } catch (err) {
+      log.warn({ err, credentialId: r.value.id }, 'Could not drop the cached carrier account cap; it expires within seconds');
+    }
+    log.info({ credentialId: r.value.id, maxConcurrentCalls: r.value.max_concurrent_calls }, 'Telephony credential concurrency cap set');
+    audit(request, 'set_telephony_credential_concurrency', r.value, {
+      previous_max_concurrent_calls: before?.max_concurrent_calls ?? null,
+    });
     return reply.send({ credential: r.value });
   });
 

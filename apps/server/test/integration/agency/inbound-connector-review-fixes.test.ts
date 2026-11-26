@@ -11,7 +11,7 @@ vi.mock('@magick-agency/db', async (orig) => ({
   getPool: () => getTestPool(),
 }));
 
-const { agencyInboundCallRepository: calls, agencyInboundRouteRepository: routes } = await import('../../../src/db/repositories/agency.repository.js');
+const { agencyInboundCallRepository: calls, agencyInboundRouteRepository: routes, agencyAgentSessionRepository } = await import('../../../src/db/repositories/agency.repository.js');
 const { AgentStateMachine, AGENT_LEASE_MS } = await import('../../../src/agency/agent-state-machine.js');
 const { InboundConnector } = await import('../../../src/agency/inbound/inbound-connector.js');
 const { AgencyInboundCallRouter } = await import('../../../src/agency/inbound/inbound-call-router.js');
@@ -39,7 +39,8 @@ type RouteRecord = import('../../../src/db/repositories/agency.repository.js').A
  *
  * IQ50 mutation-checked: `couldTakeLater` without its `awayGrace` arm overflows the lone paused
  * agent's caller at once (red); the connector without the grace-end timer leaves the caller queued
- * until the next republish (red).
+ * until the next republish (red); without the second Redis read (`rereadReturned`) an agent back
+ * between the search's two reads has their caller overflowed (red).
  */
 
 const T = DEFAULTS.tenantId;
@@ -60,7 +61,10 @@ const router = () => new AgencyInboundCallRouter({
   dnc: { check: async () => 'clear', checkEntry: async () => ({ result: 'clear' }) } as never,
 });
 
-function connector(opts: { connectDelayMs?: number; republishMs?: number; rejoinGraceMs?: number; deviceAwayGraceMs?: number } = {}): Connector {
+function connector(opts: {
+  connectDelayMs?: number; republishMs?: number; rejoinGraceMs?: number; deviceAwayGraceMs?: number;
+  awayPauses?: ConstructorParameters<typeof InboundConnector>[0]['awayPauses'];
+} = {}): Connector {
   const c: Connector = new InboundConnector({
     bridge: bridge as never,
     stations: stations as never,
@@ -75,6 +79,7 @@ function connector(opts: { connectDelayMs?: number; republishMs?: number; rejoin
     republishMs: opts.republishMs ?? 60_000,
     ...(opts.rejoinGraceMs !== undefined ? { rejoinGraceMs: opts.rejoinGraceMs } : {}),
     ...(opts.deviceAwayGraceMs !== undefined ? { deviceAwayGraceMs: opts.deviceAwayGraceMs } : {}),
+    ...(opts.awayPauses ? { awayPauses: opts.awayPauses } : {}),
   });
   c.start();
   connectors.push(c);
@@ -673,6 +678,35 @@ describe('IQ50: a phone that left the app moments ago (a device_away pause young
     c.onAgentAvailable(phone);
     await until('offered', async () => offersTo(phone) > 0, 3000);
     expect((await row(call.id)).session_id).toBe(phone);
+  });
+
+  it('back between the search`s two reads (Redis said break, the session row no longer says device_away): offered, never overflowed', async () => {
+    // The return (`POST /sessions/:id/available`) writes Redis, then the row, then announces the
+    // agent. A search that read Redis before it and the row after it once saw a chosen break, and
+    // overflowed the caller of the agent who had just come back.
+    let returnBetweenReads: (() => Promise<void>) | null = null;
+    const c = connector({
+      deviceAwayGraceMs: 5000,
+      awayPauses: async (ids, withinMs) => {
+        const back = returnBetweenReads;
+        returnBetweenReads = null;
+        if (back) await back();
+        return agencyAgentSessionRepository.deviceAwayPauseAges(ids, withinMs);
+      },
+    });
+    const phone = await agent('available', { clientKind: 'mobile', canTakeInbound: true });
+    await paused(phone);
+    const { call } = await caller(c);
+    await until('queued', async () => (await row(call.id)).state === 'queued');
+    returnBetweenReads = async () => {
+      await agents.set(phone, 'available', { leaseMs: 60_000 });
+      await pool().query(`UPDATE agency_agent_sessions SET state = 'available', break_reason = NULL, state_since = now() WHERE id = $1`, [phone]);
+      c.onAgentAvailable(phone);
+    };
+    await c.testSeam.searchNow(`${T}:${A}`);
+    expect(returnBetweenReads).toBeNull();
+    await until('offered', async () => offersTo(phone) > 0, 3000);
+    expect(await row(call.id)).toMatchObject({ session_id: phone, offer_count: 1 });
   });
 
   it('a pause older than the grace, a phone_call pause (on another call), a chosen break: nobody, overflowed at once', async () => {

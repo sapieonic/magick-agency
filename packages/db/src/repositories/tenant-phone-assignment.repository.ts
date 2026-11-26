@@ -1,27 +1,29 @@
 import { getPool } from '../connection.js';
+import { withTransaction } from '../utils/transaction.js';
 import type {
   TenantPhoneAssignmentRecord,
   PhoneAccountTagRecord,
 } from '../models/tenant-phone-assignment.model.js';
 
 /**
- * The number was synced from a tenant's own carrier account (`phone_numbers.telephony_credential_id`,
- * decisions B18, PL5) and the assignment names another tenant. Such a number belongs to its
- * credential's tenant: assigned elsewhere, another tenant's calls would present a number billed
- * to, and dialled on, someone else's account.
+ * The number is pinned to a tenant's own carrier account (`phone_numbers.telephony_credential_id`,
+ * decisions B18, PL5, CR7: synced from it or added by hand onto it) and the assignment names
+ * another tenant. Such a number belongs to its credential's tenant: assigned elsewhere, another
+ * tenant's calls would present a number billed to, and dialled on, someone else's account. Keyed
+ * on the credential, never the carrier.
  */
 export class PhoneNumberOtherTenantError extends Error {
   readonly code = 'phone_number_other_tenant';
   constructor(readonly phoneNumberId: string, readonly tenantId: string) {
-    super(`Phone number ${phoneNumberId} is synced from another tenant's carrier account; it cannot be assigned to tenant ${tenantId}`);
+    super(`Phone number ${phoneNumberId} is on another tenant's carrier account; it cannot be assigned to tenant ${tenantId}`);
     this.name = 'PhoneNumberOtherTenantError';
   }
 }
 
 export class TenantPhoneAssignmentRepository {
   /**
-   * Assign a number to a tenant. A number synced from a tenant credential is assignable only
-   * to that credential's tenant (PL5): checked IN the insert (`INSERT … SELECT … WHERE`), so
+   * Assign a number to a tenant. A number pinned to a tenant credential (synced, or added by
+   * hand, CR7) is assignable only to that credential's tenant (PL5): checked IN the insert (`INSERT … SELECT … WHERE`), so
    * every caller is held to it, not only the super-admin route, and nothing can slip in
    * between a check and the write. Throws {@link PhoneNumberOtherTenantError} when it does
    * not hold; a number or tenant that does not exist is the FK's `23503`, a repeat the
@@ -33,21 +35,29 @@ export class TenantPhoneAssignmentRepository {
     isDefault: boolean,
     assignedBy?: string,
   ): Promise<TenantPhoneAssignmentRecord> {
-    const pool = getPool();
-    const result = await pool.query<TenantPhoneAssignmentRecord>(
-      `INSERT INTO tenant_phone_assignments (tenant_id, phone_number_id, is_default, assigned_by)
-       SELECT $1::uuid, $2::uuid, $3, $4
-        WHERE NOT EXISTS (
-          SELECT 1
-            FROM phone_numbers pn
-            JOIN telephony_credentials tc ON tc.id = pn.telephony_credential_id
-           WHERE pn.id = $2::uuid AND tc.tenant_id <> $1::uuid
-        )
-       RETURNING *`,
-      [tenantId, phoneNumberId, isDefault, assignedBy || null],
-    );
-    if (!result.rows[0]) throw new PhoneNumberOtherTenantError(phoneNumberId, tenantId);
-    return result.rows[0];
+    // The number's row is taken `FOR SHARE` first, in a statement of its own, so the insert's
+    // check reads the pin as it stands once any pin in flight (`phoneNumberRepository
+    // .pinToCredential`, which holds the row `FOR UPDATE`) has committed. In one statement the
+    // check would read the snapshot from before the pin and assign a number just pinned to
+    // another tenant's credential.
+    const row = await withTransaction(async (client) => {
+      await client.query(`SELECT 1 FROM phone_numbers WHERE id = $1::uuid FOR SHARE`, [phoneNumberId]);
+      const result = await client.query<TenantPhoneAssignmentRecord>(
+        `INSERT INTO tenant_phone_assignments (tenant_id, phone_number_id, is_default, assigned_by)
+         SELECT $1::uuid, $2::uuid, $3, $4
+          WHERE NOT EXISTS (
+            SELECT 1
+              FROM phone_numbers pn
+              JOIN telephony_credentials tc ON tc.id = pn.telephony_credential_id
+             WHERE pn.id = $2::uuid AND tc.tenant_id <> $1::uuid
+          )
+         RETURNING *`,
+        [tenantId, phoneNumberId, isDefault, assignedBy || null],
+      );
+      return result.rows[0];
+    }, { pool: getPool() });
+    if (!row) throw new PhoneNumberOtherTenantError(phoneNumberId, tenantId);
+    return row;
   }
 
   async findById(assignmentId: string): Promise<TenantPhoneAssignmentRecord | null> {

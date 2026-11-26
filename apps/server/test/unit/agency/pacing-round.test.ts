@@ -128,6 +128,87 @@ describe('splitHeadroom (MC1)', () => {
   });
 });
 
+describe('splitHeadroom with dial scopes (PL14, CR13)', () => {
+  const room = (key: string, n: number) => ({ key, room: () => n });
+
+  it('one claim: MAX(0, MIN(headroom, demand, each scope\'s room))', () => {
+    expect(splitHeadroom(5, [{ id: 'a', demand: 4, ownLive: 0, scopes: [room('cred', 2)] }]).get('a')).toBe(2);
+    expect(splitHeadroom(5, [{ id: 'a', demand: 4, ownLive: 0, scopes: [room('share', 3), room('cred', 1)] }]).get('a')).toBe(1);
+    expect(splitHeadroom(5, [{ id: 'a', demand: 4, ownLive: 0, scopes: [room('cred', 0)] }]).get('a')).toBe(0);
+  });
+
+  it('two claims on one scope share its room; what the bound one cannot take goes to the other', () => {
+    // a and b on one carrier account with room 2, c on none: headroom 6.
+    const claims: ShareClaim[] = [
+      { id: 'a', demand: 4, ownLive: 0, scopes: [room('cred', 2)] },
+      { id: 'b', demand: 4, ownLive: 0, scopes: [room('cred', 2)] },
+      { id: 'c', demand: 4, ownLive: 0 },
+    ];
+    const grants = splitHeadroom(6, claims);
+    expect((grants.get('a') ?? 0) + (grants.get('b') ?? 0)).toBe(2);
+    expect(grants.get('c')).toBe(4);
+  });
+
+  it('never grants a scope more than its room, nor the headroom or a demand (property)', () => {
+    const r = rng(20261125);
+    for (let run = 0; run < 2_000; run++) {
+      const rooms = { x: r(0, 6), y: r(0, 6) };
+      const n = r(1, 5);
+      const claims: ShareClaim[] = Array.from({ length: n }, (_, i) => {
+        const keys = (['x', 'y'] as const).filter(() => r(0, 1) === 1);
+        return { id: `c${i}`, demand: r(0, 8), ownLive: r(0, 6), scopes: keys.map((k) => room(k, rooms[k])) };
+      });
+      const headroom = r(0, 20);
+      const grants = splitHeadroom(headroom, claims, r(0, 7));
+      expect(total(grants)).toBeLessThanOrEqual(Math.max(0, headroom));
+      for (const k of ['x', 'y'] as const) {
+        const onK = claims.filter((c) => c.scopes!.some((s) => s.key === k)).reduce((a, c) => a + grants.get(c.id)!, 0);
+        expect(onK).toBeLessThanOrEqual(rooms[k]);
+      }
+      for (const c of claims) expect(grants.get(c.id)!).toBeLessThanOrEqual(c.demand);
+      // Nothing left unused that someone could take: a claim short of its demand is blocked by
+      // the headroom or by one of its scopes.
+      const used = total(grants);
+      for (const c of claims) {
+        if (grants.get(c.id)! >= c.demand) continue;
+        const blockedByScope = c.scopes!.some((s) => claims
+          .filter((o) => o.scopes!.some((t) => t.key === s.key)).reduce((a, o) => a + grants.get(o.id)!, 0) >= rooms[s.key as 'x' | 'y']);
+        expect(blockedByScope || used >= headroom).toBe(true);
+      }
+    }
+  });
+});
+
+describe('PacingRound: grants are charged synchronously (onGrant)', () => {
+  it('onGrant runs for every grant of the split before any promise resolves, and bounds a late grant by its scopes', async () => {
+    const t = manualTimers();
+    const round = new PacingRound(false, { shareWaitMs: 1_000, schedule: t.schedule });
+    const order: string[] = [];
+    round.join('acct', 'a');
+    round.join('acct', 'b');
+    round.join('acct', 'late');
+    const pa = round.submit('acct', 'a', {
+      demand: 3, ownLive: 0, limit: 10, live: 0, scopes: [{ key: 'cred', room: () => 2 }],
+      onGrant: (n) => order.push(`charge a ${n}`),
+    }).then((g) => { order.push(`resolve a ${g.grant}`); });
+    const pb = round.submit('acct', 'b', {
+      demand: 3, ownLive: 0, limit: 10, live: 0,
+      onGrant: (n) => order.push(`charge b ${n}`),
+    }).then((g) => { order.push(`resolve b ${g.grant}`); });
+    t.fire(); // the wait runs out: a and b are split, `late` is still pending
+    await Promise.all([pa, pb]);
+    expect(order).toEqual(['charge a 2', 'charge b 3', 'resolve a 2', 'resolve b 3']);
+    // A late report draws on the leftover (5), bounded by its own scope's room now (1).
+    let charged = -1;
+    const late = await round.submit('acct', 'late', {
+      demand: 4, ownLive: 0, limit: 10, live: 0, scopes: [{ key: 'cred', room: () => 1 }],
+      onGrant: (n) => { charged = n; },
+    });
+    expect(late).toEqual({ grant: 1, closed: false });
+    expect(charged).toBe(1);
+  });
+});
+
 describe('ShareRotation', () => {
   it('advances per account, and forgets an account', () => {
     const r = new ShareRotation();

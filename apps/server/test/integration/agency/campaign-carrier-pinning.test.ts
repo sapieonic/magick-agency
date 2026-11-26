@@ -22,8 +22,18 @@ vi.hoisted(() => { process.env['PLIVO_WEBHOOK_BASE_URL'] = 'https://agency.test/
  *    carrier cannot dial from this server (no webhook base, PL12);
  *  - a retry inherits the pin;
  *  - a carrier 401 pauses a running campaign `carrier_auth`, a credential no longer active
- *    `carrier_account_unavailable` (`pauseForCarrierAccount`).
+ *    `carrier_account_unavailable` (`pauseForCarrierAccount`);
+ *  - a campaign on the service's own account takes no number pinned to a credential (CR9).
+ *
+ * VoiceLink is pinned to the service's account only by a catalogue double
+ * (`test/helpers/carrier-catalog-double.ts`), so "the service carrier refuses a credential" keeps
+ * meaning that whatever the real catalogue declares; a carrier with both modes is
+ * `campaign-carrier-modes.test.ts`.
  */
+
+const carriers = vi.hoisted(() => ({ voicelink: { accounts: { service: true, tenant: false } } }));
+vi.mock('../../../src/telephony/carrier-catalog.js', async (importOriginal) =>
+  (await import('../../helpers/carrier-catalog-double.js')).catalogDouble(await importOriginal(), carriers));
 
 vi.mock('@magick-agency/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/db')>()),
@@ -93,6 +103,8 @@ async function plivoCampaign(over: Record<string, unknown> = {}) {
 }
 
 beforeEach(async () => {
+  // Service-only unless a test says otherwise (the header).
+  carriers.voicelink = { accounts: { service: true, tenant: false } };
   await truncateAll();
   flags.isEnabled.mockResolvedValue(true);
   await (await pool()).query(
@@ -168,13 +180,17 @@ describe('POST /api/v1/agency-campaigns — the carrier account', () => {
     expect(res.json().details.caller_ids).toContain(MINE[1]);
   });
 
-  it('a tenant-account carrier requires a credential; the service carrier refuses one', async () => {
+  it('a tenant-account carrier requires a credential; a credential of another carrier is refused', async () => {
     const without = await create({ telephony_provider: 'plivo', caller_ids: MINE });
     expect(without.statusCode).toBe(400);
     expect(without.json().details).toHaveProperty('telephony_credential_id');
+    // VoiceLink as the real catalogue declares it, taking tenant accounts too (docs/carriers.md
+    // CR1): a credential on it is looked up, and a Plivo credential is not one of this tenant's
+    // VoiceLink credentials (CR8).
+    carriers.voicelink = { accounts: { service: true, tenant: true } };
     const withOne = await create({ telephony_provider: 'voicelink', telephony_credential_id: credA, caller_ids: ['+919000000001'] });
-    expect(withOne.statusCode).toBe(400);
-    expect(withOne.json().details).toHaveProperty('telephony_credential_id');
+    expect(withOne.statusCode).toBe(404);
+    expect(withOne.json()).toMatchObject({ code: 'telephony_credential_not_found' });
   });
 
   it('an unknown or inactive carrier is a 400', async () => {
@@ -201,9 +217,12 @@ describe('PATCH /api/v1/agency-campaigns/:id — the carrier account', () => {
 
   it('moving back to the service carrier must clear the credential in the same PATCH', async () => {
     const campaign = await plivoCampaign();
+    // VoiceLink as the real catalogue declares it (both modes): the Plivo credential kept is no
+    // VoiceLink credential of this tenant (CR8).
+    carriers.voicelink = { accounts: { service: true, tenant: true } };
     const kept = await patch(campaign.id, { telephony_provider: 'voicelink', caller_ids: ['+919000000001'] });
-    expect(kept.statusCode).toBe(400);
-    expect(kept.json().details).toHaveProperty('telephony_credential_id');
+    expect(kept.statusCode).toBe(404);
+    expect(kept.json()).toMatchObject({ code: 'telephony_credential_not_found' });
     const cleared = await patch(campaign.id, { telephony_provider: 'voicelink', telephony_credential_id: null, caller_ids: ['+919000000001'] });
     expect(cleared.statusCode, cleared.body).toBe(200);
     expect(cleared.json()).toMatchObject({ telephony_provider: 'voicelink', telephony_credential_id: null });
@@ -260,6 +279,55 @@ describe('PATCH /api/v1/agency-campaigns/:id — the carrier account', () => {
     expect(res.statusCode).toBe(404);
     const { rows } = await (await pool()).query('SELECT telephony_credential_id FROM agency_campaigns WHERE id = $1', [campaign.id]);
     expect(rows[0]!.telephony_credential_id).toBe(credA);
+  });
+});
+
+describe('the service`s own account takes no number pinned to a credential (CR9)', () => {
+  it('a create naming a tenant`s synced number is a 400 naming it, and nothing is created', async () => {
+    const res = await create({ caller_ids: ['+919000000001', MINE[0]] });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details.caller_ids).toContain(MINE[0]);
+    expect(res.json().details.caller_ids).not.toContain('+919000000001');
+    expect((await (await pool()).query('SELECT 1 FROM agency_campaigns')).rows).toHaveLength(0);
+  });
+
+  it('another tenant`s, a disabled credential`s or a retired pinned number is refused too: pinned is pinned', async () => {
+    await phoneNumberRepository.syncForCredential(credA, [{ phone_number: MINE[0]!, label: null }], null);
+    for (const number of [THEIRS, '+14155550003', MINE[1]!]) {
+      const res = await create({ caller_ids: [number] });
+      expect(res.statusCode, number).toBe(400);
+      expect(res.json().details.caller_ids).toContain(number);
+    }
+  });
+
+  it('a caller-ID-only edit is judged now: adding a pinned number is refused, a service number accepted', async () => {
+    const campaign = await insertAgencyCampaign({ caller_ids: ['+919000000001'] });
+    const refused = await patch(campaign.id, { caller_ids: ['+919000000001', THEIRS] });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().details.caller_ids).toContain(THEIRS);
+    const accepted = await patch(campaign.id, { caller_ids: ['+919000000001', '+919000000002'] });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+  });
+
+  it('a pinned number already in a service campaign`s pool (saved before this rule) does not lock it: a save resending the pool is accepted', async () => {
+    const campaign = await insertAgencyCampaign({ caller_ids: ['+919000000001', MINE[0]] });
+    const res = await patch(campaign.id, { name: 'Renamed', caller_ids: ['+919000000001', MINE[0]] });
+    expect(res.statusCode, res.body).toBe(200);
+  });
+
+  it('moving a pinned campaign back to the service carrier judges its whole pool', async () => {
+    const campaign = await plivoCampaign();
+    const res = await patch(campaign.id, { telephony_provider: 'voicelink', telephony_credential_id: null });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details.caller_ids).toContain(MINE[0]);
+  });
+
+  it('a retry override adding a pinned number to a service campaign is refused', async () => {
+    const parent = await insertAgencyCampaign({ caller_ids: ['+919000000001'], status: 'completed' });
+    await insertAgencyContact(parent.id);
+    const res = await post(parent.id, 'retry', { selector: { state: ['pending'] }, config_overrides: { caller_ids: [THEIRS] } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details.caller_ids).toContain(THEIRS);
   });
 });
 

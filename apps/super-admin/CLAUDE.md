@@ -1,7 +1,7 @@
 # apps/super-admin
 
 Vite + React SPA for platform operators: tenants, users, admins, phone numbers, telephony
-credentials (Plivo on tenants' own accounts), limits, feature flags, usage and audit.
+credentials (tenants' own carrier accounts, docs/carriers.md), limits, feature flags, usage and audit.
 
 - Dev: `pnpm dev` on :5176. Only `/super-admin` is proxied to :3021 (`vite.config.ts`); UI routes
   sit at the root, so nothing collides on reload.

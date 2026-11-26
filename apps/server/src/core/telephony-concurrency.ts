@@ -9,6 +9,7 @@ export interface TelephonyConcurrencyOwner {
     accountId: string,
     provider: string,
     ttlSecondsOverride?: number,
+    credentialId?: string | null,
   ) => Promise<TelephonyAdmissionResult>;
   concurrencyGuard: {
     tryAcquire(callId: string, ttlSecondsOverride?: number): Promise<boolean>;
@@ -24,9 +25,23 @@ export interface TelephonyConcurrencyOwner {
       providerScoped: boolean;
       newlyAcquired?: boolean;
     }>;
+    /** Hands a provider lease back when a later scope refuses (the credential's, CR13). */
+    release?(callId: string, tenantId: string, accountId: string, provider: string): Promise<void>;
+  };
+  /** A tenant carrier account's scope (CR13), capped or not. Absent: no credential scope is taken. */
+  credentialConcurrencyGuard?: {
+    resolveCap(credentialId: string): Promise<number | null>;
+    tryAcquire(
+      callId: string, credentialId: string, cap: number | null, provider: string, ttlSecondsOverride?: number,
+    ): Promise<'acquired' | 'already_owned' | 'credential_full' | 'redis_unavailable'>;
   };
 }
 
+/**
+ * Take every telephony scope for one call, or none. `credentialId` names the tenant carrier
+ * account the call is placed on (null or absent: the service's own account), whose scope is a
+ * further one (CR13): taken and counted whatever its cap, and able to refuse only with a cap.
+ */
 export async function acquireTelephonyConcurrency(
   owner: TelephonyConcurrencyOwner,
   callId: string,
@@ -34,20 +49,35 @@ export async function acquireTelephonyConcurrency(
   accountId: string,
   provider: string,
   ttlSecondsOverride?: number,
+  credentialId?: string | null,
 ): Promise<TelephonyAdmissionResult> {
   if (typeof owner.tryAcquireTelephonyConcurrency === 'function') {
-    // Forwarded with exactly these five arguments (arity included — tests pin it).
-    return owner.tryAcquireTelephonyConcurrency(callId, tenantId, accountId, provider, ttlSecondsOverride);
+    // Forwarded with exactly these five arguments (arity included — tests pin it), and the
+    // credential as a sixth only when the call is on a tenant carrier account.
+    return credentialId
+      ? owner.tryAcquireTelephonyConcurrency(callId, tenantId, accountId, provider, ttlSecondsOverride, credentialId)
+      : owner.tryAcquireTelephonyConcurrency(callId, tenantId, accountId, provider, ttlSecondsOverride);
   }
 
   // Compatibility for test doubles. The production `TelephonyGuardHost` always
-  // provides the atomic provider-mode method above.
+  // provides the atomic provider-mode method above. The credential's cap is read before
+  // anything is taken, so an unreadable cap holds nothing (fail closed, before any provider
+  // guard is asked: not provider-scoped).
+  let credentialCap: number | null = null;
+  if (credentialId && owner.credentialConcurrencyGuard) {
+    try {
+      credentialCap = await owner.credentialConcurrencyGuard.resolveCap(credentialId);
+    } catch {
+      return { result: 'allocation_unavailable', providerScoped: false };
+    }
+  }
   const globalAcquired = ttlSecondsOverride === undefined
     ? await owner.concurrencyGuard.tryAcquire(callId)
     : await owner.concurrencyGuard.tryAcquire(callId, ttlSecondsOverride);
   if (!globalAcquired) {
     return { result: 'global_full', providerScoped: false };
   }
+  let providerTaken = false;
   try {
     const accountAcquired = ttlSecondsOverride === undefined
       ? await owner.accountConcurrencyGuard.tryAcquire(callId, tenantId, accountId)
@@ -70,9 +100,27 @@ export async function acquireTelephonyConcurrency(
         case 'provider_full':
           return { result: 'provider_full', providerScoped: true };
         case 'provider_unallocated':
+          return { result: 'provider_unallocated', providerScoped: true };
         case 'redis_unavailable':
         case 'allocation_unavailable':
           return { result: providerAdmission.result, providerScoped: true };
+      }
+    }
+    providerTaken = providerAdmission.providerScoped;
+    if (credentialId && owner.credentialConcurrencyGuard) {
+      const taken = ttlSecondsOverride === undefined
+        ? await owner.credentialConcurrencyGuard.tryAcquire(callId, credentialId, credentialCap, provider)
+        : await owner.credentialConcurrencyGuard.tryAcquire(callId, credentialId, credentialCap, provider, ttlSecondsOverride);
+      // As the host's legacy path: Redis failing refuses only a capped call.
+      if (taken === 'credential_full' || (taken === 'redis_unavailable' && credentialCap !== null)) {
+        await Promise.allSettled([
+          ...(providerTaken && owner.providerConcurrencyGuard?.release
+            ? [owner.providerConcurrencyGuard.release(callId, tenantId, accountId, provider)]
+            : []),
+          owner.accountConcurrencyGuard.release(callId, tenantId, accountId),
+          owner.concurrencyGuard.release(callId),
+        ]);
+        return { result: taken, providerScoped: providerAdmission.providerScoped };
       }
     }
     return {
@@ -82,6 +130,9 @@ export async function acquireTelephonyConcurrency(
     };
   } catch (err) {
     await Promise.allSettled([
+      ...(providerTaken && owner.providerConcurrencyGuard?.release
+        ? [owner.providerConcurrencyGuard.release(callId, tenantId, accountId, provider)]
+        : []),
       owner.accountConcurrencyGuard.release(callId, tenantId, accountId),
       owner.concurrencyGuard.release(callId),
     ]);

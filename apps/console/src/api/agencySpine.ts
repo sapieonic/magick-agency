@@ -5,7 +5,7 @@ import { buildAuthHeaders } from './authHeaders';
 import { captureApiError } from './error-analytics';
 import { fetchCsvExport, type CsvExport } from './csvExport';
 import { trackAgencyRecordingOutcome } from '../analytics/events';
-import type { RecordingOutcome, WebRtcCallRecord } from '../types/webrtc-call';
+import type { RecordingOutcome, RecordingRedirectBody, WebRtcCallRecord } from '../types/webrtc-call';
 import type {
   AgencyAttempt,
   AgencyAttemptFilters,
@@ -287,12 +287,50 @@ export async function recordingRefusal(res: Response): Promise<RecordingOutcome>
 }
 
 /**
+ * The `Accept` every recording fetch sends. Naming JSON first asks the server, for a call on a
+ * tenant's own account on a carrier whose recordings are public (docs/carriers.md CR12), for the
+ * carrier's URL as `{ redirect_url }` rather than a redirect this `fetch` could not follow (the
+ * carrier sends no CORS headers). Any other recording answers with its audio, as before.
+ */
+export const RECORDING_FETCH_ACCEPT = 'application/json, audio/*;q=0.9, */*;q=0.1';
+
+/**
+ * A recording route's 2xx, as something to play: the carrier's own URL when the server pointed
+ * at it (`RecordingRedirectBody`; played by the `<audio>` directly, no blob made, so revoking it
+ * as an object URL does nothing), else a blob URL of the bytes. Tracks the outcome as the
+ * fetchers always have. A JSON answer with no https `redirect_url` is one we cannot play:
+ * `unreachable`, never a blob of the JSON.
+ */
+export async function readyRecording(res: Response): Promise<RecordingOutcome> {
+  if (res.headers.get('content-type')?.includes('application/json')) {
+    let redirectUrl: unknown;
+    try {
+      redirectUrl = ((await res.json()) as Partial<RecordingRedirectBody> | null)?.redirect_url;
+    } catch {
+      // Not the body we know: nothing to play.
+    }
+    if (typeof redirectUrl === 'string' && /^https:\/\//i.test(redirectUrl)) {
+      trackAgencyRecordingOutcome({ status: 'ok' });
+      return { status: 'ready', url: redirectUrl, mimeType: null };
+    }
+    trackAgencyRecordingOutcome({ status: 'unreachable' });
+    return { status: 'unreachable' };
+  }
+  const blob = await res.blob();
+  const mimeType = res.headers.get('content-type') ?? blob.type ?? null;
+  trackAgencyRecordingOutcome({ status: 'ok' });
+  return { status: 'ready', url: URL.createObjectURL(blob), mimeType };
+}
+
+/**
  * The attempt's recording as a blob URL, for playback in an `<audio>`.
  *
  * Keyed on the attempt, not the call: the recording is served by the attempt's own
  * route.
  *
- * NOTE: the CALLER owns the object URL on a `ready` outcome and must revoke it.
+ * NOTE: the CALLER owns the object URL on a `ready` outcome and must revoke it. A call on a
+ * tenant's own account on a carrier whose recordings are public comes back as the carrier's URL
+ * instead ({@link readyRecording}); revoking that is harmless.
  */
 export async function fetchAgencyAttemptRecordingBlobUrl(
   campaignId: string,
@@ -303,7 +341,7 @@ export async function fetchAgencyAttemptRecordingBlobUrl(
   const url = `${AGENCY_BASE}/campaigns/${campaignId}/attempts/${attemptId}/recording`;
   const headers = await buildAuthHeaders(tenantId, accountId);
 
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, { headers: { ...headers, Accept: RECORDING_FETCH_ACCEPT } });
   if (!res.ok) {
     captureApiError(url, res);
     const outcome = await recordingRefusal(res);
@@ -316,11 +354,7 @@ export async function fetchAgencyAttemptRecordingBlobUrl(
     }
     return outcome;
   }
-
-  const blob = await res.blob();
-  const mimeType = res.headers.get('content-type') ?? blob.type ?? null;
-  trackAgencyRecordingOutcome({ status: 'ok' });
-  return { status: 'ready', url: URL.createObjectURL(blob), mimeType };
+  return readyRecording(res);
 }
 
 /**
@@ -350,17 +384,14 @@ export async function fetchInboundCallRecordingBlobUrl(
 ): Promise<RecordingOutcome> {
   const url = `${AGENCY_BASE}/campaigns/${campaignId}/call-log/inbound/${callId}/recording`;
   const headers = await buildAuthHeaders(tenantId, accountId);
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, { headers: { ...headers, Accept: RECORDING_FETCH_ACCEPT } });
   if (!res.ok) {
     captureApiError(url, res);
     const outcome = await recordingRefusal(res);
     if (outcome.status !== 'ready') trackAgencyRecordingOutcome({ status: outcome.status });
     return outcome;
   }
-  const blob = await res.blob();
-  const mimeType = res.headers.get('content-type') ?? blob.type ?? null;
-  trackAgencyRecordingOutcome({ status: 'ok' });
-  return { status: 'ready', url: URL.createObjectURL(blob), mimeType };
+  return readyRecording(res);
 }
 
 export type SpineCsvDownload = CsvExport;

@@ -17,6 +17,11 @@ function fakeHost() {
     providerConcurrencyGuard: {
       invalidateLimits: vi.fn().mockResolvedValue(undefined),
       getAccountProviderCounts: vi.fn().mockResolvedValue({ status: 'available', counts: new Map([['voicelink', 4]]) }),
+      getProviderCount: vi.fn().mockResolvedValue(3),
+    },
+    credentialConcurrencyGuard: {
+      invalidateCap: vi.fn(),
+      getCounts: vi.fn().mockResolvedValue({ status: 'available', counts: new Map([['cred-1', 2]]) }),
     },
   };
 }
@@ -41,6 +46,12 @@ describe('createConcurrencyControl', () => {
     expect(out).toEqual({ status: 'available', counts: new Map([['voicelink', 4]]) });
   });
 
+  it('getProviderCount → providerConcurrencyGuard.getProviderCount(t, a, p), result unchanged (PL14, read by pacing)', async () => {
+    const host = fakeHost();
+    await expect(createConcurrencyControl(host as any).getProviderCount('t', 'a', 'voicelink')).resolves.toBe(3);
+    expect(host.providerConcurrencyGuard.getProviderCount).toHaveBeenCalledWith('t', 'a', 'voicelink');
+  });
+
   it('getAccountCount → accountConcurrencyGuard.getAccountCount(t, a)', async () => {
     const host = fakeHost();
     await expect(createConcurrencyControl(host as any).getAccountCount('t', 'a')).resolves.toBe(4);
@@ -52,6 +63,19 @@ describe('createConcurrencyControl', () => {
     await expect(createConcurrencyControl(host as any).getDistributedAccountCount('t', 'a'))
       .resolves.toEqual({ status: 'available', count: 4 });
     expect(host.accountConcurrencyGuard.getDistributedAccountCount).toHaveBeenCalledWith('t', 'a');
+  });
+
+  it('invalidateCredentialLimit → credentialConcurrencyGuard.invalidateCap(id) (CR13)', async () => {
+    const host = fakeHost();
+    await expect(createConcurrencyControl(host as any).invalidateCredentialLimit('cred-1')).resolves.toBeUndefined();
+    expect(host.credentialConcurrencyGuard.invalidateCap).toHaveBeenCalledWith('cred-1');
+  });
+
+  it('getCredentialCounts → credentialConcurrencyGuard.getCounts(ids), result unchanged (CR13)', async () => {
+    const host = fakeHost();
+    await expect(createConcurrencyControl(host as any).getCredentialCounts(['cred-1']))
+      .resolves.toEqual({ status: 'available', counts: new Map([['cred-1', 2]]) });
+    expect(host.credentialConcurrencyGuard.getCounts).toHaveBeenCalledWith(['cred-1']);
   });
 
   it('propagates a guard rejection', async () => {
@@ -102,5 +126,12 @@ describe('the voice bootstrap registers the implementation (setConcurrencyContro
     expect(getProviderCounts).toHaveBeenCalledWith('t', 'a');
     await getConcurrencyControl().invalidateProviderLimits('t', 'a');
     expect(invalidateLimits).toHaveBeenCalledWith('t', 'a');
+    const invalidateCap = vi.spyOn(engine.guardHost.credentialConcurrencyGuard, 'invalidateCap');
+    await getConcurrencyControl().invalidateCredentialLimit('cred-1');
+    expect(invalidateCap).toHaveBeenCalledWith('cred-1');
+    await expect(getConcurrencyControl().getCredentialCounts(['cred-1']))
+      .resolves.toEqual({ status: 'unavailable', counts: new Map() });
+    // No Redis: a carrier share's counter is unreadable, never "zero calls".
+    await expect(getConcurrencyControl().getProviderCount('t', 'a', 'voicelink')).resolves.toBeNull();
   });
 });

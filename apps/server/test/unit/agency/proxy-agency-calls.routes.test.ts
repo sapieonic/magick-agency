@@ -532,6 +532,64 @@ describe('forwarding to the internal handler', () => {
    * survived the old behaviour and the content type is what did not — a test that
    * only read `res.json()` would have passed against the Buffer.
    */
+  /**
+   * A call on a tenant's own account on a carrier whose recordings are public (docs/carriers.md
+   * CR12): the internal proxy answers with the carrier URL, a 302, or `200 { redirect_url }` for
+   * a viewer that asked for JSON. Passed on as such, never dressed as audio (an empty file with
+   * an hour's cache), and the viewer's Accept reaches the internal handler.
+   */
+  describe('a recording the internal handler points at rather than serves (CR12)', () => {
+    const CARRIER_URL = 'https://recordings.voicelink.test/a/b.mp3';
+    const INBOUND_RECORDING = `${PREFIX}/campaigns/${CAMPAIGN}/call-log/inbound/99999999-9999-4999-8999-999999999999/recording`;
+
+    it.each([
+      ['the attempt’s recording', RECORDING],
+      ['an inbound call’s recording', INBOUND_RECORDING],
+    ])('%s: forwards the 302 with its Location, no-store, and no audio headers', async (_l, url) => {
+      mocks.proxyToCore.mockResolvedValue({
+        status: 302, body: Buffer.alloc(0),
+        headers: new Headers({ location: CARRIER_URL, 'cache-control': 'no-store' }),
+      });
+      const app = await buildApp();
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(302);
+      expect(res.headers['location']).toBe(CARRIER_URL);
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.headers['vary']).toBe('Accept');
+      expect(res.headers['content-type']).toBeUndefined();
+      await app.close();
+    });
+
+    it.each([
+      ['the attempt’s recording', RECORDING],
+      ['an inbound call’s recording', INBOUND_RECORDING],
+    ])('%s: sends the viewer’s Accept on, and forwards { redirect_url } as JSON, no-store', async (_l, url) => {
+      mocks.proxyToCore.mockResolvedValue({
+        status: 200, body: Buffer.from(JSON.stringify({ redirect_url: CARRIER_URL })),
+        headers: new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }),
+      });
+      const app = await buildApp();
+      const accept = 'application/json, audio/*;q=0.9, */*;q=0.1';
+      const res = await app.inject({ method: 'GET', url, headers: { accept } });
+      expect(mocks.proxyToCore).toHaveBeenCalledWith(expect.objectContaining({ rawResponse: true, headers: { accept } }));
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('application/json');
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.headers['vary']).toBe('Accept');
+      expect(res.json()).toEqual({ redirect_url: CARRIER_URL });
+      await app.close();
+    });
+
+    it('a redirect with no Location is an upstream error, not an empty recording', async () => {
+      mocks.proxyToCore.mockResolvedValue({ status: 302, body: Buffer.alloc(0), headers: new Headers() });
+      const app = await buildApp();
+      const res = await app.inject({ method: 'GET', url: RECORDING });
+      expect(res.statusCode).toBe(502);
+      expect(res.headers['content-type']).toContain('application/json');
+      await app.close();
+    });
+  });
+
   describe('an internal handler refusal on the media route', () => {
     /** As the internal handler sends it: `rawResponse` hands the route the bytes, not an object. */
     function coreErrorBytes(status: number, code: string, message: string) {

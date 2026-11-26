@@ -75,13 +75,17 @@ import {
 import { ACCOUNT_NAME_MAX_LENGTH, CREATE_ACCOUNT_ERROR_CODES, SESSION_REFUSAL_CODES } from '../src/api/platform/auth';
 import {
   TELEPHONY_CREDENTIAL_ERROR_CODES,
+  TELEPHONY_CREDENTIAL_MAX_CONCURRENT_CALLS,
   type TelephonyCredentialErrorCode,
 } from '../src/api/platform/super-admin-telephony-credentials';
+import { PIN_PHONE_NUMBER_ERROR_CODES, type PinPhoneNumberErrorCode } from '../src/api/platform/super-admin';
 import type { Equals } from './type-equals';
 
 // The list is exactly the union (the runtime list's own guard covers the other side).
 const _credentialCodesExact: Equals<(typeof TELEPHONY_CREDENTIAL_ERROR_CODES)[number], TelephonyCredentialErrorCode> = true;
 void _credentialCodesExact;
+const _pinCodesExact: Equals<(typeof PIN_PHONE_NUMBER_ERROR_CODES)[number], PinPhoneNumberErrorCode> = true;
+void _pinCodesExact;
 
 // The soft phone (docs/softphone.md). Its state and outcome vocabularies are the attempt's,
 // so the station and the soft phone cannot disagree about a word; the frame is in both
@@ -187,8 +191,28 @@ describe('package surface', () => {
       'phone_number_not_linked',
       'carrier_number_missing',
       'carrier_refused',
+      'account_ref_reserved',
+      'inbound_not_supported',
     ]);
     expect(new Set(TELEPHONY_CREDENTIAL_ERROR_CODES).size).toBe(TELEPHONY_CREDENTIAL_ERROR_CODES.length);
+  });
+
+  it('bounds a carrier account\'s own concurrency cap as the account limits are bounded (CR13)', () => {
+    expect(TELEPHONY_CREDENTIAL_MAX_CONCURRENT_CALLS).toBe(1000);
+  });
+
+  it('declares the refusals of moving a service number onto a tenant`s account, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...PIN_PHONE_NUMBER_ERROR_CODES]).toEqual([
+      'phone_number_not_found',
+      'phone_number_not_active',
+      'phone_number_already_pinned',
+      'carrier_numbers_not_pinned_by_hand',
+      'telephony_credential_not_found',
+      'telephony_credential_not_active',
+      'phone_number_assigned_elsewhere',
+      'phone_number_in_use',
+    ]);
+    expect(new Set(PIN_PHONE_NUMBER_ERROR_CODES).size).toBe(PIN_PHONE_NUMBER_ERROR_CODES.length);
   });
 
   it('declares the campaign config defaults once (SNAPSHOT, written out by hand)', () => {

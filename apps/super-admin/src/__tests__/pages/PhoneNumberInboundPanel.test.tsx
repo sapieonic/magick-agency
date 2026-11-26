@@ -89,6 +89,14 @@ describe('PhoneNumberInboundPanel', () => {
     expect(screen.getByText('Not linked')).toBeTruthy();
   });
 
+  it('says a carrier without inbound in words, not the code (CR11)', async () => {
+    mocks.linkPhoneNumberInbound.mockRejectedValue(Object.assign(new Error('x'), { details: { error: 'inbound_not_supported' } }));
+    panel();
+    fireEvent.click(await screen.findByRole('button', { name: /Link to inbound/ }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Link' }));
+    expect((await screen.findByTestId('number-inbound-error')).textContent).toMatch(/does not take inbound calls here/);
+  });
+
   it('a linked number no route answers says its callers hear the closed message', async () => {
     mocks.getPhoneNumberInbound.mockResolvedValue({ ...LINKED, link: { ...LINKED.link, route: null } });
     panel();

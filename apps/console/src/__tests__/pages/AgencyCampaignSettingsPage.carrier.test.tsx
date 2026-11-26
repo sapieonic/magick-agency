@@ -11,6 +11,7 @@ import type { AgencyCampaign, AgencyCarrier } from '../../types/agency-campaign'
 
 const CRED_A = '11111111-1111-4111-8111-111111111111';
 const CRED_OLD = '99999999-9999-4999-8999-999999999999';
+const CRED_VL = '44444444-4444-4444-8444-444444444444';
 
 const mocks = vi.hoisted(() => ({
   transitionAgencyCampaign: vi.fn(),
@@ -50,6 +51,16 @@ vi.mock('../../hooks/usePhoneNumbers', () => ({
         provider_display_name: 'Plivo',
         telephony_credential_id: CRED_A,
         label: 'Own 1',
+        is_default: false,
+      },
+      {
+        // On the tenant's own VoiceLink account (added by hand, docs/carriers.md CR6).
+        phone_number_id: 'pn-3',
+        phone_number: '+912200000003',
+        provider_name: 'voicelink',
+        provider_display_name: 'VoiceLink',
+        telephony_credential_id: CRED_VL,
+        label: 'Own direct',
         is_default: false,
       },
     ],
@@ -309,6 +320,53 @@ describe('campaign settings — carrier', () => {
     saveSettings();
     expect(await screen.findByText(copy)).toBeTruthy();
     expect(screen.queryByText('server words')).toBeNull();
+  });
+});
+
+describe('campaign settings — one carrier offered twice (docs/carriers.md CR9, CR10)', () => {
+  const OWN_VL: AgencyCarrier = { telephony_provider: 'voicelink', telephony_credential_id: CRED_VL, label: 'Acme direct', status: 'active' };
+
+  beforeEach(() => {
+    mocks.useAgencyCarriers.mockReturnValue({ carriers: [SERVICE, OWN_A, OWN_VL], error: null });
+  });
+
+  it('names the service’s account and the tenant’s own on the same carrier apart, with no vendor name', async () => {
+    renderPage();
+    const select = (await screen.findByLabelText(/^Carrier/)) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(['Swar', 'Pravah (Acme main)', 'Swar (Acme direct)']);
+    expect(select.value).toBe('voicelink:');
+    expect(document.body.textContent).not.toMatch(/plivo|voicelink/i);
+    // The service's account offers only its own numbers: the tenant's pinned VoiceLink number is not one.
+    expect(numberBox('+912200000001')).not.toBeNull();
+    expect(numberBox('+912200000003')).toBeNull();
+  });
+
+  it('moves to the tenant’s own account on the same carrier: its numbers only, carrier AND credential sent', async () => {
+    renderPage();
+    await waitFor(() => expect(numberBox('+912200000001')).not.toBeNull());
+    fireEvent.change(carrierSelect()!, { target: { value: `voicelink:${CRED_VL}` } });
+    expect(numberBox('+912200000001')).toBeNull();
+    expect(numberBox('+14155550102')).toBeNull();
+    fireEvent.click(numberBox('+912200000003')!);
+    saveSettings();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(sentBody()).toMatchObject({
+      caller_ids: ['+912200000003'],
+      telephony_provider: 'voicelink',
+      telephony_credential_id: CRED_VL,
+    });
+  });
+
+  it('puts a caller-ID refusal (details.caller_ids) on the numbers, not in a banner', async () => {
+    const said = 'a campaign on the service’s own carrier account cannot use a number of an organisation’s own carrier account; not: +912200000003';
+    mocks.updateAgencyCampaign.mockRejectedValue(Object.assign(new Error('Invalid carrier account'), {
+      statusCode: 400, details: { error: 'Bad Request', message: 'Invalid carrier account', details: { caller_ids: said } },
+    }));
+    renderPage();
+    await waitFor(() => expect(numberBox('+912200000001')).not.toBeNull());
+    fireEvent.change(screen.getByLabelText(/campaign name/i), { target: { value: 'Renamed' } });
+    saveSettings();
+    expect(await screen.findByText(said)).toBeTruthy();
   });
 });
 

@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// The dial scopes beyond the account cap (PL14, CR13) are not this file's subject: unbounded.
+// CR9: a service-account campaign's dial pool drops the numbers pinned to a credential
+// (`dialableCallerIds`); none of this file's numbers is.
+vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
+  phoneNumberRepository: { findPinnedAmong: vi.fn(async () => []) },
+}));
+vi.mock('../../../src/agency/pacing/dial-scopes.js', async (importOriginal) =>
+  (await import('../../helpers/pacing-scopes.js')).withUnboundedScopes(await importOriginal()));
 
 // ---------------------------------------------------------------------------
 // The scheduled path of the pacing engine: rounds, the skip of a quiescent
@@ -576,7 +584,8 @@ describe('PacingEngine rounds: the cached account limit', () => {
     const control = withPacingInvalidation({
       invalidateAccountLimit: vi.fn().mockResolvedValue(undefined),
       invalidateProviderLimits: vi.fn().mockResolvedValue(undefined),
-      getAccountProviderCounts: vi.fn(), getAccountCount: vi.fn(), getDistributedAccountCount: vi.fn(),
+      getAccountProviderCounts: vi.fn(), getProviderCount: vi.fn(), getAccountCount: vi.fn(), getDistributedAccountCount: vi.fn(),
+      invalidateCredentialLimit: vi.fn(), getCredentialCounts: vi.fn(),
     }, (e) => bus.publish(e));
     await control.invalidateAccountLimit('t1', 'a1');
     bus.publish({ type: 'account_capacity_freed', tenantId: 't1', accountId: 'a1' });

@@ -82,6 +82,8 @@ vi.mock('@magick-agency/observability', async () => ({
 vi.mock('@magick-agency/observability/metrics/voice', () => ({
   trackProviderConcurrencyAdmission: vi.fn(),
   trackProviderConcurrencyReconciliation: vi.fn(),
+  trackCredentialConcurrencyAdmission: vi.fn(),
+  trackCredentialConcurrencyReconciliation: vi.fn(),
 }));
 
 vi.mock('../../../src/config/index.js', () => ({

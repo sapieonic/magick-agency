@@ -42,8 +42,10 @@
 #     webhook_signature_rejected_total, no media_stream_connect_timeouts_total
 #     and no DNC registry metric, so no 5xx-ratio, latency, dial-failure,
 #     carrier-signature, media-timeout or DNC-write rule.
-#   * Carrier dial refusals: carrier_dial_refusals_total (Plivo's adapter only)
-#     has a dashboard panel and no rule until it has a production baseline.
+#   * Carrier dial refusals: carrier_dial_refusals_total has a dashboard panel and
+#     no rule until it has a production baseline, except its kind="api_refused"
+#     (agy-carrier-api-refused): a tenant account that takes its login and refuses
+#     every dial, which nothing else reports to an operator.
 ###############################################################################
 
 locals {
@@ -692,6 +694,29 @@ locals {
         no_data_state = "OK"
         summary       = "The carrier credential sweep keeps failing"
         description   = "telephony_credential_sweeps_total{result=\"failed\"} advanced by 2+ in 3h on {{ $labels.service_name }}: the hourly sweep that shreds revoked carrier credentials once their calls have ended (2 h after the last one) and drops secret versions past the 24 h rotation grace is failing. Nothing dials on a revoked credential either way, but its sealed secrets stay in telephony_credential_secrets past the retention B20 promises until a sweep succeeds. Read the main-process WARN 'Telephony credential sweep failed' for the error: it is almost always agency's Postgres or its pool (the sweep is a few reads and row-locked updates on telephony_credentials, telephony_credential_secrets and the calls pinned to them). A lock wait on a credential row being revoked or rotated clears on its own. The sweep is idempotent and the next hourly pass catches up once it succeeds; a restart also runs one at boot. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+      {
+        uid  = "agy-carrier-api-refused"
+        name = "A tenant carrier account takes its login but refuses its dials"
+        # kind="api_refused" (docs/carriers.md CR4): the carrier accepted a fresh login, then
+        # refused the dial request itself with 401 (VoiceLink's add_lead on a tenant's account;
+        # counted once per dial in its adapter). One is a token another process's login retired;
+        # an account whose API access was withdrawn refuses every dial. The breaker pauses each
+        # campaign after 10 in a row (carrier_refusing_calls), but a resumed campaign, the
+        # account's other campaigns and soft-phone calls go on failing, and nothing marks the
+        # credential. 5+ in 15m by provider (threshold 4.5, N-0.5) is past any token race, and a
+        # campaign that trips the breaker reaches it on its own. A count, not a rate held for
+        # 10m: the breaker stops a campaign's dials within its 10 refusals, so a sustained rate
+        # would miss the case it is for. Sparse: the new-series guard. Warns (Slack): a tenant's
+        # own account, fixed at the carrier, not here.
+        expr          = "sum by (service_name, provider) (((carrier_dial_refusals_total{kind=\"api_refused\",${local.agency}} unless carrier_dial_refusals_total{kind=\"api_refused\",${local.agency}} offset 15m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 15m)) or increase(carrier_dial_refusals_total{kind=\"api_refused\",${local.agency}}[15m]))"
+        op            = "gt"
+        threshold     = 4.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "A tenant's carrier account accepts its login but refuses every dial"
+        description   = "carrier_dial_refusals_total{kind=\"api_refused\"} advanced by 5+ in 15m on {{ $labels.service_name }} (provider={{ $labels.provider }}): the carrier accepted a tenant credential's login, then refused the dial request itself with 401 on the fresh token. Its API access is withdrawn or restricted at the carrier while the login still works (docs/carriers.md CR4), so every dial on that account fails, and the credential is not marked (the login is the only verdict on it). Each campaign on it is paused carrier_refusing_calls after 10 such refusals in a row (its agency_campaign.auto_paused audit row carries cause carrier_api_refused); soft-phone calls on it keep failing with CARRIER_API_REFUSED. Find the account: agency_calls with error_code 'CARRIER_API_REFUSED' in the last 15m (telephony_credential_id, tenant_id), or the auto_paused audit rows with that cause. Ask the tenant to have API access restored on their carrier account, then have a supervisor resume the paused campaigns; to dial meanwhile, move the campaigns to another carrier account. Runbook: docs/operations.md, 'Alert runbooks'."
       },
     ]
 

@@ -14,11 +14,13 @@ const packageVersions = bundledPackageVersions(pkg);
 const result = await build({
   // migrate.js: the pre-boot migration step docker/entrypoint.sh runs.
   // create-super-admin.js: the first-admin CLI, runnable inside the image.
+  // cleanup-service-campaign-pinned-caller-ids.js: the one-off CR9 caller-ID clean-up.
   // Named entries, so every output lands at dist/<name>.js whatever directory it is in.
   entryPoints: {
     index: 'src/index.ts',
     migrate: 'src/migrate.ts',
     'create-super-admin': 'scripts/create-super-admin.ts',
+    'cleanup-service-campaign-pinned-caller-ids': 'scripts/cleanup-service-campaign-pinned-caller-ids.ts',
     // The Excel upload's child process (IM8): `agency-xlsx-runner.ts` forks dist/xlsx-worker.js
     // beside the bundle. Guarded by test/unit/agency/agency-xlsx-worker-build.test.ts.
     'xlsx-worker': 'src/agency/agency-xlsx-worker.ts',
@@ -50,4 +52,4 @@ const result = await build({
 assertBundled(result.metafile, packageVersions);
 
 const packages = Object.entries(packageVersions).map(([name, version]) => `${name} ${version}`).join(', ');
-console.log(`built dist/index.js, dist/migrate.js, dist/create-super-admin.js, dist/xlsx-worker.js (server ${pkg.version}; ${packages})`);
+console.log(`built dist/index.js, dist/migrate.js, dist/create-super-admin.js, dist/cleanup-service-campaign-pinned-caller-ids.js, dist/xlsx-worker.js (server ${pkg.version}; ${packages})`);

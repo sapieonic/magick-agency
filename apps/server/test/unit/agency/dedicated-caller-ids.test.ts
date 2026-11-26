@@ -17,6 +17,9 @@ const { phoneAssignments } = vi.hoisted(() => ({ phoneAssignments: { findCredent
 vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', () => ({
   tenantPhoneAssignmentRepository: phoneAssignments,
 }));
+// CR9: which of a service-account campaign's stored caller IDs are pinned to a credential.
+const { phoneNumbers } = vi.hoisted(() => ({ phoneNumbers: { findPinnedAmong: vi.fn() } }));
+vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({ phoneNumberRepository: phoneNumbers }));
 
 import { DedicatedCallerIdCache } from '../../../src/agency/pacing/dedicated-caller-ids.js';
 import { PACING_CACHE_TTL_MS } from '../../../src/agency/pacing/read-cache.js';
@@ -29,6 +32,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   invalidateDialableCallerIds();
   repo.mapForCampaign.mockResolvedValue(new Map());
+  phoneNumbers.findPinnedAmong.mockResolvedValue([]);
 });
 
 describe('DedicatedCallerIdCache.read', () => {
@@ -172,9 +176,20 @@ describe('DedicatedCallerIdCache.callerIdForContact over the dialable pool (DN2 
     expect(await cache.callerIdForContact(PINNED, 'u1')).toBeNull();
   });
 
-  it('a service-account campaign is unchanged: the dedicated number while stored, no carrier-account read', async () => {
+  it('a service-account campaign: the dedicated number while stored, no carrier-account read', async () => {
     repo.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101']]));
     expect(await cache.callerIdForContact(CAMPAIGN, 'u1')).toBe('+14155550101');
     expect(phoneAssignments.findCredentialNumbersForAccount).not.toHaveBeenCalled();
+    expect(phoneNumbers.findPinnedAmong).toHaveBeenCalledWith(POOL);
+  });
+
+  it('a service-account campaign never dials a number pinned to a credential: dedicated or sticky, it falls back (CR9)', async () => {
+    repo.mapForCampaign.mockResolvedValue(new Map([['u1', '+14155550101']]));
+    phoneNumbers.findPinnedAmong.mockResolvedValue(['+14155550101', '+14155550100']);
+    expect(await cache.callerIdForContact(CAMPAIGN, 'u1')).toBe('+14155550102');
+    expect(await cache.callerIdForContact(CAMPAIGN, 'u2', { sticky: '+14155550100' })).toBe('+14155550102');
+    invalidateDialableCallerIds();
+    phoneNumbers.findPinnedAmong.mockResolvedValue([...POOL]);
+    expect(await cache.callerIdForContact(CAMPAIGN, 'u1')).toBeNull();
   });
 });

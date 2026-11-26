@@ -21,6 +21,11 @@ export interface TelephonyCredentialRecord {
   secret_hint: string | null;
   verified_at: Date | null;
   last_error: string | null;
+  /**
+   * CR13 (0077): at most this many live calls on this carrier account at once, across every
+   * account of the tenant. Null: no cap of its own.
+   */
+  max_concurrent_calls: number | null;
   created_by: string | null;
   updated_by: string | null;
   created_at: Date;
@@ -64,6 +69,8 @@ export interface CreateTelephonyCredentialInput {
   created_by: string;
   /** Set when the carrier accepted the credential before it was stored. */
   verified_at: Date | null;
+  /** CR13: the credential's own concurrency cap; absent or null is none. */
+  max_concurrent_calls?: number | null;
 }
 
 /**

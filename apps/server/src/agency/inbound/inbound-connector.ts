@@ -1835,12 +1835,37 @@ export class InboundConnector {
         log.warn({ err, accountKey }, 'inbound: could not read the device_away pauses; none counted as able to take callers');
         return new Map<string, number>();
       });
+    const unmarked: InboundAgentView[] = [];
     for (const v of fresh) {
       const age = ages.get(v.sessionId);
-      if (age === undefined || age >= this.deviceAwayGraceMs) continue;
+      if (age === undefined || age >= this.deviceAwayGraceMs) {
+        unmarked.push(v);
+        continue;
+      }
       v.awayGrace = true;
       this.armAwayGraceEnd(accountKey, v.sessionId, this.deviceAwayGraceMs - age);
     }
+    await this.rereadReturned(accountKey, unmarked);
+  }
+
+  /**
+   * The row is read after Redis: an agent the app returned between the two reads (the return
+   * writes Redis, then the row) has no `device_away` row any more, while `live` still says `break`
+   * (a chosen break, to the search: nobody, and their caller overflowed). Redis is read again for
+   * these sessions, and a state that has left `break` replaces the one read before. A failed read
+   * keeps the earlier states.
+   */
+  private async rereadReturned(accountKey: string, views: InboundAgentView[]): Promise<void> {
+    if (views.length === 0) return;
+    const again = await this.deps.agents.getMany(views.map((v) => v.sessionId)).catch((err: unknown) => {
+      log.warn({ err, accountKey }, 'inbound: could not read again the agents on a break; their earlier states stand');
+      return null;
+    });
+    if (!again) return;
+    views.forEach((v, i) => {
+      const live = again[i] ?? null;
+      if (live && live.state !== 'break') v.live = live;
+    });
   }
 
   /** Search the account again when a `device_away` pause's grace ends (once per session at a time). */

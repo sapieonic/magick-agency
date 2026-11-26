@@ -626,12 +626,15 @@ export interface AgencyCampaign {
   telephony_provider?: string;
   /**
    * The tenant's own carrier account the campaign dials on (decisions B18–B22), or
-   * `null` for the service's own account. Required, and must be `active`, for a carrier
-   * dialled on the tenant's account (`AgencyCarrier.telephony_credential_id` non-null);
-   * must be `null` otherwise. With one, every `caller_ids` entry a write ADDS must be an
-   * active number synced from that account (on the same account, numbers already stored
-   * may stay: the dial skips one no longer active, PL13). Refusals: 400 (shape, pairing,
-   * caller IDs), 404 `telephony_credential_not_found`, 409 `telephony_credential_not_active`;
+   * `null` for the service's own account, as `GET /proxy/agency/carriers` lists the pair. A
+   * carrier may offer either or both (docs/carriers.md CR1, CR8): `null` needs a carrier with
+   * a service account; a credential needs one that takes tenant accounts, and must be
+   * `active`. Moving between the two on one carrier is a change of carrier account. With a
+   * credential, every `caller_ids` entry a write ADDS must be an active number pinned to that
+   * account (on the same account, numbers already stored may stay: the dial skips one no
+   * longer active, PL13); with `null`, none it adds may be a number pinned to any credential
+   * (CR9). Refusals: 400 (shape, pairing, caller IDs), 404 `telephony_credential_not_found`,
+   * 409 `telephony_credential_not_active`;
    * start and resume answer that 409 too once the account stops being active, and 409
    * `campaign_caller_ids_unavailable` when none of the caller IDs is dialable, or
    * `carrier_capacity_unallocated` when the account's per-carrier concurrency gives the

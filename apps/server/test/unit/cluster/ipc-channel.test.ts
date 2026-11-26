@@ -148,7 +148,7 @@ describe('IpcChannel', () => {
     // reaches the primary before it. A continuation already queued (an admission that just
     // resolved) runs before an awaited answer would be written.
     const { pair, primary, child } = channels();
-    const lease = { callId: 'k1', concurrencyKey: 'k1', tenantId: 't', accountId: 'a', provider: 'voicelink' };
+    const lease = { callId: 'k1', concurrencyKey: 'k1', tenantId: 't', accountId: 'a', provider: 'voicelink', credentialId: null };
     child.handle('reaper.snapshot', () => {
       queueMicrotask(() => child.emit('call.lease', { op: 'held', lease }));
       return { activeAttemptIds: [], unrecordedEnds: [], manualActiveIds: [], activeCallIds: [], leases: [] };

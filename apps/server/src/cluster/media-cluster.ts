@@ -418,6 +418,11 @@ export class MediaCluster implements WsHandoffTarget {
     this.supervisor.broadcast('concurrency.invalidate', { tenantId, accountId });
   }
 
+  /** Broadcast a carrier account's cap change (CR13) so every worker drops its cached cap. */
+  invalidateCredentialLimit(credentialId: string): void {
+    this.supervisor.broadcast('concurrency.invalidate_credential', { credentialId });
+  }
+
   /** Broadcast a number change so every worker drops its dialable caller-ID cache (PL13). */
   invalidateDialableCallerIds(): void {
     this.supervisor.broadcast('dialable.invalidate', {});

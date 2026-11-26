@@ -26,9 +26,12 @@ import type {
   DeleteFlagOverrideBody,
   BulkFlagOverrideResult,
   PhoneNumber,
+  TelephonyProvider as ContractTelephonyProvider,
   TenantPhoneAssignment,
   PhoneNumberDetailResponse,
   CreatePhoneNumberBody,
+  PinPhoneNumberBody,
+  PinPhoneNumberResponse,
   UpdatePhoneNumberBody,
   AssignPhoneNumberBody,
 } from '@magick-agency/contracts/api/platform/super-admin';
@@ -40,6 +43,7 @@ import type { UsageCountsQuery, UsageCountsResponse } from '@magick-agency/contr
 import type {
   CreateTelephonyCredentialBody,
   RotateTelephonyCredentialSecretBody,
+  SetTelephonyCredentialConcurrencyBody,
   TelephonyCredential,
   TelephonyCredentialDetailResponse,
   TelephonyCredentialProvidersResponse,
@@ -389,23 +393,16 @@ export async function listAuditLog(
 
 // ── Telephony providers (read-only) ──────────────────────
 
+/** The capability fields of a provider row (contract `TelephonyProvider`): optional, an older server omits them. */
+type TelephonyProviderCapabilities = 'takes_tenant_credentials' | 'service_account' | 'tenant_accounts' | 'number_source' | 'supports_inbound';
+
 /**
  * A telephony provider (no `live_transfer_enabled`: no AI escalation). Only the read survives:
- * the baseline seeds one `voicelink` row and the add-number form picks its id.
+ * the migrations seed the rows and the add-number form picks its id. The contract's shape, its
+ * capability fields optional (an older server omits them).
  */
-export interface TelephonyProvider {
-  id: string;
-  name: string;
-  display_name: string;
-  status: 'active' | 'inactive';
-  /**
-   * Dialled on tenants' own carrier accounts: its numbers come from a credential's
-   * "Sync numbers" and cannot be added by hand. Optional: an older server omits it.
-   */
-  takes_tenant_credentials?: boolean;
-  created_at: string;
-  updated_at: string;
-}
+export type TelephonyProvider = Omit<ContractTelephonyProvider, TelephonyProviderCapabilities>
+  & Partial<Pick<ContractTelephonyProvider, TelephonyProviderCapabilities>>;
 
 export async function listTelephonyProviders(): Promise<TelephonyProvider[]> {
   const res = await saFetch<{ providers: TelephonyProvider[] }>(`${SA_BASE}/telephony-providers`);
@@ -455,6 +452,18 @@ export async function deletePhoneNumber(id: string): Promise<void> {
   await saFetch(`${SA_BASE}/phone-numbers/${id}/delete`, { method: 'POST' });
 }
 
+/**
+ * Move a number on the service's own carrier account onto a tenant's own account of the same
+ * carrier (docs/carriers.md CR6): pinned to the credential and assigned to its tenant. One way.
+ * Refusals carry a `PinPhoneNumberErrorCode` in `details.code` (`PinPhoneNumberError`).
+ */
+export async function pinPhoneNumber(id: string, data: PinPhoneNumberBody): Promise<PinPhoneNumberResponse> {
+  return saFetch<PinPhoneNumberResponse>(`${SA_BASE}/phone-numbers/${id}/pin`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 export async function assignPhoneNumber(phoneNumberId: string, data: AssignPhoneNumberBody): Promise<void> {
   await saFetch(`${SA_BASE}/phone-numbers/${phoneNumberId}/assign`, {
     method: 'POST',
@@ -486,13 +495,34 @@ export async function listTelephonyCredentialProviders(): Promise<TelephonyCrede
 export async function listTelephonyCredentials(filters?: {
   tenant_id?: string; provider?: string; include_revoked?: boolean;
 }): Promise<TelephonyCredential[]> {
+  return (await listTelephonyCredentialsWithUsage(filters)).credentials;
+}
+
+/**
+ * The credentials with the live calls each one's own cap counts now (CR13,
+ * `concurrent_calls_in_use`, by id; best effort).
+ */
+export async function listTelephonyCredentialsWithUsage(filters?: {
+  tenant_id?: string; provider?: string; include_revoked?: boolean;
+}): Promise<TelephonyCredentialsResponse> {
   const params = new URLSearchParams();
   if (filters?.tenant_id) params.set('tenant_id', filters.tenant_id);
   if (filters?.provider) params.set('provider', filters.provider);
   if (filters?.include_revoked) params.set('include_revoked', 'true');
   const qs = params.toString();
   const res = await saFetch<TelephonyCredentialsResponse>(`${SA_BASE}/telephony-credentials${qs ? `?${qs}` : ''}`);
-  return res.credentials;
+  return { credentials: res.credentials, concurrent_calls_in_use: res.concurrent_calls_in_use ?? {} };
+}
+
+/** Set (or clear, with null) the carrier account's own concurrency cap (CR13). */
+export async function setTelephonyCredentialConcurrency(
+  id: string, data: SetTelephonyCredentialConcurrencyBody,
+): Promise<TelephonyCredential> {
+  const res = await saFetch<TelephonyCredentialResponse>(`${SA_BASE}/telephony-credentials/${id}/concurrency`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+  return res.credential;
 }
 
 export async function getTelephonyCredential(id: string): Promise<TelephonyCredentialDetailResponse> {

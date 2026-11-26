@@ -416,7 +416,9 @@ counts as one who could take a caller (`awayGrace`), never offered one: the app 
 comes back within 30 s on its own, so callers queue for them instead of overflowing at once. When
 the pause began is the session row's (`state_since` with `break_reason = 'device_away'`; Redis holds
 no break reason), read only for sessions Redis says went on a break inside the grace; a failed read
-counts nobody. When the grace ends the connector searches the account again, as for the rejoin
+counts nobody. The row is read after Redis, and the app's return writes Redis first: a session
+whose row no longer shows the pause is read from Redis again, so an agent back between the two
+reads counts as they are now, not as one on a chosen break. When the grace ends the connector searches the account again, as for the rejoin
 grace. A `phone_call` pause (IQ51) never counts: the agent is on another call.
 
 **Ringable agents (IQ68, Mode B, §6.1).** An agent on `away_ring` whose phone may be rung for the

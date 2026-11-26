@@ -393,3 +393,12 @@ export type {
   CampaignTemplateVersionRecord,
   CampaignTemplateVersionSummaryRecord,
 } from './agency/campaign-template.repository.js';
+export {
+  AgencyServicePinnedCallerIdRepository,
+  agencyServicePinnedCallerIdRepository,
+} from './agency/service-pinned-caller-ids.repository.js';
+export type {
+  PinnedCallerId,
+  PinnedCallerIdRemoval,
+  ServiceCampaignPinnedCallerIds,
+} from './agency/service-pinned-caller-ids.repository.js';

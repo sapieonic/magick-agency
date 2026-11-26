@@ -7,9 +7,10 @@ const log = createChildLogger({ component: 'telephony-release' });
  * How a call's telephony leases were handed back.
  *
  * - `composite` — the atomic transaction released a plausibly complete lease. A
- *   complete lease is 2 scopes (legacy: global + account) or 3 (provider mode), and
- *   the helper cannot tell those apart — it does not know the account's allocation
- *   mode — so `2` is deliberately accepted. That ambiguity is why `partial` below
+ *   complete lease is 2 scopes (legacy: global + account) or 3 (provider mode), one
+ *   more for a call on a tenant carrier account, capped or not (CR13), and the helper
+ *   cannot tell those apart — it does not know the account's allocation mode — so any
+ *   count above 1 is deliberately accepted. That ambiguity is why `partial` below
  *   only catches the case that is unambiguous.
  * - `partial` — exactly ONE scope was released. That can never be a complete
  *   telephony lease, so the rest are still parked: a wrong tenant/account (the
@@ -109,9 +110,13 @@ export interface TelephonyReleaseGuards {
   } | null | undefined;
   providerConcurrencyGuard?: {
     releaseAll?(
-      callId: string, tenantId: string, accountId: string, provider: string,
+      callId: string, tenantId: string, accountId: string, provider: string, credentialId?: string | null,
     ): Promise<CompositeReleaseResult | void>;
     release(callId: string, tenantId: string, accountId: string, provider: string): Promise<void>;
+  } | null | undefined;
+  /** The carrier account's own scope (CR13), released per scope on the fallback path. */
+  credentialConcurrencyGuard?: {
+    release(callId: string, credentialId: string): Promise<void>;
   } | null | undefined;
   /**
    * Armed automatically on any {@link DRIFT_OUTCOMES} result.
@@ -137,6 +142,13 @@ export interface TelephonyReleaseParams {
   accountId: string;
   /** Absent/empty declines the atomic path; see {@link releaseTelephonyLease}. */
   provider: string | undefined;
+  /**
+   * The tenant carrier account the call was placed on (CR13), so its own scope is handed
+   * back too (every call on one takes it, capped or not). Null or absent: the service's own
+   * account, which takes no credential scope. Releasing a credential lease the call never
+   * took (an uncapped call on a legacy account admitted while Redis was down) is a no-op.
+   */
+  credentialId?: string | null | undefined;
   source: TelephonyReleaseSource;
   /** The DB call/session id, when the caller has one. Correlation only — every
    * other log line in the service puts that value in `callId`, so omitting it
@@ -317,7 +329,9 @@ async function runComposite(
 ): Promise<CompositeReleaseResult | void> {
   const { concurrencyKey, tenantId, accountId, provider, source } = params;
   try {
-    return await providerGuard.releaseAll!(concurrencyKey, tenantId, accountId, provider!);
+    return params.credentialId
+      ? await providerGuard.releaseAll!(concurrencyKey, tenantId, accountId, provider!, params.credentialId)
+      : await providerGuard.releaseAll!(concurrencyKey, tenantId, accountId, provider!);
   } catch (err) {
     // releaseAll already folds Redis errors into a `failed` result; this guards an
     // unexpected throw escaping it.
@@ -342,9 +356,10 @@ async function classifyComposite(
   // sets one layer down in `releaseAll`.
   if (status === 'released' && typeof scopes === 'number' && Number.isInteger(scopes) && scopes >= 0) {
     if (scopes === 0) return 'noop';
-    // 1 is never a complete lease (legacy holds 2, provider mode 3), so the rest
-    // are still parked. 2 is ambiguous — legacy-complete or provider-partial — and
-    // the helper cannot tell, so it is accepted rather than guessed at.
+    // 1 is never a complete lease (legacy holds 2, provider mode 3, one more on a
+    // tenant carrier account), so the rest are still parked. 2 and 3 are ambiguous
+    // — complete or partial depending on the mode and the carrier account — and the
+    // helper cannot tell, so they are accepted rather than guessed at.
     return scopes === 1 ? 'partial' : 'composite';
   }
 
@@ -383,8 +398,13 @@ async function releasePerScope(
   const providerGuard = guards.providerConcurrencyGuard;
   const globalGuard = guards.concurrencyGuard;
   const accountGuard = guards.accountConcurrencyGuard;
+  const credentialGuard = guards.credentialConcurrencyGuard;
+  const credentialId = params.credentialId;
 
   const settled = await Promise.allSettled([
+    ...(credentialGuard && credentialId
+      ? [attempt(() => credentialGuard.release(concurrencyKey, credentialId))]
+      : []),
     ...(providerGuard && provider
       ? [attempt(() => providerGuard.release(concurrencyKey, tenantId, accountId, provider))]
       : []),

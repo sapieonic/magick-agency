@@ -458,12 +458,14 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
           error: 'Not Found', code: 'no_recording', message: 'No recording available for this call',
         });
       }
-      // Direct-recording providers (VoiceLink): signing points playback at the
-      // shared proxy, whose egress is firewalled off from the provider's recording
-      // host — a 502 where the browser could fetch the file itself. Hand back the
-      // raw URL, no expiry (the provider link is the durable resource). The
-      // allowlist lives in one place, `isDirectRecordingProvider`.
-      if (isDirectRecordingProvider(found.call.provider)) {
+      // A direct recording (VoiceLink on the service's own account): signing points
+      // playback at the shared proxy, whose egress is firewalled off from the provider's
+      // recording host — a 502 where the browser could fetch the file itself. Hand back
+      // the raw URL, no expiry (the provider link is the durable resource). The rule
+      // lives in one place, `isDirectRecordingProvider`; a call pinned to a credential is
+      // never direct (CR12): it is signed, and the proxy checks the credential before it
+      // redirects the viewer to the file (`recordingRedirectsToCarrier`).
+      if (isDirectRecordingProvider(found.call.provider, found.call.telephony_credential_id)) {
         return reply.send({ url: found.call.recording_url, expires_at: null });
       }
       // Dynamic import keeps the config-loading recording-url module out of this

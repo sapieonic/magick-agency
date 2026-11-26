@@ -21,7 +21,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
-const { recordingHostMatches, recordingHostname, proxyCallRecording, fetchWithAllowedRedirects } = await import(
+const { recordingHostMatches, recordingHostname, proxyCallRecording, fetchWithAllowedRedirects, acceptsJsonRedirect } = await import(
   '../../../src/utils/recording-proxy.js'
 );
 const { createRecordingAccessResolver } = await import('../../../src/telephony/recording-access.js');
@@ -61,7 +61,8 @@ function credentials(state: 'active' | 'revoked' = 'active') {
 }
 
 /** The real carrier table over `hosts` and a credential source. */
-const access = (hosts: readonly string[], creds = credentials()) =>
+type CredentialSource = Awaited<ReturnType<Parameters<typeof createRecordingAccessResolver>[0]['credentials']>>;
+const access = (hosts: readonly string[], creds: CredentialSource = credentials()) =>
   createRecordingAccessResolver({ voicelinkHosts: hosts, credentials: () => creds });
 
 describe('recording host matching is a HOST check, not a substring match', () => {
@@ -410,5 +411,199 @@ describe('proxyCallRecording — a Plivo recording on the tenant credential (B21
     await proxyCallRecording(pl(PLIVO_URL), { headers: {} } as any, r, async () => { throw new Error('db down'); });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(r.sent.code).toBe(502);
+  });
+});
+
+describe('proxyCallRecording — a VoiceLink call pinned to a tenant credential is redirected, not fetched (CR12)', () => {
+  /** A VoiceLink call row pinned to the tenant's VoiceLink credential. */
+  const vlPinned = (recording_url: string | null) => ({
+    id: 'c', recording_url, provider: 'voicelink', telephony_credential_id: CRED, tenant_id: TENANT,
+  });
+  /** A credential source holding one VoiceLink credential, active or revoked. */
+  function vlCredentials(state: 'active' | 'revoked' = 'active') {
+    return {
+      resolve: vi.fn(async (id: string) => {
+        if (state === 'revoked') throw new CredentialUnavailableError(id, 'status', 'revoked');
+        return {
+          id, tenantId: TENANT, provider: 'voicelink', accountRef: 'tenant-user', publicConfig: { username: 'Tenant-User' },
+          version: 1, secret: new Secret({ password: 'tenant-password' }), previous: [],
+        };
+      }),
+    };
+  }
+
+  it('resolves the credential for recording, then answers 302 to the stored URL, no-store, fetching nothing', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const creds = vlCredentials();
+    const r = reply();
+    await proxyCallRecording(vlPinned(GOOD), { headers: { range: 'bytes=0-9' } } as any, r, access(HOSTS, creds));
+    expect(creds.resolve).toHaveBeenCalledWith(CRED, 'recording');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(r.sent.code).toBe(302);
+    expect(r.sent.headers).toEqual({ Location: GOOD, 'Cache-Control': 'no-store', Vary: 'Accept' });
+    expect(JSON.stringify(r.sent)).not.toContain('tenant-password');
+  });
+
+  it('a revoked credential refuses it with 404 recording_unavailable: no redirect, no fetch (B21)', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const r = reply();
+    await proxyCallRecording(vlPinned(GOOD), { headers: {} } as any, r, access(HOSTS, vlCredentials('revoked')));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(r.sent.code).toBe(404);
+    expect(r.sent.body).toMatchObject({ code: 'recording_unavailable' });
+    expect(r.sent.headers['Location']).toBeUndefined();
+  });
+
+  it.each([
+    ['an attacker host', 'https://evil.example/r.mp3'],
+    ['a lookalike host', 'https://voicelink.test.evil.example/r.mp3'],
+    ['the allowed host as userinfo', 'https://voicelink.test@evil.example/r.mp3'],
+    ['http', 'http://recordings.voicelink.test/r.mp3'],
+    ['a javascript: URL', 'javascript:alert(1)'],
+  ])('a stored URL on %s is refused 502 as a fetch would be: no redirect', async (_l, url) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const r = reply();
+    await proxyCallRecording(vlPinned(url), { headers: {} } as any, r, access(HOSTS, vlCredentials()));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(r.sent.code).toBe(502);
+    expect(r.sent.body).toMatchObject({ message: 'The recording is not hosted on an allowed carrier host' });
+    expect(r.sent.headers['Location']).toBeUndefined();
+  });
+
+  it('with no VoiceLink hosts configured, nothing is redirected', async () => {
+    const r = reply();
+    await proxyCallRecording(vlPinned(GOOD), { headers: {} } as any, r, access([], vlCredentials()));
+    expect(r.sent.code).toBe(502);
+    expect(r.sent.headers['Location']).toBeUndefined();
+  });
+
+  it('a VoiceLink call on the service`s account that reaches the proxy is still fetched, as before', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, body: 'bytes', headers: { get: () => null } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const r = reply();
+    await proxyCallRecording(vl(GOOD), { headers: {} } as any, r, access(HOSTS));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(r.sent.code).toBe(200);
+  });
+
+  it('a pinned Plivo call is still fetched server-side with Basic auth, never redirected', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ ok: true, status: 200, body: 'bytes', headers: { get: () => null } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const r = reply();
+    await proxyCallRecording(pl(PLIVO_URL), { headers: {} } as any, r, access(HOSTS));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(new Headers(fetchMock.mock.calls[0]![1].headers).get('authorization')).toBe(BASIC);
+    expect(r.sent.code).toBe(200);
+    expect(r.sent.headers['Location']).toBeUndefined();
+  });
+});
+
+describe('acceptsJsonRedirect: a script asking for JSON by name, never through a wildcard', () => {
+  it.each([
+    ['application/json', true],
+    ['application/json, audio/*;q=0.9, */*;q=0.1', true],
+    ['audio/*, Application/JSON;q=0.5', true],
+    [['audio/*', 'application/json'], true],
+    [undefined, false],
+    ['', false],
+    ['*/*', false],
+    ['audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,application/ogg;q=0.7,video/*;q=0.6,*/*;q=0.5', false],
+    ['application/*', false],
+    ['application/json;q=0', false],
+    ['application/jsonp', false],
+  ] as const)('%j → %s', (accept, expected) => {
+    expect(acceptsJsonRedirect(accept as string | string[] | undefined)).toBe(expected);
+  });
+});
+
+describe('proxyCallRecording — the redirect as JSON for a script that asks (CR12)', () => {
+  const JSON_ACCEPT = 'application/json, audio/*;q=0.9, */*;q=0.1';
+  const vlPinned = (recording_url: string | null) => ({
+    id: 'c', recording_url, provider: 'voicelink', telephony_credential_id: CRED, tenant_id: TENANT,
+  });
+  function vlCredentials(state: 'active' | 'revoked' = 'active') {
+    return {
+      resolve: vi.fn(async (id: string) => {
+        if (state === 'revoked') throw new CredentialUnavailableError(id, 'status', 'revoked');
+        return {
+          id, tenantId: TENANT, provider: 'voicelink', accountRef: 'tenant-user', publicConfig: { username: 'Tenant-User' },
+          version: 1, secret: new Secret({ password: 'tenant-password' }), previous: [],
+        };
+      }),
+    };
+  }
+
+  it('answers 200 { redirect_url }, no-store, with no Location and no fetch, once the credential serves', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const creds = vlCredentials();
+    const r = reply();
+    await proxyCallRecording(vlPinned(GOOD), { headers: { accept: JSON_ACCEPT } } as any, r, access(HOSTS, creds));
+    expect(creds.resolve).toHaveBeenCalledWith(CRED, 'recording');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(r.sent.code).toBe(200);
+    expect(r.sent.body).toEqual({ redirect_url: GOOD });
+    expect(r.sent.headers).toEqual({ 'Cache-Control': 'no-store', Vary: 'Accept' });
+  });
+
+  it('sends the viewer to the URL as the host check parsed it, never the stored string', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    // A stored URL with a stray line break and a character a header cannot carry: the parser
+    // drops the one and percent-encodes the other, and that is what the viewer is sent.
+    const stored = `${GOOD.replace('.mp3', '')}\n-€.mp3 `;
+    const normalised = new URL(stored).href;
+    expect(normalised).not.toBe(stored);
+    const json = reply();
+    await proxyCallRecording(vlPinned(stored), { headers: { accept: JSON_ACCEPT } } as any, json, access(HOSTS, vlCredentials()));
+    expect(json.sent.body).toEqual({ redirect_url: normalised });
+    const redirect = reply();
+    await proxyCallRecording(vlPinned(stored), { headers: {} } as any, redirect, access(HOSTS, vlCredentials()));
+    expect(redirect.sent.code).toBe(302);
+    expect(redirect.sent.headers['Location']).toBe(normalised);
+  });
+
+  it.each([
+    ['no Accept', {}],
+    ['an audio element’s Accept', { accept: 'audio/webm,audio/ogg,audio/*;q=0.9,*/*;q=0.5' }],
+    ['JSON refused with q=0', { accept: 'application/json;q=0, */*' }],
+  ])('keeps the 302 for %s', async (_l, headers) => {
+    const r = reply();
+    await proxyCallRecording(vlPinned(GOOD), { headers } as any, r, access(HOSTS, vlCredentials()));
+    expect(r.sent.code).toBe(302);
+    expect(r.sent.headers['Location']).toBe(GOOD);
+    expect(r.sent.body).toBeUndefined();
+  });
+
+  it('a revoked credential is the same 404 when JSON is asked for: no URL in the body', async () => {
+    const r = reply();
+    await proxyCallRecording(vlPinned(GOOD), { headers: { accept: JSON_ACCEPT } } as any, r, access(HOSTS, vlCredentials('revoked')));
+    expect(r.sent.code).toBe(404);
+    expect(r.sent.body).toMatchObject({ code: 'recording_unavailable' });
+    expect(JSON.stringify(r.sent)).not.toContain(GOOD);
+  });
+
+  it('a URL off the allow-list is the same 502 when JSON is asked for: never handed out', async () => {
+    const evil = 'https://evil.example/r.mp3';
+    const r = reply();
+    await proxyCallRecording(vlPinned(evil), { headers: { accept: JSON_ACCEPT } } as any, r, access(HOSTS, vlCredentials()));
+    expect(r.sent.code).toBe(502);
+    expect(JSON.stringify(r.sent)).not.toContain('evil.example');
+  });
+
+  it('a service VoiceLink call and a pinned Plivo call are still fetched and streamed when JSON is asked for', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ ok: true, status: 200, body: 'bytes', headers: { get: () => null } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const service = reply();
+    await proxyCallRecording(vl(GOOD), { headers: { accept: JSON_ACCEPT } } as any, service, access(HOSTS));
+    expect(service.sent.code).toBe(200);
+    expect(service.sent.body).toBe('bytes');
+    const plivo = reply();
+    await proxyCallRecording(pl(PLIVO_URL), { headers: { accept: JSON_ACCEPT } } as any, plivo, access(HOSTS));
+    expect(plivo.sent.code).toBe(200);
+    expect(plivo.sent.body).toBe('bytes');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

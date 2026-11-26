@@ -84,6 +84,8 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['WS /api/v1/webrtc-call/:_/pstn-stream', 'carrier PSTN media leg, VoiceLink and Plivo (carrier-facing WS)'],
   ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (the HMAC token is the credential)'],
   ['GET /super-admin/usage', 'super-admin usage counts'],
+  // No super-admin screen calls it yet; once one does it moves to the console inventory.
+  ['POST /super-admin/phone-numbers/:_/pin', 'move a service number onto a tenant`s own carrier account (docs/carriers.md CR6)'],
   ['GET /super-admin/tenants/:_/accounts/:_/settings', 'per-account settings'],
   ['PUT /super-admin/tenants/:_/accounts/:_/settings', 'per-account settings'],
   ['PUT /super-admin/tenants/:_/memberships/:_/role', 'membership role change (decision Q3d)'],
@@ -97,6 +99,7 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /super-admin/telephony-credentials', 'carrier credential create, verified with the carrier (BYOC, B20)'],
   ['PATCH /super-admin/telephony-credentials/:_', 'carrier credential rename (BYOC, B20)'],
   ['PUT /super-admin/telephony-credentials/:_/secret', 'carrier credential secret rotation (BYOC, B20)'],
+  ['PATCH /super-admin/telephony-credentials/:_/concurrency', 'carrier account concurrency cap, set or cleared (CR13; audited)'],
   ['POST /super-admin/telephony-credentials/:_/disable', 'carrier credential disable (BYOC, B20)'],
   ['POST /super-admin/telephony-credentials/:_/enable', 'carrier credential enable (BYOC, B20)'],
   ['POST /super-admin/telephony-credentials/:_/revoke', 'carrier credential revoke (BYOC, B20)'],

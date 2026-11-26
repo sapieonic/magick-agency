@@ -20,7 +20,9 @@ import type {
   TelephonyCredentialNumberSync,
 } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { CredentialSealer, CredentialSealError, type SealContext } from './credential-sealer.js';
-import { findCredentialSpec, type CredentialSpec, type FetchLike } from './credential-specs.js';
+import { TELEPHONY_ACCOUNT_REF_MAX_LENGTH } from './account-ref.js';
+import { accountRefReserved, findCredentialSpec, type CredentialCallContext, type CredentialSpec, type FetchLike } from './credential-specs.js';
+import type { TelephonyConfig } from '../carrier-catalog.js';
 import { Secret, secretHint } from './secret.js';
 import { safeIssues } from './safe-issues.js';
 import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../webhook-grace.js';
@@ -42,7 +44,7 @@ const OPEN_CACHE_MAX = 256;
 export type CredentialRepo = Pick<TelephonyCredentialRepository,
   | 'create' | 'findById' | 'findOpenableSecrets' | 'findOpenableVersions' | 'list' | 'updateLabel' | 'rotateSecret'
   | 'setStatus' | 'enable' | 'markVerified' | 'revoke' | 'shredIfIdle' | 'usage' | 'liveCampaigns' | 'distinctKekIds'
-  | 'findRevokedUnshredded' | 'pruneRetiredSecrets' | 'findInbound'>;
+  | 'findRevokedUnshredded' | 'pruneRetiredSecrets' | 'findInbound' | 'setConcurrencyCap'>;
 
 export interface TenantLookup {
   findById(id: string): Promise<{ id: string } | null>;
@@ -78,6 +80,10 @@ export function revokeInUseMessage(
 
 const fail = (code: TelephonyCredentialErrorCode, message: string, details?: Array<{ path: string; message: string }>): ServiceResult<never> =>
   ({ ok: false, code, message, ...(details ? { details } : {}) });
+
+/** A credential naming an account ref its spec reserves (CR3). Fixed text: the ref is not echoed. */
+const accountRefIsReserved = (): ServiceResult<never> =>
+  fail('account_ref_reserved', 'This carrier account is this service’s own, so it cannot be registered as a tenant’s credential');
 
 /**
  * Why a credential is being resolved, which decides which statuses may serve it.
@@ -176,7 +182,19 @@ export class TelephonyCredentialService {
     fetchImpl?: FetchLike;
     /** The phone inventory, for `syncNumbers`. */
     numbers?: NumberSyncRepo;
+    /**
+     * This deployment's carrier env (`config.telephony`): the account refs a spec reserves
+     * (`CredentialSpec.reservedAccountRefs`, CR3), and the API host of a carrier whose host is
+     * operator config (VoiceLink's `check`, CR2). Absent: none is reserved, and such a carrier
+     * answers every check `unreachable`.
+     */
+    telephony?: TelephonyConfig;
   }) {}
+
+  /** What a spec's carrier calls are handed: the transport and this deployment's carrier env. */
+  private carrierContext(): CredentialCallContext {
+    return { fetch: this.deps.fetchImpl, telephony: this.deps.telephony };
+  }
 
   get storeAvailable(): boolean {
     return this.deps.sealer !== null;
@@ -186,6 +204,8 @@ export class TelephonyCredentialService {
 
   async create(input: {
     tenantId: string; provider: string; label: string; fields: Record<string, unknown>; adminId: string;
+    /** CR13: the carrier account's own concurrency cap; absent or null is none. */
+    maxConcurrentCalls?: number | null;
   }): Promise<ServiceResult<TelephonyCredentialRecord>> {
     const sealer = this.deps.sealer;
     if (!sealer) return fail('credential_store_unavailable', 'No credential keyring is configured');
@@ -203,9 +223,20 @@ export class TelephonyCredentialService {
         ...(secParsed.success ? [] : issues(secParsed.error, 'fields')),
       ]);
     }
+    const accountRef = spec.accountRef(pubParsed.data);
+    // Wider than the column: a field error, never a 22001 from the insert. Each spec caps its
+    // field already; this holds for a spec that forgets.
+    if (accountRef.length > TELEPHONY_ACCOUNT_REF_MAX_LENGTH) {
+      return fail('invalid_input', 'Invalid credential fields', [
+        { path: 'fields', message: `The account name is longer than ${TELEPHONY_ACCOUNT_REF_MAX_LENGTH} characters` },
+      ]);
+    }
+    // Before the carrier is asked: a reserved ref is the service's own account, and its login
+    // is never tried with a secret a tenant's form supplied.
+    if (accountRefReserved(spec, accountRef, this.deps.telephony)) return accountRefIsReserved();
     if (!(await this.deps.tenants.findById(input.tenantId))) return fail('tenant_not_found', 'Tenant not found');
 
-    const check = await spec.check(pubParsed.data, secParsed.data, this.deps.fetchImpl);
+    const check = await spec.check(pubParsed.data, secParsed.data, this.carrierContext());
     if (check.result === 'rejected') return fail('carrier_rejected', check.reason);
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
 
@@ -214,8 +245,9 @@ export class TelephonyCredentialService {
     try {
       const row = await this.deps.repo.create({
         id, tenant_id: input.tenantId, provider: spec.provider, label: input.label,
-        account_ref: spec.accountRef(pubParsed.data), public_config: pubParsed.data,
+        account_ref: accountRef, public_config: pubParsed.data,
         sealed, created_by: input.adminId, verified_at: new Date(),
+        max_concurrent_calls: input.maxConcurrentCalls ?? null,
       });
       return { ok: true, value: row };
     } catch (err) {
@@ -242,6 +274,17 @@ export class TelephonyCredentialService {
   }
 
   /**
+   * Set or clear the carrier account's own concurrency cap (CR13): at most `cap` live calls on
+   * it at once, across every account of its tenant; null is no cap of its own. A revoked
+   * credential is refused. Calls already live are never ended by a lower cap: new ones wait.
+   * The caller drops the admission's cached cap (`ConcurrencyControl.invalidateCredentialLimit`).
+   */
+  async setConcurrencyCap(id: string, cap: number | null, adminId: string): Promise<ServiceResult<TelephonyCredentialRecord>> {
+    const row = await this.deps.repo.setConcurrencyCap(id, cap, adminId);
+    return row ? { ok: true, value: row } : this.missingOrRevoked(id);
+  }
+
+  /**
    * Replace the secret. The carrier must accept the new one first; the account id
    * cannot change (a different account is a different credential).
    */
@@ -262,8 +305,11 @@ export class TelephonyCredentialService {
     if (current.secret_version !== input.expectedVersion) {
       return fail('version_conflict', 'The credential was changed since this form was opened');
     }
+    // The account ref cannot change on a rotate, but what is reserved comes from env and can:
+    // a credential naming what is now the service's own account takes no new secret.
+    if (accountRefReserved(spec, current.account_ref, this.deps.telephony)) return accountRefIsReserved();
 
-    const check = await spec.check(current.public_config as Record<string, string>, secParsed.data, this.deps.fetchImpl);
+    const check = await spec.check(current.public_config as Record<string, string>, secParsed.data, this.carrierContext());
     if (check.result === 'rejected') return fail('carrier_rejected', check.reason);
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
 
@@ -300,7 +346,7 @@ export class TelephonyCredentialService {
     }
     const { row, secret } = opened;
     if (row.status === 'revoked') return fail('invalid_transition', 'A revoked credential cannot be verified');
-    const check = await spec.check(row.public_config as Record<string, string>, secret.reveal(), this.deps.fetchImpl);
+    const check = await spec.check(row.public_config as Record<string, string>, secret.reveal(), this.carrierContext());
     if (check.result === 'unreachable') return fail('carrier_unreachable', check.reason);
     const secretVersion = row.secret_version;
     const written = check.result === 'rejected'
@@ -444,7 +490,7 @@ export class TelephonyCredentialService {
       }
       return this.unavailable(err);
     }
-    const list = await spec.listNumbers(opened.row.public_config as Record<string, string>, opened.secret.reveal(), this.deps.fetchImpl);
+    const list = await spec.listNumbers(opened.row.public_config as Record<string, string>, opened.secret.reveal(), this.carrierContext());
     if (list.result === 'rejected') return fail('carrier_rejected', list.reason);
     if (list.result === 'unreachable') return fail('carrier_unreachable', list.reason);
     if (list.result === 'too_many') return fail('too_many_numbers', list.reason);

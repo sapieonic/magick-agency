@@ -110,13 +110,14 @@ export function summaryQueue(
 /**
  * The agent's stored dedicated number, kept only while the campaign can still dial it: on a
  * campaign pinned to a tenant's carrier account, a number no longer active on it is not used
- * (PL13), so the summary does not name it. The service's own account: no extra read.
+ * (PL13); on the service's own account, a number pinned to a credential (CR9). So the summary
+ * does not name it.
  */
 export async function dialableStoredCallerId(
   campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'account_id' | 'caller_ids' | 'telephony_credential_id'>,
   stored: string | null,
 ): Promise<string | null> {
-  if (stored === null || !campaign.telephony_credential_id) return stored;
+  if (stored === null) return stored;
   return (await dialableCallerIds(campaign)).includes(stored) ? stored : null;
 }
 

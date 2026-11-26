@@ -38,7 +38,7 @@ export const TELEPHONY_CREDENTIAL_LABEL_UNIQUE = 'uq_telephony_credentials_label
 
 const COLUMNS = `
   id, tenant_id, provider, label, status, account_ref, public_config,
-  secret_version, secret_hint, verified_at, last_error,
+  secret_version, secret_hint, verified_at, last_error, max_concurrent_calls,
   created_by, updated_by, created_at, updated_at, revoked_at, shredded_at`;
 
 /** The inbound state's columns (`TelephonyCredentialInboundRecord`); `c` is the credential. */
@@ -122,13 +122,13 @@ export class TelephonyCredentialRepository {
       const result = await client.query<TelephonyCredentialRecord>(
         `INSERT INTO telephony_credentials
            (id, tenant_id, provider, label, account_ref, public_config,
-            secret_version, secret_hint, verified_at, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $9)
+            secret_version, secret_hint, verified_at, created_by, updated_by, max_concurrent_calls)
+         VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $9, $10)
          RETURNING ${COLUMNS}`,
         [
           input.id, input.tenant_id, input.provider, input.label, input.account_ref,
           JSON.stringify(input.public_config), input.sealed.secret_hint,
-          input.verified_at, input.created_by,
+          input.verified_at, input.created_by, input.max_concurrent_calls ?? null,
         ],
       );
       await insertSecret(client, input.id, 1, input.sealed);
@@ -209,6 +209,35 @@ export class TelephonyCredentialRepository {
       [id, label, updatedBy],
     );
     return result.rows[0] ?? null;
+  }
+
+  /**
+   * Set or clear the credential's own concurrency cap (CR13; 0077): at most `cap` live calls on
+   * this carrier account at once, across every account of its tenant; null is no cap of its own.
+   * Refused (null) once revoked. Lowering it below the calls live now ends none of them: the
+   * admission reads the new cap and refuses new calls until enough have ended.
+   */
+  async setConcurrencyCap(id: string, cap: number | null, updatedBy: string): Promise<TelephonyCredentialRecord | null> {
+    const result = await getPool().query<TelephonyCredentialRecord>(
+      `UPDATE telephony_credentials SET max_concurrent_calls = $2::int, updated_by = $3
+        WHERE id = $1 AND status <> 'revoked'
+        RETURNING ${COLUMNS}`,
+      [id, cap, updatedBy],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * The cap the admission reads (CR13): the credential's `max_concurrent_calls`, null when it
+   * has none or no such credential exists (a call on a credential that is gone is refused by the
+   * credential checks, not here). Uncached: the guard caches it briefly.
+   */
+  async getConcurrencyCap(id: string): Promise<number | null> {
+    const result = await getPool().query<{ max_concurrent_calls: number | null }>(
+      `SELECT max_concurrent_calls FROM telephony_credentials WHERE id = $1`,
+      [id],
+    );
+    return result.rows[0]?.max_concurrent_calls ?? null;
   }
 
   /**

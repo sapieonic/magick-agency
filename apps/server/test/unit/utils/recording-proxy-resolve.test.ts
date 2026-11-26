@@ -12,34 +12,46 @@ const VOICELINK_URL =
 
 describe('isDirectRecordingProvider', () => {
   it('is true only for allowlisted direct providers', () => {
-    expect(isDirectRecordingProvider('voicelink')).toBe(true);
-    expect(isDirectRecordingProvider('twilio')).toBe(false);
-    expect(isDirectRecordingProvider('vobiz')).toBe(false);
-    expect(isDirectRecordingProvider('unknown')).toBe(false);
+    expect(isDirectRecordingProvider('voicelink', null)).toBe(true);
+    expect(isDirectRecordingProvider('twilio', null)).toBe(false);
+    expect(isDirectRecordingProvider('vobiz', null)).toBe(false);
+    expect(isDirectRecordingProvider('unknown', null)).toBe(false);
   });
 
   it('is case-sensitive (allowlist is lowercase only)', () => {
-    expect(isDirectRecordingProvider('VoiceLink')).toBe(false);
-    expect(isDirectRecordingProvider('VOICELINK')).toBe(false);
-    expect(isDirectRecordingProvider('Voicelink')).toBe(false);
+    expect(isDirectRecordingProvider('VoiceLink', null)).toBe(false);
+    expect(isDirectRecordingProvider('VOICELINK', null)).toBe(false);
+    expect(isDirectRecordingProvider('Voicelink', null)).toBe(false);
   });
 
   it('returns false for empty string', () => {
-    expect(isDirectRecordingProvider('')).toBe(false);
+    expect(isDirectRecordingProvider('', null)).toBe(false);
   });
 
   it('returns false for every other known telephony provider', () => {
     for (const p of ['twilio', 'vobiz', 'exotel', 'telnyx', 'z99', 'plivo', 'generic_sip']) {
-      expect(isDirectRecordingProvider(p)).toBe(false);
+      expect(isDirectRecordingProvider(p, null)).toBe(false);
     }
+  });
+});
+
+describe('isDirectRecordingProvider — a call pinned to a credential (CR12)', () => {
+  it('is never direct, even on a carrier whose service-account recordings are public', () => {
+    expect(isDirectRecordingProvider('voicelink', 'cred-1')).toBe(false);
+    expect(isDirectRecordingProvider('plivo', 'cred-1')).toBe(false);
+  });
+
+  it('reads only a null credential as unpinned: a row read without the column is proxied', () => {
+    expect(isDirectRecordingProvider('voicelink', undefined)).toBe(false);
+    expect(isDirectRecordingProvider('voicelink', '')).toBe(false);
   });
 });
 
 describe('isDirectRecordingProvider — scope', () => {
   it('voicelink is the only direct provider today — twilio/vobiz go through the proxy', () => {
-    expect(isDirectRecordingProvider('voicelink')).toBe(true);
-    expect(isDirectRecordingProvider('twilio')).toBe(false);
-    expect(isDirectRecordingProvider('vobiz')).toBe(false);
+    expect(isDirectRecordingProvider('voicelink', null)).toBe(true);
+    expect(isDirectRecordingProvider('twilio', null)).toBe(false);
+    expect(isDirectRecordingProvider('vobiz', null)).toBe(false);
   });
 });
 
@@ -51,24 +63,25 @@ describe('resolveClientRecordingUrl — the proxy-path-agnostic form', () => {
 
   it('returns null when there is no recording', () => {
     expect(
-      resolveClientRecordingUrl({ recordingUrl: null, provider: 'voicelink', proxyPath: WEBRTC_PROXY }),
+      resolveClientRecordingUrl({ recordingUrl: null, provider: 'voicelink', telephonyCredentialId: null, proxyPath: WEBRTC_PROXY }),
     ).toBeNull();
     expect(
-      resolveClientRecordingUrl({ recordingUrl: undefined, provider: 'vobiz', proxyPath: WEBRTC_PROXY }),
+      resolveClientRecordingUrl({ recordingUrl: undefined, provider: 'vobiz', telephonyCredentialId: null, proxyPath: WEBRTC_PROXY }),
     ).toBeNull();
     expect(
-      resolveClientRecordingUrl({ recordingUrl: '', provider: 'voicelink', proxyPath: WEBRTC_PROXY }),
+      resolveClientRecordingUrl({ recordingUrl: '', provider: 'voicelink', telephonyCredentialId: null, proxyPath: WEBRTC_PROXY }),
     ).toBeNull();
   });
 
   it('returns the raw provider URL for voicelink, whatever the proxy path', () => {
     expect(
-      resolveClientRecordingUrl({ recordingUrl: VOICELINK_URL, provider: 'voicelink', proxyPath: WEBRTC_PROXY }),
+      resolveClientRecordingUrl({ recordingUrl: VOICELINK_URL, provider: 'voicelink', telephonyCredentialId: null, proxyPath: WEBRTC_PROXY }),
     ).toBe(VOICELINK_URL);
     expect(
       resolveClientRecordingUrl({
         recordingUrl: VOICELINK_URL,
         provider: 'voicelink',
+        telephonyCredentialId: null,
         proxyPath: '/api/v1/calls/call-1/recording',
       }),
     ).toBe(VOICELINK_URL);
@@ -80,10 +93,19 @@ describe('resolveClientRecordingUrl — the proxy-path-agnostic form', () => {
         resolveClientRecordingUrl({
           recordingUrl: 'https://provider.example/rec.mp3',
           provider,
+          telephonyCredentialId: null,
           proxyPath: WEBRTC_PROXY,
         }),
       ).toBe(WEBRTC_PROXY);
     }
+  });
+
+  it('returns the proxy path for a VoiceLink call pinned to a credential (CR12: revoking it ends playback)', () => {
+    expect(
+      resolveClientRecordingUrl({
+        recordingUrl: VOICELINK_URL, provider: 'voicelink', telephonyCredentialId: 'cred-1', proxyPath: WEBRTC_PROXY,
+      }),
+    ).toBe(WEBRTC_PROXY);
   });
 
   it('proxies for an empty or unrecognised provider (fail closed — never leak an auth-gated URL)', () => {
@@ -91,6 +113,7 @@ describe('resolveClientRecordingUrl — the proxy-path-agnostic form', () => {
       resolveClientRecordingUrl({
         recordingUrl: 'https://media.vobiz.ai/rec/1.mp3',
         provider: '',
+        telephonyCredentialId: null,
         proxyPath: WEBRTC_PROXY,
       }),
     ).toBe(WEBRTC_PROXY);
@@ -98,6 +121,7 @@ describe('resolveClientRecordingUrl — the proxy-path-agnostic form', () => {
       resolveClientRecordingUrl({
         recordingUrl: 'https://x/y.mp3',
         provider: 'brand_new_carrier',
+        telephonyCredentialId: null,
         proxyPath: WEBRTC_PROXY,
       }),
     ).toBe(WEBRTC_PROXY);

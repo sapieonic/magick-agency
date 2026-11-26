@@ -88,8 +88,8 @@ export interface CampaignHealthInputs {
   onBreakByReason: Record<string, number>;
   /**
    * How many of the campaign's caller IDs are still dialable on its carrier account
-   * (`dialableCallerIds`, PL13), read for a running campaign on a tenant's own account
-   * only; `null` when not read or the read failed (never a guess of zero).
+   * (`dialableCallerIds`: PL13 on a tenant's own account, CR9 on the service's), read for a
+   * running campaign; `null` when not read or the read failed (never a guess of zero).
    */
   dialableCallerIds: number | null;
   /**

@@ -13,10 +13,24 @@
  * the provider-mode migration's drain check, and the provider guard for per-provider live
  * leases. The repositories are shared (packages/db); the guard calls go through this seam.
  *
+ * A carrier account's own cap (CR13, `telephony_credentials.max_concurrent_calls`) is written
+ * by the super-admin credential routes, which then call `invalidateCredentialLimit` so the
+ * next admission reads it, and read the live calls on each credential with
+ * `getCredentialCounts`.
+ *
+ * The pacing engine reads two of these counters too (`agency/pacing/dial-scopes.ts`): an
+ * account's live calls in its share of one carrier (`getProviderCount`) and the live calls on a
+ * carrier account (`getCredentialCounts`), so a tick never plans more dials than admission will
+ * take on those scopes (PL14, CR13).
+ *
  * `bootstrap/voice.ts` registers the implementation at boot (`setConcurrencyControl`). The
  * default throws, so a super-admin write before the voice engine is wired fails loudly
  * instead of leaving a stale cross-replica limit cached in Redis.
  */
+
+export type CredentialCounts =
+  | { status: 'available'; counts: Map<string, number> }
+  | { status: 'unavailable'; counts: Map<string, number> };
 
 export type AccountProviderCounts =
   | { status: 'available'; counts: Map<string, number> }
@@ -33,6 +47,12 @@ export interface ConcurrencyControl {
    */
   getAccountProviderCounts(tenantId: string, accountId: string): Promise<AccountProviderCounts>;
   /**
+   * `providerConcurrencyGuard.getProviderCount(tenantId, accountId, provider)` — the account's
+   * live calls in its share of one carrier, the counter admission compares against (one GET).
+   * null is a Redis fault, never "zero calls". Read by pacing (PL14).
+   */
+  getProviderCount(tenantId: string, accountId: string, provider: string): Promise<number | null>;
+  /**
    * `accountConcurrencyGuard.getAccountCount(tenantId, accountId)` — the runtime
    * accessor; falls back to a process-local lease count when Redis is degraded. The
    * utilization read takes `total.in_use` from it.
@@ -44,6 +64,14 @@ export interface ConcurrencyControl {
    * migration's drain check reads this, not the provider guard.
    */
   getDistributedAccountCount(tenantId: string, accountId: string): Promise<DistributedAccountCount>;
+  /** `credentialConcurrencyGuard.invalidateCap(credentialId)`: a carrier account's cap changed (CR13). */
+  invalidateCredentialLimit(credentialId: string): Promise<void>;
+  /**
+   * `credentialConcurrencyGuard.getCounts(credentialIds)`: the live calls on each carrier
+   * account (every call on it is counted, capped or not). `unavailable` is a Redis fault,
+   * never "zero calls".
+   */
+  getCredentialCounts(credentialIds: readonly string[]): Promise<CredentialCounts>;
 }
 
 export type DistributedAccountCount =
@@ -60,10 +88,19 @@ const UNWIRED: ConcurrencyControl = {
   async getAccountProviderCounts() {
     throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
+  async getProviderCount() {
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
+  },
   async getAccountCount() {
     throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
   async getDistributedAccountCount() {
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
+  },
+  async invalidateCredentialLimit() {
+    throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
+  },
+  async getCredentialCounts() {
     throw new Error('ConcurrencyControl not wired: the voice engine bootstrap must call setConcurrencyControl at boot');
   },
 };

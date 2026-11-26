@@ -33,7 +33,7 @@ import type {
 } from '../types.js';
 import type { AppConfig } from '../../config/index.js';
 import type { ResolvedCredential } from '../credentials/credential-service.js';
-import { PLIVO_API_BASE } from '../credentials/credential-specs.js';
+import { PLIVO_API_BASE } from './plivo.credential-spec.js';
 import { Secret } from '../credentials/secret.js';
 import {
   CarrierAuthRejectedError,
