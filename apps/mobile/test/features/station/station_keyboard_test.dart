@@ -269,7 +269,7 @@ void main() {
     }
   });
 
-  testWidgets('the band stays put with the keyboard up on a tall page, and scrolls with the content on a short one', (tester) async {
+  testWidgets('the band stays put with the keyboard up on a tall page, scrolls with the content on a short one, and stays for a hardware keyboard\'s strip', (tester) async {
     Finder bandInScroll() => find.descendant(
       of: find.descendant(of: find.byType(StationPage), matching: find.byType(SingleChildScrollView)).first,
       matching: find.byKey(const Key('band-title')),
@@ -291,11 +291,21 @@ void main() {
     await _slideKeyboard(tester, from: 300, to: 0);
     expect(bandInScroll(), findsNothing, reason: 'pinned again once the keyboard is down');
 
-    // A hardware keyboard's suggestion strip (under 100 dp) is not the on-screen keyboard.
-    await tester.ensureVisible(find.byKey(const Key('notes-field')));
+    // A hardware keyboard's suggestion strip is not the on-screen keyboard (100 dp or less): on a
+    // 360×640 phone with three-button navigation (48 dp), a 50 dp strip over the buttons leaves a
+    // page under 520 dp, and the band pinned.
+    await pumpStation(tester, view, shell: true, statusBar: _statusBar, navBar: 48, size: const Size(360, 640));
     await settle(tester);
-    await _slideKeyboard(tester, from: 0, to: 56);
-    expect(bandInScroll(), findsNothing, reason: 'a 56 dp strip leaves the band pinned');
+    expect(bandInScroll(), findsNothing, reason: 'pinned while the keyboard is down');
+    final notes = find.byKey(const Key('notes-field'));
+    await tester.ensureVisible(notes);
+    await settle(tester);
+    tester.state<EditableTextState>(find.descendant(of: notes, matching: find.byType(EditableText))).requestKeyboard();
+    await tester.pump();
+    setPhoneInsets(tester, statusBar: _statusBar, keyboard: 98, navBar: 48);
+    await settle(tester);
+    expect(tester.getRect(find.byType(StationPage)).height, lessThan(StationPage.keyboardShortPage));
+    expect(bandInScroll(), findsNothing, reason: 'a strip over the buttons (98 dp) leaves the band pinned');
   });
 
   testWidgets('a follow-up sheet over the station sits on the keyboard, with no room left for the keyboard under it', (tester) async {
