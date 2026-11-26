@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.2](https://github.com/sapieonic/magick-agency/compare/report-renderer-v0.6.1...report-renderer-v0.6.2) (2026-11-26)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.32.0
+
 ## [0.6.1](https://github.com/sapieonic/magick-agency/compare/report-renderer-v0.6.0...report-renderer-v0.6.1) (2026-11-24)
 
 
