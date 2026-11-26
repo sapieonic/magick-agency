@@ -2955,7 +2955,8 @@ Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `ap
 |---|---|
 | `apps/mobile/test/app/shell_test.dart` (with the Missed badge on My calls; light by default) | ~28 |
 | `apps/mobile/test/app/softphone_navigation_test.dart` (with floor assist's message seam plugged in) | ~29 |
-| `apps/mobile/test/app/supervisor_message_banner_test.dart` (LF36: the banner above every tab and over a call, never a dialog; the sender and time, "Show N more messages" as a 48 dp button opening every queued message oldest first, each Dismiss by id, Dismiss all, Show less, a new one joining the open list, closed again with one left, the open list at most a third of a 360×800 screen and scrolling inside, 200% text open; each announced once, one queued at mount too; no live region (nothing said twice, nor on a dismissal or opening the list), plain text, 48 dp; a 500-character message at 200% text) | 13 |
+| `apps/mobile/test/app/supervisor_message_banner_test.dart` (LF36: the banner above every tab and over a call, never a dialog; the sender and time, "Show N more messages" as a 48 dp button opening every queued message oldest first, each Dismiss by id, Dismiss all (a button's own flags, its label), the same button reading Show less, a new one joining the open list, closed again with one left; with no bound given at most a third of a 360×800 window, the list scrolling inside, 200% text open; each announced once, one queued at mount too; no live region (nothing said twice, nor on a dismissal or opening the list), plain text, 48 dp; a 500-character message at 200% text; focus: the one button keeps it opening and closing and says expanded, a dismissed message's focus to the next Dismiss else the one before, the list closing by itself keeps focus in the banner, with nothing in it focused nothing takes focus; each Dismiss names whose message) | 18 |
+| `apps/mobile/test/app/supervisor_message_room_test.dart` (LF36's room, in the real shell with the app's fonts: at most about a third of the room under the status bar (never under one 64 dp row), no overflow and a stated least height for the tab, on 360×640 and 411×917 with and without a 300–330 dp keyboard, 800×360 with and without a 180 dp keyboard, 100% and 200% text, twenty messages or a 500-character one; no room for the list: the first message with "· N more messages"; the keyboard closing the open list and opening it again as it goes; one message at 64 dp) | 15 |
 | `apps/mobile/test/app/splash_screen_test.dart` | ~2 |
 | `apps/mobile/test/core/foundation_test.dart` | ~20 |
 
@@ -3322,7 +3323,7 @@ Files: `phone_screen.dart`, `softphone_copy.dart`, `softphone_panel.dart`, `part
 |---|---|
 | `apps/mobile/test/features/softphone/phone_screen_test.dart` | ~30 |
 | `apps/mobile/test/features/softphone/softphone_a11y_test.dart` | ~18 |
-| `apps/mobile/test/features/softphone/softphone_need_help_test.dart` (LF39 (a): Need help on the Phone tab: raise, cancel, notice, error, expired, offline, 360 wide at 200% text) | 7 |
+| `apps/mobile/test/features/softphone/softphone_need_help_test.dart` (LF39 (a): Need help on the Phone tab: raise, cancel, notice, error, expired, offline, offered again and raising once after a message answered it (ready and on a call), 360 wide at 200% text) | 8 |
 | `apps/mobile/test/features/softphone/softphone_panel_test.dart` (with What happened? in the station's look and words: the tiles, no badges, no speaker while the call is live, Call when? and who makes the call; a chosen campaign's nameless contact "Customer", the number (hidden as the call's campaign says) and the first fact, AS19 S4) | 61 |
 
 ### `apps/mobile/packages/agency_wire/`

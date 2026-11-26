@@ -182,15 +182,17 @@ class AppShell extends ConsumerWidget {
               destinations: [for (final b in branches) destination(b)],
             );
     // A supervisor's message (floor assist, LF5) sits at the top of every tab, over a call too:
-    // the banner takes the status bar's inset, and the tab below it no longer needs it.
+    // the banner takes the status bar's inset, and the tab below it no longer needs it. It is told
+    // the body's height (the keyboard and the tab bar already off it) and takes at most about a
+    // third of what is left under the status bar, so the tab keeps the rest (LF36).
     final messageShown = ref.watch(supervisorMessagesProvider.select((m) => m.isNotEmpty));
     return Scaffold(
-      body: Column(
+      body: LayoutBuilder(builder: (_, body) => Column(
         children: [
-          if (messageShown) const SafeArea(bottom: false, child: SupervisorMessageBanner()),
+          if (messageShown) ConstrainedBox(constraints: BoxConstraints(maxHeight: body.maxHeight), child: const SafeArea(bottom: false, child: SupervisorMessageBanner())),
           Expanded(key: const ValueKey('shell-body'), child: MediaQuery.removePadding(context: context, removeTop: messageShown, child: shell)),
         ],
-      ),
+      )),
       bottomNavigationBar: switch ((ringNotice, bar)) {
         (null, _) => bar,
         (final String notice, null) => SafeArea(top: false, child: RingNoticeBanner(text: notice)),

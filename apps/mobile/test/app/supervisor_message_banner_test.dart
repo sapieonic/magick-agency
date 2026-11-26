@@ -1,5 +1,7 @@
+import 'dart:ui' show Tristate;
+
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show SemanticsNode;
+import 'package:flutter/rendering.dart' show SemanticsAction, SemanticsNode;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -162,7 +164,7 @@ void main() {
       await pumpBanner(tester);
       expect(find.text('<b>Not bold</b> https://example.test'), findsOneWidget);
       expect(liveRegions(tester), isEmpty);
-      expect(find.byTooltip('Dismiss this message'), findsOneWidget);
+      expect(find.byTooltip('Dismiss the message from Anitha N'), findsOneWidget);
       expect(tester.getSize(find.byKey(const Key('dismiss-supervisor-message'))).height, greaterThanOrEqualTo(48));
       semantics.dispose();
     });
@@ -182,7 +184,7 @@ void main() {
       msg('m3', text: 'Call me after this one', from: 'Ravi'),
     ];
     final list = find.byKey(const Key('supervisor-message-list'));
-    final more = find.byKey(const Key('supervisor-message-more'));
+    final more = find.byKey(const Key('supervisor-message-toggle'));
 
     Future<List<Object?>> pumpBanner(WidgetTester tester, {double textScale = 1, Size size = const Size(360, 800)}) async {
       tester.view.devicePixelRatio = 3;
@@ -203,7 +205,9 @@ void main() {
             data: MediaQuery.of(context).copyWith(supportsAnnounce: true, textScaler: TextScaler.linear(textScale)),
             child: child!,
           ),
-          home: const Scaffold(body: Column(children: [SupervisorMessageBanner(), Expanded(child: Placeholder(key: Key('the-call')))])),
+          home: const Scaffold(
+            body: Column(children: [SupervisorMessageBanner(), TextField(key: Key('notes')), Expanded(child: Placeholder(key: Key('the-call')))]),
+          ),
         ),
       ));
       return announcements;
@@ -217,7 +221,7 @@ void main() {
       expect(find.text('Offer the 3-month plan'), findsNothing);
       expect(find.text('Show 2 more messages'), findsOneWidget);
       expect(tester.getSize(more).height, greaterThanOrEqualTo(48));
-      expect(tester.getSemantics(more).flagsCollection.isButton, isTrue, reason: 'a screen reader says it can be pressed');
+      expect(tester.getSemantics(more).getSemanticsData().flagsCollection.isButton, isTrue, reason: 'a screen reader says it can be pressed');
       expect(list, findsNothing);
 
       await tester.tap(more);
@@ -231,7 +235,7 @@ void main() {
       expect(find.text('3 messages'), findsOneWidget);
       final ys = [for (final m in burst) tester.getTopLeft(find.text(m.text)).dy];
       expect(ys, orderedEquals([...ys]..sort()), reason: 'oldest first');
-      expect(more, findsNothing);
+      expect(find.descendant(of: more, matching: find.text('Show less')), findsOneWidget, reason: 'the same button closes it');
       expect(dismissed, isEmpty, reason: 'opening the list dismisses nothing');
       semantics.dispose();
     });
@@ -276,7 +280,7 @@ void main() {
       await pumpBanner(tester);
       await tester.tap(more);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('supervisor-message-fewer')));
+      await tester.tap(more);
       await tester.pumpAndSettle();
       expect(list, findsNothing);
       expect(find.text('Show 2 more messages'), findsOneWidget);
@@ -286,8 +290,12 @@ void main() {
       await tester.pumpAndSettle();
       final all = find.byKey(const Key('dismiss-all-supervisor-messages'));
       expect(tester.getSize(all).height, greaterThanOrEqualTo(48));
-      expect(tester.getSemantics(all).label, 'Dismiss all messages');
-      expect(tester.getSemantics(all).flagsCollection.isButton, isTrue);
+      final allSaid = tester.getSemantics(all).getSemanticsData();
+      expect(allSaid.label, 'Dismiss all messages');
+      expect(allSaid.flagsCollection.isButton, isTrue);
+      expect(allSaid.flagsCollection.isEnabled.toBoolOrNull(), isTrue, reason: 'the button\'s own flags, not a label laid over them');
+      expect(allSaid.flagsCollection.isFocused, isNot(Tristate.none), reason: 'it can take focus');
+      expect(allSaid.hasAction(SemanticsAction.tap), isTrue);
       await tester.tap(all);
       expect(dismissed, ['m1', 'm2', 'm3']);
       c.read(_messages.notifier).set(const []);
@@ -296,14 +304,14 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('twenty held, open on 360×800: the list is at most a third of the screen and scrolls inside; the call stays on screen',
+    testWidgets('twenty held, open on 360×800 with no bound given: at most a third of the window, the list scrolling inside; the call stays on screen',
         (tester) async {
       c.read(_messages.notifier).set([for (var i = 1; i <= 20; i++) msg('m$i', text: 'Message number $i, a line or two long so it wraps.')]);
       await pumpBanner(tester);
       await tester.tap(more);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(tester.getSize(list).height, lessThanOrEqualTo(800 / 3));
+      expect(tester.getSize(find.byKey(const Key('supervisor-message'))).height, lessThanOrEqualTo(800 / 3 + 0.5));
       final call = tester.getRect(find.byKey(const Key('the-call')));
       expect(call.height, greaterThan(800 * 0.5), reason: 'the call under the banner keeps most of the screen');
       // The last one is reached by scrolling inside the list.
@@ -320,7 +328,7 @@ void main() {
       await tester.tap(more);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
-      expect(tester.getSize(list).height, lessThanOrEqualTo(640 / 3));
+      expect(tester.getSize(find.byKey(const Key('supervisor-message'))).height, lessThanOrEqualTo(640 / 3 + 0.5));
     });
 
     testWidgets('opening, closing and dismissing say nothing again: each id announced once, no live region', (tester) async {
@@ -344,6 +352,161 @@ void main() {
       await tester.pumpAndSettle();
       expect(announcements, hasLength(3));
       expect(liveRegions(tester), isEmpty);
+      semantics.dispose();
+    });
+  });
+
+  group('focus and what a screen reader is told (LF36, addendum 2026-11-26)', () {
+    final toggle = find.byKey(const Key('supervisor-message-toggle'));
+    final list = find.byKey(const Key('supervisor-message-list'));
+    Finder dismissOf(String id) => find.byKey(ValueKey('dismiss-supervisor-message-$id'));
+    final single = find.byKey(const Key('dismiss-supervisor-message'));
+
+    Future<void> pumpBanner(WidgetTester tester) async {
+      tester.view.devicePixelRatio = 3;
+      tester.view.physicalSize = const Size(360, 800) * 3;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: c,
+        child: MaterialApp(
+          theme: buildTheme(AppTokens.light, Brightness.light),
+          home: const Scaffold(
+            body: Column(children: [SupervisorMessageBanner(), TextField(key: Key('notes')), Expanded(child: Placeholder())]),
+          ),
+        ),
+      ));
+    }
+
+    /// The focus node of the control [f] finds (the one it was built with).
+    FocusNode focusOf(WidgetTester tester, Finder f) =>
+        Focus.of(tester.element(find.descendant(of: f, matching: find.byWidgetPredicate((w) => w is Text || w is Icon)).first));
+
+    FocusNode? focused() => FocusManager.instance.primaryFocus;
+
+    bool? expanded(WidgetTester tester) => tester.getSemantics(toggle).getSemanticsData().flagsCollection.isExpanded.toBoolOrNull();
+
+    testWidgets('Show more and Show less are one button: it keeps focus both ways and says whether the list is open', (tester) async {
+      final semantics = tester.ensureSemantics();
+      c.read(_messages.notifier).set([msg('m1'), msg('m2'), msg('m3')]);
+      await pumpBanner(tester);
+      expect(expanded(tester), isFalse);
+      final node = focusOf(tester, toggle)..requestFocus();
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(list, findsOneWidget);
+      expect(focused(), same(node), reason: 'the button pressed still has focus');
+      expect(focusOf(tester, toggle), same(node));
+      expect(expanded(tester), isTrue);
+      expect(tester.getSemantics(toggle).getSemanticsData().label, 'Show less');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(focused(), same(node));
+      expect(expanded(tester), isFalse);
+      expect(tester.getSemantics(toggle).getSemanticsData().label, 'Show 2 more messages');
+      expect(dismissed, isEmpty);
+      semantics.dispose();
+    });
+
+    testWidgets('a focused Dismiss whose message goes hands focus to the next message\'s Dismiss, else the one before', (tester) async {
+      c.read(_messages.notifier).set([msg('m1'), msg('m2'), msg('m3'), msg('m4')]);
+      await pumpBanner(tester);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+
+      focusOf(tester, dismissOf('m2')).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      expect(dismissed, ['m2']);
+      c.read(_messages.notifier).set([msg('m1'), msg('m3'), msg('m4')]);
+      await tester.pumpAndSettle();
+      expect(focused(), same(focusOf(tester, dismissOf('m3'))), reason: 'the next one');
+
+      focusOf(tester, dismissOf('m4')).requestFocus();
+      await tester.pump();
+      c.read(_messages.notifier).set([msg('m1'), msg('m3')]);
+      await tester.pumpAndSettle();
+      expect(focused(), same(focusOf(tester, dismissOf('m3'))), reason: 'the last one went: the one before it');
+    });
+
+    testWidgets('the list closing by itself keeps focus in the banner: on the Dismiss left, or the one it was on', (tester) async {
+      c.read(_messages.notifier).set([msg('m1'), msg('m2')]);
+      await pumpBanner(tester);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      focusOf(tester, toggle).requestFocus();
+      await tester.pump();
+      // The other one dismissed (by Dismiss all elsewhere, or another of the agent's devices): one left.
+      c.read(_messages.notifier).set([msg('m2')]);
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(toggle, findsNothing);
+      expect(focused(), same(focusOf(tester, single)), reason: 'the button went with the list: the Dismiss left');
+
+      c.read(_messages.notifier).set([msg('m2'), msg('m3')]);
+      await tester.pumpAndSettle();
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      final m3 = focusOf(tester, dismissOf('m3'))..requestFocus();
+      await tester.pump();
+      c.read(_messages.notifier).set([msg('m3')]);
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(focused(), same(m3), reason: 'its own Dismiss, now the only one');
+
+      // Closed, the first one's Dismiss: dismissed, the next one moving up takes focus.
+      c.read(_messages.notifier).set([msg('m3'), msg('m4')]);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      expect(dismissed, ['m3']);
+      c.read(_messages.notifier).set([msg('m4')]);
+      await tester.pumpAndSettle();
+      expect(focused(), same(focusOf(tester, single)));
+      expect(focused(), isNot(same(m3)));
+    });
+
+    testWidgets('nothing in the banner had focus: nothing takes it, as messages arrive, open, go and close', (tester) async {
+      await pumpBanner(tester);
+      final notes = tester.widget<EditableText>(find.descendant(of: find.byKey(const Key('notes')), matching: find.byType(EditableText))).focusNode;
+      notes.requestFocus();
+      await tester.pump();
+      c.read(_messages.notifier).set([msg('m1')]);
+      await tester.pumpAndSettle();
+      expect(focused(), same(notes), reason: 'nothing takes focus on arrival (LF36)');
+      c.read(_messages.notifier).set([msg('m1'), msg('m2'), msg('m3')]);
+      await tester.pumpAndSettle();
+      // Opened with a screen reader's tap, which moves no input focus.
+      tester.widget<ButtonStyleButton>(toggle).onPressed!();
+      await tester.pumpAndSettle();
+      expect(list, findsOneWidget);
+      c.read(_messages.notifier).set([msg('m1'), msg('m3')]);
+      await tester.pumpAndSettle();
+      c.read(_messages.notifier).set([msg('m3')]);
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      c.read(_messages.notifier).set(const []);
+      await tester.pumpAndSettle();
+      expect(focused(), same(notes));
+    });
+
+    testWidgets('each Dismiss says whose message it takes away', (tester) async {
+      final semantics = tester.ensureSemantics();
+      c.read(_messages.notifier).set([msg('m1', from: 'Reshma Mohammad'), msg('m2', from: 'Your supervisor'), msg('m3', from: 'Ravi')]);
+      await pumpBanner(tester);
+      // What a screen reader says for the button (its tooltip, on the button's own node).
+      String says(Finder button) => tester.getSemantics(find.descendant(of: button, matching: find.byType(Icon))).getSemanticsData().tooltip;
+      expect(says(single), 'Dismiss the message from Reshma Mohammad');
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(says(dismissOf('m1')), 'Dismiss the message from Reshma Mohammad');
+      expect(says(dismissOf('m2')), 'Dismiss the message from Your supervisor');
+      expect(says(dismissOf('m3')), 'Dismiss the message from Ravi');
+      for (final id in ['m1', 'm2', 'm3']) {
+        expect(tester.getSize(dismissOf(id)).height, greaterThanOrEqualTo(48), reason: id);
+      }
       semantics.dispose();
     });
   });

@@ -522,10 +522,13 @@ abstract final class StationCopy {
   /// The control that opens the banner to every queued message ([n] waiting behind the one shown).
   static String showMoreMessages(int n) => n == 1 ? 'Show 1 more message' : 'Show $n more messages';
   static String messagesCount(int n) => n == 1 ? '1 message' : '$n messages';
+  /// After the sender and time when there is no room to open the list (the keyboard is up).
+  static String moreMessages(int n) => n == 1 ? '1 more message' : '$n more messages';
   static const showFewerMessages = 'Show less';
   static const dismissAllMessages = 'Dismiss all';
   static const dismissAllMessagesLabel = 'Dismiss all messages';
-  static const dismissMessageLabel = 'Dismiss this message';
+  /// Each Dismiss says whose message it takes away ([from] is "Your supervisor" with no name).
+  static String dismissMessageFrom(String from) => 'Dismiss the message from $from';
 }
 
 /// What the station says about an inbound call, in the console's words

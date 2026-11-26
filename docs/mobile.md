@@ -1454,16 +1454,31 @@ the flag is on). Break limits are not behind it.
   (never markup or a link), "Anitha N · 10:05" ("Your supervisor" with no name), on this device's
   clock. Several queue, oldest first: the banner shows one, its own Dismiss, and a "Show 2 more
   messages" button (48 dp) that opens it to every queued message, oldest first, each with its
-  sender, time, text and Dismiss, beside "Dismiss all" and "Show less" (LF36's addendum: testers did
-  not find the next message behind Dismiss). Open, the list is at most a third of the screen tall
-  and scrolls inside, so a call under it stays on screen; a message arriving while it is open joins
-  it, and it closes by itself once one is left. Each id is shown once (a resent frame is ignored), at most 20 are held, and leaving the
-  station forgets them. Each is announced to a screen reader once as it arrives ("Message from Anitha
-  N: …", polite), sender and text together. The banner is not a live region: one would say a
-  message twice as it arrives and again on a second message, a dismissal or opening the list, where
-  nothing new arrived. Nothing in it takes focus. Messages are one-way (LF5): once a message answers
-  Need help, the request has ended and Need help can be pressed again. A soft-phone session gets them too: the core publishes them beside the shell's signals
-  (`StationHost.messages`, `supervisorMessagesProvider`), not in the campaign view.
+  sender, time, text and Dismiss, beside "Dismiss all"; the same button then reads "Show less"
+  (LF36's addendum: testers did not find the next message behind Dismiss). A message arriving while
+  the list is open joins it, and it closes by itself once one is left. Each id is shown once (a
+  resent frame is ignored), at most 20 are held, and leaving the station forgets them.
+  - **Room.** The shell gives the banner its body's height (the keyboard and the tab bar already
+    off it), and the banner, shut or open, takes at most about a third of what is left under the
+    status bar, never less than one message beside its 48 dp Dismiss (64 dp); its text and list
+    scroll inside, so the tab under it keeps the rest and nothing overflows. When a third cannot
+    hold the open list (144 dp: the keyboard up on a small phone, a phone on its side), the banner
+    shows the first message with "· 2 more messages" after its time and no button, and the list
+    opens again once there is room if it was open. The first cut sized it from the whole window,
+    so with the keyboard up the list could leave the tab nothing.
+  - **Screen readers and focus.** Each message is announced once as it arrives ("Message from
+    Anitha N: …", polite), sender and text together. The banner is not a live region: one would
+    say a message twice as it arrives and again on a second message, a dismissal or opening the
+    list, where nothing new arrived. "Show 2 more messages" and "Show less" are one button, which keeps
+    focus as it opens and closes the list and says whether the list is open (expanded). Each
+    Dismiss says whose message it takes away ("Dismiss the message from Anitha N"). Nothing takes
+    focus on arrival; only when one of its controls had focus and went (its message dismissed, the
+    list closed by itself) does focus move: to the next message's Dismiss, else the one before,
+    else the button.
+  - Messages are one-way (LF5): once a message answers Need help, the request has ended and Need
+    help can be pressed again, on the station and on the Phone tab. A soft-phone session gets them
+    too: the core publishes them beside the shell's signals (`StationHost.messages`,
+    `supervisorMessagesProvider`), not in the campaign view.
   - **One vibration, never a sound** (LF39): the phone vibrates once (`HapticFeedback.vibrate`)
     when a new message arrives, on a call too (a tone could be heard by the customer; a vibration
     cannot), only while Me → Vibration (also ⋮ More → Sound) is on. Once per message id, at
