@@ -1,7 +1,8 @@
 /*
  * Whether a campaign can place a call on its carrier account right now, beyond its own
  * row: its carrier can dial from this server at all (PL12), the caller IDs that are still
- * dialable (PL13) and the carrier's concurrency allocation (PL14). Read at the dial
+ * dialable (PL13 on a tenant's account, CR9 on the service's) and the carrier's concurrency
+ * allocation (PL14). Read at the dial
  * (pacing, the agent's own dials, the soft phone), at start and resume (a refusal a
  * supervisor can act on, {@link campaignDialBlockers}), and by the health strip.
  *
@@ -23,12 +24,21 @@
  * that are still `active` on that credential and available to the campaign's account
  * (`findCredentialNumbersForAccount`, the rule the write itself applies).
  *
- * A campaign on the service's own account (no credential) is untouched: its pool is
- * `usableCallerIds`, with no read at all, exactly as before.
+ * ── CR9: a campaign on the service's own account never dials a number pinned to a credential ─
  *
- * The read is cached per campaign, credential and pool for {@link DIALABLE_CACHE_TTL_MS},
- * so a pacing tick costs nothing between reads; a sync, retire or unassign clears the
- * cache ({@link invalidateDialableCallerIds}) so the very next dial sees it. The cache is a
+ * A campaign on the service's own account (no credential) dials its stored numbers
+ * (`usableCallerIds`) except every one that is a number pinned to ANY credential, whatever its
+ * status or tenant (`phoneNumberRepository.findPinnedAmong`, the rule the write applies): that is
+ * a tenant's own number, and dialling it on the service's account bills and presents it on the
+ * wrong carrier account. The write refuses such a number (`campaign-carrier.ts`), but a campaign
+ * can still hold one: written before CR9, inherited by a retry, or holding a number that a move
+ * (CR6), a hand-added number or a sync pinned after the campaign was written. A number not in the
+ * inventory at all is dialled, as before (the service's caller IDs are shape-checked only).
+ *
+ * The read is cached per campaign, carrier account and pool for {@link DIALABLE_CACHE_TTL_MS},
+ * so a pacing tick costs nothing between reads; a sync, retire, unassign, a number added by hand
+ * or moved onto a tenant's account clears the WHOLE cache ({@link invalidateDialableCallerIds}),
+ * service-account campaigns' entries included, so the very next dial sees it. The cache is a
  * {@link GenerationTtlCache}: a read that started before a clear does not store what it
  * read when it returns (it would put a retired number back for a whole TTL). A lookup that
  * finds an entry expired deletes it, and a full cache drops its expired entries before
@@ -52,6 +62,7 @@
  *
  * Messages are British English and name no carrier brand (they reach the console).
  */
+import { phoneNumberRepository } from '@magick-agency/db/repositories/phone-number.repository';
 import { providerConcurrencyRepository } from '@magick-agency/db/repositories/provider-concurrency.repository';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
@@ -78,7 +89,8 @@ const invalidationListeners = new Set<() => void>();
 
 /**
  * Forget every cached read, here and (through {@link onDialableCallerIdsInvalidated}) in
- * every media worker: a number was synced, retired, unassigned or re-tagged.
+ * every media worker: a number was synced, retired, unassigned, re-tagged, added by hand or
+ * moved onto a tenant's account (which takes it out of every service-account campaign's pool).
  */
 export function invalidateDialableCallerIds(): void {
   clearDialableCallerIdCache();
@@ -105,35 +117,49 @@ export function onDialableCallerIdsInvalidated(listener: () => void): () => void
   return () => { invalidationListeners.delete(listener); };
 }
 
+/** The cache's name for the service's own carrier account (a credential is a UUID). */
+const SERVICE_ACCOUNT = 'service';
+
 /**
- * The caller IDs a campaign's dials may use now, in its stored order (PL13). Never throws
- * for a service-account campaign; a failed read for a pinned one rejects (the caller
- * treats it as it treats any other failed read on its path).
+ * The caller IDs a campaign's dials may use now, in its stored order: on a tenant's own carrier
+ * account those still active on its credential and available to the account (PL13); on the
+ * service's own account all of them but the numbers pinned to a credential (CR9). A failed read
+ * rejects (the caller treats it as it treats any other failed read on its path).
  */
 export async function dialableCallerIds(campaign: DialabilityCampaign): Promise<string[]> {
   const pool = usableCallerIds(campaign as AgencyCampaignRecord);
-  const credentialId = campaign.telephony_credential_id;
-  if (!credentialId || pool.length === 0) return pool;
-  const key = dialableCacheKey(campaign.id, credentialId, pool);
+  if (pool.length === 0) return pool;
+  const account = campaign.telephony_credential_id || SERVICE_ACCOUNT;
+  const key = dialableCacheKey(campaign.id, account, pool);
   const hit = cache.get(key);
   if (hit) return hit;
   // Read before the read starts: a clear while it runs moves it, and the store is skipped.
   const generation = cache.generation(key);
-  const allowed = new Set(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
-    campaign.tenant_id, campaign.account_id, credentialId, pool,
-  ));
-  const numbers = pool.filter((n) => allowed.has(n));
+  const numbers = account === SERVICE_ACCOUNT
+    ? withoutPinned(pool, await phoneNumberRepository.findPinnedAmong(pool))
+    : keepOnly(pool, await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
+      campaign.tenant_id, campaign.account_id, account, pool,
+    ));
   cache.setIf(key, generation, numbers);
   return numbers;
 }
 
-function dialableCacheKey(campaignId: string, credentialId: string, pool: readonly string[]): string {
-  return `${campaignId}|${credentialId}|${pool.join(',')}`;
+function keepOnly(pool: readonly string[], allowed: readonly string[]): string[] {
+  const set = new Set(allowed);
+  return pool.filter((n) => set.has(n));
+}
+
+function withoutPinned(pool: readonly string[], pinned: readonly string[]): string[] {
+  const set = new Set(pinned);
+  return pool.filter((n) => !set.has(n));
+}
+
+function dialableCacheKey(campaignId: string, account: string, pool: readonly string[]): string {
+  return `${campaignId}|${account}|${pool.join(',')}`;
 }
 
 /** The campaign with its caller IDs narrowed to the dialable ones, for a path that reads the row. */
 export async function withDialableCallerIds<T extends DialabilityCampaign>(campaign: T): Promise<T> {
-  if (!campaign.telephony_credential_id) return campaign;
   return { ...campaign, caller_ids: await dialableCallerIds(campaign) };
 }
 
@@ -141,30 +167,31 @@ export async function withDialableCallerIds<T extends DialabilityCampaign>(campa
  * {@link withDialableCallerIds} for many campaigns at once (the soft phone's list of
  * campaigns to tag a call with), in their order: each answer the cache holds, then one read
  * per carrier account for the rest, over the union of their pools, each campaign's numbers
- * filtered from it. The same numbers as one read per campaign: the rule is per number.
+ * filtered from it (the service's own account is one read for all its campaigns, of the pinned
+ * numbers, CR9). The same numbers as one read per campaign: the rule is per number.
  */
 export async function withDialableCallerIdsAll<T extends DialabilityCampaign>(
   campaigns: readonly T[],
 ): Promise<T[]> {
   const out = [...campaigns];
   const reads = new Map<string, {
-    tenantId: string; accountId: string; credentialId: string; numbers: Set<string>;
+    tenantId: string; accountId: string; account: string; numbers: Set<string>;
     campaigns: Array<{ index: number; pool: string[]; key: string; generation: number }>;
   }>();
   campaigns.forEach((campaign, index) => {
-    const credentialId = campaign.telephony_credential_id;
-    if (!credentialId) return;
+    const account = campaign.telephony_credential_id || SERVICE_ACCOUNT;
     const pool = usableCallerIds(campaign as DialabilityCampaign as AgencyCampaignRecord);
-    const key = dialableCacheKey(campaign.id, credentialId, pool);
+    const key = dialableCacheKey(campaign.id, account, pool);
     const known = pool.length === 0 ? pool : cache.get(key);
     if (known) {
       out[index] = { ...campaign, caller_ids: known };
       return;
     }
-    const readKey = `${campaign.tenant_id}|${campaign.account_id}|${credentialId}`;
+    // Pinned is pinned whoever's campaign it is: one read for every service-account campaign.
+    const readKey = account === SERVICE_ACCOUNT ? SERVICE_ACCOUNT : `${campaign.tenant_id}|${campaign.account_id}|${account}`;
     let read = reads.get(readKey);
     if (!read) {
-      read = { tenantId: campaign.tenant_id, accountId: campaign.account_id, credentialId, numbers: new Set(), campaigns: [] };
+      read = { tenantId: campaign.tenant_id, accountId: campaign.account_id, account, numbers: new Set(), campaigns: [] };
       reads.set(readKey, read);
     }
     for (const n of pool) read.numbers.add(n);
@@ -172,13 +199,21 @@ export async function withDialableCallerIdsAll<T extends DialabilityCampaign>(
     read.campaigns.push({ index, pool, key, generation: cache.generation(key) });
   });
   await Promise.all([...reads.values()].map(async (read) => {
-    const allowed = new Set(await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
-      read.tenantId, read.accountId, read.credentialId, [...read.numbers],
-    ));
+    const numbers = [...read.numbers];
+    let narrow: (pool: readonly string[]) => string[];
+    if (read.account === SERVICE_ACCOUNT) {
+      const pinned = await phoneNumberRepository.findPinnedAmong(numbers);
+      narrow = (pool) => withoutPinned(pool, pinned);
+    } else {
+      const allowed = await tenantPhoneAssignmentRepository.findCredentialNumbersForAccount(
+        read.tenantId, read.accountId, read.account, numbers,
+      );
+      narrow = (pool) => keepOnly(pool, allowed);
+    }
     for (const { index, pool, key, generation } of read.campaigns) {
-      const numbers = pool.filter((n) => allowed.has(n));
-      cache.setIf(key, generation, numbers);
-      out[index] = { ...campaigns[index]!, caller_ids: numbers };
+      const dialable = narrow(pool);
+      cache.setIf(key, generation, dialable);
+      out[index] = { ...campaigns[index]!, caller_ids: dialable };
     }
   }));
   return out;
@@ -239,7 +274,7 @@ export function carrierNotReadyBlocker(
 
 /**
  * What blocks the campaign from placing a call now, in the order start and resume answer
- * them (PL12, PL13, PL14), or `[]`. Checked after `campaignCredentialStartRefusal` (an
+ * them (PL12, PL13 or CR9, PL14), or `[]`. Checked after `campaignCredentialStartRefusal` (an
  * inactive account is the first thing to fix). Vendor-free: it reaches the console.
  *
  * The reads run in parallel; the list is read in order. A read that fails rejects, unless an
@@ -251,7 +286,8 @@ export async function campaignDialBlockers(
 ): Promise<CampaignDialBlocker[]> {
   const checks: Array<[CampaignDialBlocker, Promise<boolean>]> = [
     [CARRIER_NOT_READY, Promise.resolve(carrierNotReadyBlocker(campaign) !== null)],
-    [CALLER_IDS_UNAVAILABLE, campaign.telephony_credential_id && usableCallerIds(campaign as AgencyCampaignRecord).length > 0
+    // An empty stored pool is not this one (the write refuses it; pacing names it apart).
+    [CALLER_IDS_UNAVAILABLE, usableCallerIds(campaign as AgencyCampaignRecord).length > 0
       ? dialableCallerIds(campaign).then((numbers) => numbers.length === 0)
       : Promise.resolve(false)],
     [CARRIER_CAPACITY_UNALLOCATED, carrierCapacityMissing(campaign)],

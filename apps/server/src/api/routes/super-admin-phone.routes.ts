@@ -476,7 +476,9 @@ export async function superAdminPhoneRoutes(
       }
     }
 
-    // Campaigns on the credential may dial from it now; the service's own campaigns never did.
+    // Campaigns on the credential may dial from it now, and no campaign on the service's own
+    // account may any more (CR9): a service campaign that still holds it (one finished when it
+    // moved, then retried) drops it from its dial pool at once. The whole cache is cleared.
     invalidateDialableCallerIds();
     log.info({ phoneNumberId: id, telephonyCredentialId: credentialId, tenantId: result.tenantId }, 'Phone number moved onto a tenant carrier account');
     void recordSuperAdminAudit({

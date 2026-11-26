@@ -180,7 +180,8 @@ export class PhoneNumberRepository {
 
       // With the credential each number is pinned to, to tell a revoked registration of
       // this same carrier account (taken over) from anyone else's (a conflict). Revoked is
-      // terminal, so the owner's row needs no lock.
+      // terminal, so the owner's row needs no lock. Locked in `id` order, the order a campaign
+      // write takes them `FOR SHARE` in (`lockPinnedAmong`, CR9), so the two cannot deadlock.
       const existing = await client.query<{
         id: string; phone_number: string; status: PhoneNumberRecord['status']; telephony_credential_id: string | null;
         provider_id: string; owner_status: string | null; owner_tenant_id: string | null; owner_provider: string | null; owner_account_ref: string | null;
@@ -191,6 +192,7 @@ export class PhoneNumberRepository {
            FROM phone_numbers pn
            LEFT JOIN telephony_credentials oc ON oc.id = pn.telephony_credential_id
           WHERE pn.phone_number = ANY($1::varchar[]) OR pn.telephony_credential_id = $2::uuid
+          ORDER BY pn.id
             FOR UPDATE OF pn`,
         [numbers, credentialId],
       );
@@ -338,6 +340,32 @@ export class PhoneNumberRepository {
   }
 
   /**
+   * {@link findPinnedAmong} inside the caller's transaction, holding every row of `phoneNumbers`
+   * (pinned or not) `FOR SHARE` until it ends: what a campaign write on the service's own account
+   * runs before its INSERT or UPDATE (CR9), so a move onto a tenant's account
+   * ({@link pinToCredential}, which holds the number's row `FOR UPDATE`) cannot commit beside it.
+   * Either the move committed first and this sees the number pinned, or the move waits for the
+   * write and then sees the campaign holding it (`in_use`). The rows are locked in `id` order, the
+   * order a sync locks them in, so two writers over the same numbers cannot deadlock. A number not
+   * in the inventory locks nothing (a service caller ID need not be one). Under REPEATABLE READ a
+   * move that commits while this waits is a `40001`: the caller runs its transaction again.
+   */
+  async lockPinnedAmong(client: PoolClient, phoneNumbers: readonly string[]): Promise<string[]> {
+    if (phoneNumbers.length === 0) return [];
+    const result = await client.query<{ phone_number: string; telephony_credential_id: string | null }>(
+      `SELECT phone_number, telephony_credential_id FROM phone_numbers
+        WHERE phone_number = ANY($1::varchar[])
+        ORDER BY id
+          FOR SHARE`,
+      [[...phoneNumbers]],
+    );
+    return result.rows
+      .filter((r) => r.telephony_credential_id !== null)
+      .map((r) => r.phone_number)
+      .sort();
+  }
+
+  /**
    * Add a number by hand, pinned to tenant credential `credentialId` (CR6: a carrier whose
    * tenant-account numbers the carrier cannot list), and assign it untagged to the credential's
    * tenant in the same transaction, exactly as a sync assigns the numbers it adds (PL5,
@@ -410,7 +438,10 @@ export class PhoneNumberRepository {
    * another. A disable or revoke of the credential waits for the pin, or the pin sees the
    * credential no longer `active`; an assignment of the number (`tenantPhoneAssignmentRepository
    * .assign`, which takes the number's row `FOR SHARE` first) waits for the pin and then sees it
-   * pinned, or the pin waits for the assignment and sees it. Refused, with nothing written, when:
+   * pinned, or the pin waits for the assignment and sees it. A campaign write on the service's own
+   * account takes the number's row `FOR SHARE` before it writes ({@link lockPinnedAmong}, CR9), so
+   * it waits for the pin and refuses the now-pinned number, or the pin waits for it and its
+   * `in_use` read sees the campaign. Refused, with nothing written, when:
    *  - `phone_number_not_found`: no such number;
    *  - `phone_number_not_active`: the number is retired or deleted (`status` says which);
    *  - `already_pinned`: it is pinned to a credential already (this one or another);

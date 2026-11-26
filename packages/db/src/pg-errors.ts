@@ -32,3 +32,15 @@ export function isUniqueViolation(err: unknown, constraint?: string): boolean {
   if (!constraint) return true;
   return (err as { constraint?: string }).constraint === constraint;
 }
+
+/** `serialization_failure` — https://www.postgresql.org/docs/16/errcodes-appendix.html */
+export const SERIALIZATION_FAILURE = '40001';
+
+/**
+ * Was this a serialization failure: under REPEATABLE READ, a row this transaction locks or
+ * updates was changed by another that committed after its snapshot? Safe to answer by running
+ * the whole transaction again (nothing it wrote survived the rollback).
+ */
+export function isSerializationFailure(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === SERIALIZATION_FAILURE;
+}

@@ -7,6 +7,10 @@ const mocks = vi.hoisted(() => ({
   carrierDialReady: vi.fn<(provider: string, account: 'service' | 'tenant') => boolean>(),
   findCredentialNumbersForAccount: vi.fn<(...args: unknown[]) => Promise<string[]>>(),
   getProviderLimit: vi.fn<(...args: unknown[]) => Promise<{ mode: string; limit: number | null }>>(),
+  findPinnedAmong: vi.fn<(numbers: string[]) => Promise<string[]>>(),
+}));
+vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
+  phoneNumberRepository: { findPinnedAmong: mocks.findPinnedAmong },
 }));
 vi.mock('../../../src/telephony/carrier-dial-readiness.js', () => ({ carrierDialReady: mocks.carrierDialReady }));
 vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', () => ({
@@ -29,6 +33,7 @@ beforeEach(() => {
   mocks.carrierDialReady.mockReset().mockReturnValue(true);
   mocks.findCredentialNumbersForAccount.mockReset().mockResolvedValue(['+911']);
   mocks.getProviderLimit.mockReset().mockResolvedValue({ mode: 'legacy_total', limit: null });
+  mocks.findPinnedAmong.mockReset().mockResolvedValue([]);
 });
 
 describe('campaignDialBlockers', () => {
@@ -48,11 +53,21 @@ describe('campaignDialBlockers', () => {
     }
   });
 
-  it('does not judge a service-account campaign on readiness or caller IDs, only on capacity', async () => {
+  it('does not judge a service-account campaign on readiness, nor its numbers against a credential, only on capacity', async () => {
     mocks.carrierDialReady.mockReturnValue(false);
     mocks.getProviderLimit.mockResolvedValue({ mode: 'provider_breakdown', limit: 0 });
     expect(await codes({ ...pinned, telephony_credential_id: null })).toEqual(['carrier_capacity_unallocated']);
     expect(mocks.findCredentialNumbersForAccount).not.toHaveBeenCalled();
+  });
+
+  it('a service-account campaign whose every caller ID is pinned to a credential cannot dial (CR9); one left is enough', async () => {
+    const service = { ...pinned, telephony_credential_id: null };
+    mocks.findPinnedAmong.mockResolvedValue(['+911', '+912']);
+    expect(await codes(service)).toEqual(['campaign_caller_ids_unavailable']);
+    expect(mocks.findPinnedAmong).toHaveBeenCalledWith(['+911', '+912']);
+    invalidateDialableCallerIds();
+    mocks.findPinnedAmong.mockResolvedValue(['+911']);
+    expect(await codes(service)).toEqual([]);
   });
 
   it('a failed read rejects when nothing before it blocks', async () => {

@@ -31,7 +31,7 @@ vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
   phoneNumberRepository: { findPinnedAmong: mocks.pinned },
 }));
 
-import { campaignCarrierRefusal } from '../../../src/agency/campaign-carrier.js';
+import { campaignCarrierRefusal, serviceCallerIdsJudged } from '../../../src/agency/campaign-carrier.js';
 
 const SCOPE = { tenantId: 't1', accountId: 'a1' };
 const CRED = '0f9c2a4e-6b1d-4c3e-9a8f-1b2c3d4e5f60';
@@ -145,5 +145,79 @@ describe('the service`s own account takes no number pinned to a credential (CR9)
     const many = Array.from({ length: 7 }, (_, i) => `+1415555010${i}`);
     const refusal = await campaignCarrierRefusal(SCOPE, effective('svc', null, many), ALL);
     expect(refusal).toMatchObject({ details: { caller_ids: expect.stringMatching(/\+14155550104 and 2 more$/) } });
+  });
+});
+
+describe('a caller-ID edit does not re-judge the carrier account a campaign is stored on (CR8)', () => {
+  it('on a carrier the catalogue does not know (an old or test provider row), a caller-ID-only edit is accepted', async () => {
+    const stored = effective('nobody', null, [SERVICE_NUMBER]);
+    expect(await campaignCarrierRefusal(SCOPE, effective('nobody', null, [SERVICE_NUMBER, '+919000000002']), CALLER_IDS_ONLY, stored)).toBeNull();
+    expect(mocks.provider).not.toHaveBeenCalled();
+  });
+
+  it('... and the CR9 check still runs on it: adding a pinned number is refused', async () => {
+    const stored = effective('nobody', null, [SERVICE_NUMBER]);
+    const refusal = await campaignCarrierRefusal(SCOPE, effective('nobody', null, [SERVICE_NUMBER, OWN_NUMBER]), CALLER_IDS_ONLY, stored);
+    expect(refusal).toMatchObject({ kind: 'validation', details: { caller_ids: expect.stringContaining(OWN_NUMBER) } });
+  });
+
+  it('a create, or a body naming the carrier or the credential, is still judged on the mode', async () => {
+    expect(await campaignCarrierRefusal(SCOPE, effective('nobody', null, [SERVICE_NUMBER]), CALLER_IDS_ONLY)).toMatchObject({
+      details: { telephony_provider: 'must name a carrier this service can dial on' },
+    });
+    const stored = effective('nobody', null, [SERVICE_NUMBER]);
+    expect(await campaignCarrierRefusal(SCOPE, effective('nobody', null, [SERVICE_NUMBER]), { provider: false, credential: true, callerIds: false }, stored))
+      .toMatchObject({ details: { telephony_provider: 'must name a carrier this service can dial on' } });
+  });
+});
+
+describe('a retry judges a service-account pool whole (CR9, `judgeAllServiceCallerIds`)', () => {
+  const ALL_SERVICE = { judgeAllServiceCallerIds: true };
+  const NOTHING = { provider: false, credential: false, callerIds: false };
+
+  it('an inherited pinned number is refused even when no override touches the carrier', async () => {
+    const parent = effective('svc', null, [SERVICE_NUMBER, OWN_NUMBER]);
+    expect(await campaignCarrierRefusal(SCOPE, parent, NOTHING, parent)).toBeNull();
+    const refusal = await campaignCarrierRefusal(SCOPE, parent, NOTHING, parent, ALL_SERVICE);
+    expect(refusal).toEqual({
+      kind: 'validation',
+      details: { caller_ids: `a campaign on the service’s own carrier account cannot use a number of an organisation’s own carrier account; not: ${OWN_NUMBER}` },
+    });
+    expect(mocks.pinned).toHaveBeenCalledWith([SERVICE_NUMBER, OWN_NUMBER]);
+    // A caller-ID override keeping it is refused the same way: the stored pool is no excuse.
+    expect(await campaignCarrierRefusal(SCOPE, parent, CALLER_IDS_ONLY, parent, ALL_SERVICE)).toMatchObject({ kind: 'validation' });
+  });
+
+  it('a clean inherited pool is accepted, reading no provider or credential', async () => {
+    const parent = effective('svc', null, [SERVICE_NUMBER]);
+    expect(await campaignCarrierRefusal(SCOPE, parent, NOTHING, parent, ALL_SERVICE)).toBeNull();
+    expect(mocks.provider).not.toHaveBeenCalled();
+    expect(mocks.credential).not.toHaveBeenCalled();
+  });
+
+  it('has no effect on a tenant account: an inherited pool there is not re-judged (PL13 skips a retired number)', async () => {
+    const parent = effective('both', CRED, [OWN_NUMBER, SERVICE_NUMBER]);
+    expect(await campaignCarrierRefusal(SCOPE, parent, NOTHING, parent, ALL_SERVICE)).toBeNull();
+    expect(mocks.credentialNumbers).not.toHaveBeenCalled();
+    expect(mocks.pinned).not.toHaveBeenCalled();
+  });
+});
+
+describe('serviceCallerIdsJudged: what the write re-checks under lock (CR9)', () => {
+  const NOTHING = { provider: false, credential: false, callerIds: false };
+
+  it('on the service account: the added IDs on the same account, all on a create, a change of account or a retry', () => {
+    const stored = effective('svc', null, [SERVICE_NUMBER]);
+    expect(serviceCallerIdsJudged(effective('svc', null, [SERVICE_NUMBER, OWN_NUMBER]), CALLER_IDS_ONLY, stored)).toEqual([OWN_NUMBER]);
+    expect(serviceCallerIdsJudged(effective('svc', null, [SERVICE_NUMBER]), CALLER_IDS_ONLY, stored)).toEqual([]);
+    expect(serviceCallerIdsJudged(effective('svc', null, [SERVICE_NUMBER]), CALLER_IDS_ONLY)).toEqual([SERVICE_NUMBER]);
+    expect(serviceCallerIdsJudged(effective('both', null, [OWN_NUMBER]), { provider: false, credential: true, callerIds: false },
+      effective('both', CRED, [OWN_NUMBER]))).toEqual([OWN_NUMBER]);
+    expect(serviceCallerIdsJudged(stored, NOTHING, stored)).toEqual([]);
+    expect(serviceCallerIdsJudged(stored, NOTHING, stored, { judgeAllServiceCallerIds: true })).toEqual([SERVICE_NUMBER]);
+  });
+
+  it('on a tenant account: nothing (the credential`s own rule is not CR9)', () => {
+    expect(serviceCallerIdsJudged(effective('both', CRED, [OWN_NUMBER]), ALL, null, { judgeAllServiceCallerIds: true })).toEqual([]);
   });
 });

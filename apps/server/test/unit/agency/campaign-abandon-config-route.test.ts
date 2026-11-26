@@ -46,13 +46,20 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 
 const { campaigns, announcementRepo } = vi.hoisted(() => ({
-  campaigns: { create: vi.fn(), update: vi.fn(), findById: vi.fn() },
+  campaigns: {
+    create: vi.fn(), update: vi.fn(), findById: vi.fn(),
+    // The create in its CR9 transaction (`createLocked`): the lock's answer, then `create`.
+    async createLocked(input: unknown, refuse: (client: unknown) => Promise<unknown>) {
+      const refused = await refuse({});
+      return refused !== null ? { refused } : { row: await this.create(input) };
+    },
+  },
   announcementRepo: { findActiveByIdScoped: vi.fn() },
 }));
 // CR9: a service-account campaign's caller IDs are read against the numbers pinned to a
 // tenant credential (`campaign-carrier.ts`); none are here.
 vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
-  phoneNumberRepository: { findPinnedAmong: vi.fn().mockResolvedValue([]) },
+  phoneNumberRepository: { findPinnedAmong: vi.fn().mockResolvedValue([]), lockPinnedAmong: vi.fn().mockResolvedValue([]) },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyCampaignRepository: campaigns,

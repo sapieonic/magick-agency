@@ -106,7 +106,8 @@ export class DedicatedCallerIdCache {
    * rotation's pick (`resolveCallerId` over `dialableCallerIds`). The pool is the dialable one:
    * on a campaign pinned to a tenant's own carrier account (PL13), only the stored numbers still
    * active on it, so a dedicated number the account no longer has falls back to the rotation; on
-   * the service's own account, `usableCallerIds` with no read. Null only when the pool is empty.
+   * the service's own account, every stored number but those pinned to a credential (CR9). Null
+   * only when the pool is empty.
    * Rejects when the map or the pool cannot be read.
    */
   async callerIdForContact(

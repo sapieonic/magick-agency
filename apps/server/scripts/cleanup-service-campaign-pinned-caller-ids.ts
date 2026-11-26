@@ -2,9 +2,10 @@
  * One-off clean-up (CR9, docs/carriers.md §6): take the caller IDs that are numbers pinned to a
  * tenant's carrier credential off campaigns on the service's own carrier account.
  *
- * CR9 refuses such a caller ID at the write, for the IDs a write adds. A campaign saved before
- * CR9, or written while one of its numbers was being moved onto a tenant's account (CR6), may
- * still hold one, and dials the tenant's number on the service's account. This finds every
+ * CR9 refuses such a caller ID at the write, for the IDs a write adds (every ID on a retry), under
+ * the number rows' lock, and the dial never uses one (`dialableCallerIds`). A campaign saved before
+ * CR9, or holding a number added pinned to the inventory after it was written, may still hold one:
+ * it is not dialled, but the supervisor sees a pool the campaign does not dial. This finds every
  * campaign with no credential (`telephony_credential_id IS NULL`) that is not finished (draft,
  * running, paused or stopping: the set a credential revoke reads, `LIVE_CAMPAIGN`) whose
  * `caller_ids` hold a number with `phone_numbers.telephony_credential_id` set, and prints each
@@ -22,7 +23,7 @@
  *
  * A running server sees the change without a restart: the pacing engine re-reads a campaign row
  * at most 2 s after its last read (`PACING_CACHE_TTL_MS`), and a service-account campaign's caller
- * IDs are not otherwise cached (the dialable caller-ID cache holds credential campaigns only). The
+ * IDs are cached only under their stored pool (the dialable caller-ID cache's key), so a changed pool is read afresh. The
  * pacing bus and the cache-invalidation channel reach only the processes of one server (in-process
  * and over its media workers' IPC), so a script cannot publish on them. A dedicated caller ID
  * (DN1) on a removed number stays stored and is ignored at the dial, as after a supervisor's edit.

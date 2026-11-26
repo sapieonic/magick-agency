@@ -8,6 +8,8 @@
 //    only while its credential is `active`, one of that credential's numbers for its campaigns,
 //    never assigned to another tenant;
 //  - `findPinnedAmong`: the numbers pinned to any credential, whatever their status or tenant;
+//  - `lockPinnedAmong`: the same, in a campaign write's transaction, holding the rows `FOR SHARE`
+//    so a move and the write never both commit, in the order a sync locks them;
 //  - `pinToCredential`: a number on the service's own account moved, one way, onto a tenant's
 //    own account of its carrier, with every refusal, and its locks against a concurrent disable,
 //    assignment, `createPinned` and sync.
@@ -384,5 +386,104 @@ describe('phoneNumberRepository.pinToCredential (integration: a service number m
     const { rows } = await getTestPool().query<{ n: number }>(
       `SELECT count(*)::int AS n FROM phone_numbers WHERE telephony_credential_id = $1`, [cred]);
     expect(rows[0]!.n).toBe(pins[1]!.ok ? 12 : 11);
+  });
+});
+
+/** Until some statement of this database waits on a lock (the other side has blocked). */
+async function untilSomeoneWaits(): Promise<void> {
+  await vi.waitFor(async () => {
+    const { rows } = await getTestPool().query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`);
+    expect(rows[0]!.n).toBeGreaterThan(0);
+  }, { timeout: 5000, interval: 20 });
+}
+
+describe('phoneNumberRepository.lockPinnedAmong (integration: a campaign write against a move, CR9)', () => {
+  it('names the pinned numbers as findPinnedAmong does, whatever their status or tenant, sorted; an unknown number is not one', async () => {
+    const mine = await insertCredential();
+    const theirs = await insertCredential('plivo', otherTenant);
+    await phoneNumberRepository.createPinned(input('+919800000001'), mine);
+    await phoneNumberRepository.syncForCredential(theirs, [{ phone_number: '+14155550001', label: null }], admin);
+    await serviceNumber('+919000000001');
+    await setStatus(mine, 'revoked');
+    const client = await getTestPool().connect();
+    try {
+      await client.query('BEGIN');
+      expect(await phoneNumberRepository.lockPinnedAmong(client, ['+919000000001', '+919800000001', '+14155550001', '+10000000000']))
+        .toEqual(['+14155550001', '+919800000001']);
+      expect(await phoneNumberRepository.lockPinnedAmong(client, [])).toEqual([]);
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('the write first: a move of the number waits for it, then sees the campaign holding it (`in_use`)', async () => {
+    const cred = await insertCredential();
+    const id = await serviceNumber('+919000000001');
+    const writer = await getTestPool().connect();
+    try {
+      await writer.query('BEGIN');
+      expect(await phoneNumberRepository.lockPinnedAmong(writer, ['+919000000001'])).toEqual([]);
+      await writer.query(
+        `INSERT INTO agency_campaigns (tenant_id, account_id, name, caller_ids) VALUES ($1, $2, 'Racing', '{+919000000001}')`,
+        [tenant, account]);
+      const pinning = phoneNumberRepository.pinToCredential(id, cred, admin);
+      await untilSomeoneWaits();
+      await writer.query('COMMIT');
+      expect(await pinning).toMatchObject({ ok: false, reason: 'in_use', total: 1 });
+    } finally {
+      await writer.query('ROLLBACK').catch(() => undefined);
+      writer.release();
+    }
+    expect(await numberRow('+919000000001')).toMatchObject({ telephony_credential_id: null });
+  });
+
+  it('the move first: the write waits for it, then sees the number pinned', async () => {
+    const cred = await insertCredential();
+    const id = await serviceNumber('+919000000001');
+    await serviceNumber('+919000000002');
+    const mover = await getTestPool().connect();
+    const writer = await getTestPool().connect();
+    try {
+      await mover.query('BEGIN');
+      await mover.query(`SELECT 1 FROM phone_numbers WHERE id = $1 FOR UPDATE`, [id]);
+      await mover.query(`UPDATE phone_numbers SET telephony_credential_id = $2 WHERE id = $1`, [id, cred]);
+      await writer.query('BEGIN');
+      const locking = phoneNumberRepository.lockPinnedAmong(writer, ['+919000000001', '+919000000002']);
+      await untilSomeoneWaits();
+      await mover.query('COMMIT');
+      expect(await locking).toEqual(['+919000000001']);
+    } finally {
+      await writer.query('ROLLBACK').catch(() => undefined);
+      await mover.query('ROLLBACK').catch(() => undefined);
+      mover.release();
+      writer.release();
+    }
+  });
+
+  it('takes the rows in a sync`s order: campaign writes and a sync over the same numbers at once all finish', async () => {
+    const cred = await insertCredential('plivo');
+    const numbers = Array.from({ length: 8 }, (_, i) => `+1415555010${i}`);
+    await phoneNumberRepository.syncForCredential(cred, numbers.map((n) => ({ phone_number: n, label: null })), admin);
+    const write = async (order: string[]) => {
+      const client = await getTestPool().connect();
+      try {
+        await client.query('BEGIN');
+        const pinned = await phoneNumberRepository.lockPinnedAmong(client, order);
+        await new Promise((r) => setTimeout(r, 20));
+        await client.query('COMMIT');
+        return pinned;
+      } finally {
+        client.release();
+      }
+    };
+    const results = await Promise.all([
+      write(numbers), write([...numbers].reverse()), write([numbers[3]!, numbers[0]!, numbers[7]!]),
+      phoneNumberRepository.syncForCredential(cred, [...numbers].reverse().map((n) => ({ phone_number: n, label: null })), admin),
+      write([numbers[5]!, numbers[1]!, numbers[6]!, numbers[2]!]),
+    ]);
+    expect(results[0]).toEqual([...numbers].sort());
+    expect(results[3]).toMatchObject({ unchanged: [...numbers].sort() });
   });
 });

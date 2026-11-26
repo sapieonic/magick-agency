@@ -67,12 +67,17 @@ vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
   accountSettingsRepository: settings,
 }));
 // PL13: which of a pinned campaign's stored caller IDs are still active on its carrier
-// account. A service-account campaign never reads it.
-const { phoneAssignments } = vi.hoisted(() => ({
+// account. A service-account campaign never reads it: it reads which of its stored numbers are
+// pinned to a credential (CR9), none unless a test says so.
+const { phoneAssignments, phoneNumbers } = vi.hoisted(() => ({
   phoneAssignments: { findCredentialNumbersForAccount: vi.fn() },
+  phoneNumbers: { findPinnedAmong: vi.fn() },
 }));
 vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', () => ({
   tenantPhoneAssignmentRepository: phoneAssignments,
+}));
+vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
+  phoneNumberRepository: phoneNumbers,
 }));
 
 // The supervise pass re-reads `agency_dialer_enabled` per campaign, so leadership
@@ -188,6 +193,7 @@ beforeEach(() => {
   settings.getMaxConcurrentCalls.mockResolvedValue(5);
   repos.session.findLiveForCampaign.mockResolvedValue([]);
   flags.isEnabled.mockResolvedValue(true);
+  phoneNumbers.findPinnedAmong.mockResolvedValue([]);
   invalidateDialableCallerIds();
 });
 
@@ -195,7 +201,7 @@ describe('PacingEngine and caller IDs no longer on the carrier account (PL13)', 
   const CRED = '11111111-1111-4111-8111-111111111111';
   const PINNED = { ...CAMPAIGN, telephony_provider: 'plivo', telephony_credential_id: CRED };
 
-  it('a service-account campaign rotates its stored pool exactly as before, with no read', async () => {
+  it('a service-account campaign rotates its stored pool, reading only which of it is pinned to a credential (CR9)', async () => {
     repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null });
     repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
     repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
@@ -206,6 +212,35 @@ describe('PacingEngine and caller IDs no longer on the carrier account (PL13)', 
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(CAMPAIGN.caller_ids).toContain(repos.attempt.create.mock.calls[0]![0].callerId);
     expect(phoneAssignments.findCredentialNumbersForAccount).not.toHaveBeenCalled();
+    expect(phoneNumbers.findPinnedAmong).toHaveBeenCalledWith(CAMPAIGN.caller_ids);
+  });
+
+  it('a service-account campaign never dials a stored number pinned to a credential (CR9)', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null });
+    phoneNumbers.findPinnedAmong.mockResolvedValue(['+14155550100']);
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1'), contact('c2')]);
+    const { e, dispatch } = engine(makeStations(['s1', 's2']), makeAgents({ s1: 'available', s2: 'available' }));
+
+    await e.tickOnce('camp-1');
+
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(repos.attempt.create.mock.calls.map((c: any[]) => c[0].callerId)).toEqual(['+14155550101', '+14155550101']);
+  });
+
+  it('a service-account campaign whose every number is pinned dials nothing and reserves nothing (CR9)', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null });
+    phoneNumbers.findPinnedAmong.mockResolvedValue([...CAMPAIGN.caller_ids]);
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'available' });
+    const { e, dispatch } = engine(makeStations(['s1']), agents);
+
+    await e.tickOnce('camp-1');
+
+    expect(agents.reserve).not.toHaveBeenCalled();
+    expect(repos.contact.claimDialable).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it('a pinned campaign dials only from the stored numbers still active on its carrier account', async () => {
@@ -284,11 +319,18 @@ describe('PacingEngine: dedicated caller IDs over the dialable pool (DN2 with PL
     expect(await dialTwo()).toEqual({ c1: DEDICATED, c2: OTHER });
   });
 
-  it('a service-account campaign is unchanged: the dedicated number while stored, no carrier-account read', async () => {
+  it('a service-account campaign dials the dedicated number while stored, with no carrier-account read', async () => {
     repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null });
 
     expect(await dialTwo()).toEqual({ c1: DEDICATED, c2: OTHER });
     expect(phoneAssignments.findCredentialNumbersForAccount).not.toHaveBeenCalled();
+  });
+
+  it('a service-account campaign whose dedicated number is pinned to a credential dials the owner\'s contact from the rotation (CR9)', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null });
+    phoneNumbers.findPinnedAmong.mockResolvedValue([DEDICATED]);
+
+    expect(await dialTwo()).toEqual({ c1: OTHER, c2: OTHER });
   });
 });
 

@@ -1585,10 +1585,10 @@ export class PacingEngine {
         idle = 'no_caller_ids';
         return;
       }
-      // The pool the dials rotate (PL13): on a tenant's own carrier account, only the
-      // stored numbers still active on it and available to the account. A service-account
-      // campaign's is `usableCallerIds`, unread. Before reserving, so a failed read here
-      // has nothing to unwind.
+      // The pool the dials rotate: on a tenant's own carrier account, only the stored
+      // numbers still active on it and available to the account (PL13); on the service's
+      // own account, every stored number but those pinned to a credential (CR9). Cached
+      // (`dialableCallerIds`). Before reserving, so a failed read here has nothing to unwind.
       const dialPool = campaign.status === 'running' ? await dialableCallerIds(campaign) : [];
       if (campaign.status === 'running' && dialPool.length === 0) {
         // Same shape as the empty pool: nothing to dial until a number comes back (a sync,

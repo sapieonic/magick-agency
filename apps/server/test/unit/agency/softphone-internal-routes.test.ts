@@ -38,6 +38,11 @@ const repos = vi.hoisted(() => ({
   accounts: { findByIdInTenant: vi.fn() },
 }));
 
+// CR9: a service-account campaign's dial pool drops the numbers pinned to a credential
+// (`dialableCallerIds`); none of this file's numbers is.
+vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
+  phoneNumberRepository: { findPinnedAmong: vi.fn(async () => []) },
+}));
 vi.mock('../../../src/db/repositories/agency.repository.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/db/repositories/agency.repository.js')>();
   return {

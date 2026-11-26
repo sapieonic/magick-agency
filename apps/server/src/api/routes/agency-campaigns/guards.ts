@@ -12,7 +12,14 @@ import { preflightAnalysisProfile } from '../../../analysis/profile-preflight.js
 import { campaignImportLineage, type AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { issuesToDetails, validateAgencyCampaignConfig, type CampaignConfigBase } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
-import { campaignCarrierRefusal } from '../../../agency/campaign-carrier.js';
+import {
+  campaignCarrierRefusal,
+  type CampaignCarrierChanged,
+  type CampaignCarrierEffective,
+  type CampaignCarrierOptions,
+  type CampaignCarrierRefusal,
+  type CampaignCarrierStored,
+} from '../../../agency/campaign-carrier.js';
 import { canonicalContextColumns, contextDisplayIssues, namesContextColumns } from '../../../agency/customer-facts.js';
 import { agencyIngestJobRepository } from '../../../agency/agency-ingest-job.repository.js';
 
@@ -151,36 +158,47 @@ export function configRejected(
   return true;
 }
 
+/** Which of the three carrier fields `body` carries: what `campaignCarrierRefusal` judges. */
+export function carrierFieldsChanged(body: Record<string, unknown>): CampaignCarrierChanged {
+  return { provider: 'telephony_provider' in body, credential: 'telephony_credential_id' in body, callerIds: 'caller_ids' in body };
+}
+
+/** Send a carrier refusal: a 400 naming fields, or its coded 404/409. */
+export function replyCarrierRefusal(reply: FastifyReply, refusal: CampaignCarrierRefusal): FastifyReply {
+  if (refusal.kind === 'validation') return replyValidationFailed(reply, refusal.details);
+  return reply.code(refusal.status).send({
+    error: refusal.status === 404 ? 'Not Found' : 'Conflict', code: refusal.code, message: refusal.message,
+  });
+}
+
 /**
  * Refuse a write that would leave the campaign on a carrier account it may not dial on
  * (`campaignCarrierRefusal`: the carrier active, a tenant-account carrier pinned to an
- * active credential of this tenant, its caller IDs that credential's numbers). `effective`
- * is the campaign after the write; `body` is what the caller sent, which decides what is
- * judged; `stored` is the campaign before it (null on a create), so caller IDs already in
- * its pool on the same carrier account are not re-judged. Returns false only when it has
- * already replied.
+ * active credential of this tenant, its caller IDs that credential's numbers, a service
+ * account's none pinned to a credential, CR9). `effective` is the campaign after the write;
+ * `body` is what the caller sent, which decides what is judged; `stored` is the campaign
+ * before it (null on a create), so caller IDs already in its pool on the same carrier
+ * account are not re-judged; `opts` as `campaignCarrierRefusal` takes them (a retry judges a
+ * service pool whole). Returns false only when it has already replied. The write then
+ * re-checks CR9 under lock (`servicePinnedRefusalLocked` over `serviceCallerIdsJudged`).
  */
 export async function carrierRejected(
   request: FastifyRequest,
   reply: FastifyReply,
   body: Record<string, unknown>,
-  effective: { telephony_provider: unknown; telephony_credential_id: unknown; caller_ids: readonly string[] },
-  stored: { telephony_provider: string | null; telephony_credential_id: string | null; caller_ids: readonly string[] } | null = null,
+  effective: CampaignCarrierEffective,
+  stored: CampaignCarrierStored | null = null,
+  opts: CampaignCarrierOptions = {},
 ): Promise<boolean> {
   const refusal = await campaignCarrierRefusal(
     { tenantId: getTenantId(request), accountId: getAccountId(request) },
     effective,
-    { provider: 'telephony_provider' in body, credential: 'telephony_credential_id' in body, callerIds: 'caller_ids' in body },
+    carrierFieldsChanged(body),
     stored,
+    opts,
   );
   if (!refusal) return false;
-  if (refusal.kind === 'validation') {
-    replyValidationFailed(reply, refusal.details);
-  } else {
-    reply.code(refusal.status).send({
-      error: refusal.status === 404 ? 'Not Found' : 'Conflict', code: refusal.code, message: refusal.message,
-    });
-  }
+  replyCarrierRefusal(reply, refusal);
   return true;
 }
 

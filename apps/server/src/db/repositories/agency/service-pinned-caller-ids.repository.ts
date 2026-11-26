@@ -3,10 +3,12 @@
  * reads and the locked write of the one-off clean-up
  * (`scripts/cleanup-service-campaign-pinned-caller-ids.ts`).
  *
- * CR9 refuses such a caller ID at the write, for the IDs a write adds. A campaign saved before
- * CR9, or written while its number was being moved onto a tenant's account (CR6; the campaign
- * write checks without locking the number), may still hold one, and dials it on the service's
- * account. "Unfinished" is the set a credential revoke and a number's move read
+ * CR9 refuses such a caller ID at the write, for the IDs a write adds (every ID on a retry),
+ * under the number rows' lock, so a move onto a tenant's account (CR6) cannot commit beside it.
+ * A campaign saved before CR9, or one holding a number that was not in the inventory when it was
+ * written and has since been added pinned (by hand or by a sync), may still hold one. The dial
+ * never uses it (`dialableCallerIds`); this clean-up takes it out of the campaign so the
+ * supervisor sees the pool it dials. "Unfinished" is the set a credential revoke and a number's move read
  * (`LIVE_CAMPAIGN`: draft, running, paused, stopping): a completed or stopped campaign never
  * dials again.
  *

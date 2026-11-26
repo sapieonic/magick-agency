@@ -8,11 +8,13 @@ import { getPool } from '@magick-agency/db';
 // The `23505` predicate, matched on the CONSTRAINT NAME. A leaf module (see its
 // header) so the catch arms below can ask the question without dragging config
 // into the graph of every test that exercises them.
-import { isUniqueViolation } from '@magick-agency/db/pg-errors';
+import { isSerializationFailure, isUniqueViolation } from '@magick-agency/db/pg-errors';
 // BEGIN / COMMIT / ROLLBACK / release, and joining a caller's transaction (decision
 // B8). A leaf too: the pool is passed in, so the `getPool` mock stays in charge.
 import { withTransaction } from '@magick-agency/db/utils/transaction';
+import type { PoolClient } from 'pg';
 import type { AgencyCampaignConfigColumns, AgencyCampaignRecord } from '../../models/agency.model.js';
+import type { CampaignCarrierRefusal } from '../../../agency/campaign-carrier.js';
 import type { AgencyRetryPreview, AgencyRetrySelector } from '@magick-agency/contracts/agency';
 // The shared retry bounds. A leaf module, imported rather
 // than restated, so the number the API publishes as `max_seed_rows` and the number
@@ -59,7 +61,9 @@ export type AgencyRetryCreateResult =
    */
   | { status: 'replayed'; campaign: AgencyCampaignRecord }
   | { status: 'empty'; excluded: { dnc: number; invalid: number } }
-  | { status: 'too_large'; matched: number };
+  | { status: 'too_large'; matched: number }
+  /** `refuse` refused the write (CR9 under lock): nothing was created. */
+  | { status: 'refused'; refusal: CampaignCarrierRefusal };
 
 /**
  * The one repository read {@link createRetryCampaign} calls back into. The class
@@ -270,6 +274,15 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
    * `idempotency_key` and creates the retry unkeyed.
    */
   idempotencyKey: string | null;
+  /**
+   * A check that must hold at the write, asked first in the transaction: a non-null answer is
+   * `refused` and nothing is written. The service account's pinned caller IDs (CR9,
+   * `servicePinnedRefusalLocked`), whose rows it holds `FOR SHARE` until the commit, so a
+   * number's move onto a tenant's account either committed before (and is seen) or waits. Under
+   * this transaction's REPEATABLE READ a move that commits while the lock waits is a `40001`:
+   * the transaction is run once more, and then sees the move.
+   */
+  refuse?: (client: PoolClient) => Promise<CampaignCarrierRefusal | null>;
 }): Promise<AgencyRetryCreateResult> {
   const pool = getPool();
 
@@ -287,7 +300,15 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
   }
 
   try {
-    return await withTransaction<AgencyRetryCreateResult>(async (client, tx) => {
+    const attempt = () => withTransaction<AgencyRetryCreateResult>(async (client, tx) => {
+      // First, so its lock is taken before anything is read (`refuse` above).
+      if (input.refuse) {
+        const refusal = await input.refuse(client);
+        if (refusal) {
+          await tx.rollback();
+          return { status: 'refused', refusal };
+        }
+      }
       // ── REPEATABLE READ, not the default (`isolation` below) ─────────────────
       //
       // The count that decides `empty` / `too_large` and the `INSERT … SELECT`
@@ -307,8 +328,10 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
       // One snapshot for the whole transaction makes the decision and the write
       // agree by construction. Nothing here UPDATEs a row another writer might
       // have changed — the child campaign and its contacts are rows this
-      // transaction creates — so there is no serialization-failure retry to
-      // write: `40001` is unreachable on this path.
+      // transaction creates — so `40001` is unreachable on this path, except
+      // through `refuse`'s `FOR SHARE` on the caller IDs' number rows (CR9): a
+      // number moved onto a tenant's account while that lock waited. That one
+      // runs the transaction again (below), whose fresh snapshot sees the move.
       const countParams = params();
       const countConditions = [
         `c.campaign_id = ${countParams.add(input.parent.id)}`,
@@ -596,6 +619,13 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
         assignment_batch_id: assignmentBatchId,
       };
     }, { pool, isolation: 'REPEATABLE READ' });
+    try {
+      return await attempt();
+    } catch (err) {
+      // Only `refuse`'s lock can meet a concurrent update here (the module note above): once more.
+      if (input.refuse && isSerializationFailure(err)) return await attempt();
+      throw err;
+    }
   } catch (err) {
     // ── The race the fast path cannot close ─────────────────────────────────
     //

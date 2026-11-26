@@ -295,7 +295,7 @@ export class SoftphoneService {
       tag = await this.taggable(req.campaignId, actor);
       if (!tag) return refuse({ code: 'campaign_not_taggable' });
       // A tagged call dials from the campaign's pool: only the numbers still dialable on
-      // its carrier account (PL13).
+      // its carrier account (PL13, CR9).
       tag = await withDialableCallerIds(tag);
     }
 

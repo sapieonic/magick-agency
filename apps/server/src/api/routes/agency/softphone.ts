@@ -261,7 +261,7 @@ async function buildBootstrap(
   );
   const now = new Date();
   // Each campaign's caller IDs as a tagged dial will accept them: only those still
-  // dialable on its carrier account (PL13), one read per carrier account (`withDialableCallerIdsAll`).
+  // dialable on its carrier account (PL13, CR9), one read per carrier account (`withDialableCallerIdsAll`).
   const dialableTaggable = await withDialableCallerIdsAll(taggable);
 
   return {
