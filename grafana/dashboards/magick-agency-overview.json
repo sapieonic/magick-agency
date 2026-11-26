@@ -5248,7 +5248,7 @@
       {
         "current": {
           "selected": false,
-          "text": "grafanacloud-sapieonic-prom",
+          "text": "grafanacloud-magickagency-prom",
           "value": "grafanacloud-prom"
         },
         "hide": 0,
@@ -5267,7 +5267,7 @@
       {
         "current": {
           "selected": false,
-          "text": "grafanacloud-sapieonic-logs",
+          "text": "grafanacloud-magickagency-logs",
           "value": "grafanacloud-logs"
         },
         "hide": 0,

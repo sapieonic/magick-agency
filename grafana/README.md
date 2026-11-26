@@ -19,7 +19,7 @@ repo; see [Routing](#routing-managed-outside-this-repo).
 ```bash
 cd grafana/terraform
 export AWS_PROFILE=<profile>                     # or any AWS credentials: the state is in S3
-export GRAFANA_URL="https://sapieonic.grafana.net"
+export GRAFANA_URL="https://magickagency.grafana.net"
 export GRAFANA_AUTH="<service-account-token>"   # dashboards + alerting writer
 terraform init && terraform plan && terraform apply
 ```

@@ -1,6 +1,6 @@
 variable "grafana_url" {
   type        = string
-  description = "Grafana Cloud stack URL, e.g. https://sapieonic.grafana.net. Falls back to the GRAFANA_URL env var when empty."
+  description = "Grafana Cloud stack URL, e.g. https://magickagency.grafana.net. Falls back to the GRAFANA_URL env var when empty."
   default     = ""
 }
 
@@ -13,8 +13,8 @@ variable "grafana_auth" {
 
 variable "stack_id" {
   type        = number
-  description = "Grafana Cloud stack ID (the N in the \"stacks-N\" namespace). 1508287 is sapieonic.grafana.net."
-  default     = 1508287
+  description = "Grafana Cloud stack ID (the N in the \"stacks-N\" namespace). 1923468 is magickagency.grafana.net."
+  default     = 1923468
 }
 
 variable "folder_uid" {
@@ -62,5 +62,5 @@ variable "alert_eval_interval_seconds" {
 variable "grafana_public_url" {
   type        = string
   description = "Browser URL of the stack, used to build dashboard links in alert annotations."
-  default     = "https://sapieonic.grafana.net"
+  default     = "https://magickagency.grafana.net"
 }
