@@ -19,10 +19,18 @@ export class XlsxRefusal extends Error {
 
 /**
  * A workbook over one of the upload's limits. `too_many_rows`, `too_many_columns` and
- * `too_large` are refused as the CSV path refuses them; `too_slow` and `too_much_memory`
- * are the conversion's deadline and heap cap (`agency-xlsx-runner.ts`).
+ * `too_large` (the CSV it becomes is over the CSV path's size limit, and only that) are
+ * refused as the CSV path refuses them; `too_complex` is one of the converter's own caps on
+ * its work (shared strings, cells a pass visits, a part that expands past its bound); `too_slow`
+ * and `too_much_memory` are the conversion's deadline and heap cap (`agency-xlsx-runner.ts`).
  */
-export type XlsxLimitKind = 'too_many_rows' | 'too_many_columns' | 'too_large' | 'too_slow' | 'too_much_memory';
+export type XlsxLimitKind =
+  | 'too_many_rows'
+  | 'too_many_columns'
+  | 'too_large'
+  | 'too_complex'
+  | 'too_slow'
+  | 'too_much_memory';
 
 export class XlsxLimitError extends Error {
   constructor(

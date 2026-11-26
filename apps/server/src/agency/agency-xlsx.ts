@@ -14,6 +14,7 @@ import {
   plainNumber,
   PLAIN,
   renderFormattedNumber,
+  showsPlainDigits,
   type NumberStyle,
 } from './agency-xlsx-numfmt.js';
 import { looksLikePhoneHeader } from './phone-header.js';
@@ -124,8 +125,8 @@ export interface XlsxWorkbook {
   /** Columns in the CSV: A to the last column holding a value. */
   columns: number;
   /**
-   * The CSV, streamed. Fails with {@link XlsxLimitError} (`too_large`, or `too_many_rows`) past a
-   * limit; call it once.
+   * The CSV, streamed. Fails with {@link XlsxLimitError} past a limit (`too_large`: the CSV past
+   * the byte limit; `too_many_rows`; `too_complex`: a cap on the reader's own work); call it once.
    */
   toCsv(): Readable;
 }
@@ -419,14 +420,14 @@ async function readSharedStrings(
   let phonetic = 0;
   const charge = (chars: number) => {
     charged += chars;
-    if (charged > maxChars) throw new XlsxLimitError('too_large');
+    if (charged > maxChars) throw new XlsxLimitError('too_complex');
   };
   // The XML is about the text it holds plus its tags: four times the text budget is ample.
   await parsePart(pkg.open(path, maxChars * 4), {
     textTooLong: () => new XlsxRefusal('cell_too_long'),
     open(name) {
       if (name === 'si') {
-        if (strings.length >= maxCount) throw new XlsxLimitError('too_large');
+        if (strings.length >= maxCount) throw new XlsxLimitError('too_complex');
         charge(SHARED_STRING_OVERHEAD_CHARS);
         current = '';
       } else if (name === 'rPh') phonetic += 1;
@@ -569,8 +570,9 @@ function cellText(
       const style = styleOf(ctx, styleIndex);
       // A date or time is one in any column ("Last Contact Date" reads as a phone header).
       if (style.kind === 'date' || style.kind === 'time') return excelSerialToText(x, style, ctx.date1904) ?? plainNumber(x);
-      // A phone column's whole number: its digits, whatever the format (padding still pads).
-      if (ctx.phoneColumns.has(column) && Number.isInteger(x)) {
+      // A phone column's whole number: its digits (padding still pads), when its format shows
+      // plain digits anyway; a percent, currency or worded format is shown as it is (IM8).
+      if (ctx.phoneColumns.has(column) && Number.isInteger(x) && showsPlainDigits(x, style)) {
         return style.kind === 'pad' ? padNumber(x, style.width) : plainNumber(x);
       }
       if (style.kind === 'pad' && Number.isInteger(x)) return padNumber(x, style.width);
@@ -681,7 +683,7 @@ function readSheet(
         case 'c': {
           if (cells === null) return;
           cellsVisited += 1;
-          if (cellsVisited > options.maxCells) throw new XlsxLimitError('too_large');
+          if (cellsVisited > options.maxCells) throw new XlsxLimitError('too_complex');
           const ref = attrs['r'];
           const c = ref !== undefined ? cellRef(ref).column : column + 1;
           cellCount += 1;
@@ -903,14 +905,15 @@ export async function openXlsxWorkbook(buf: Buffer, limits: XlsxLimits): Promise
 }
 
 /**
- * Every failure as a refusal: a part over its bound is `too_large`, anything else this
- * module did not throw itself (a damaged zip, a string the engine cannot build) is the
- * workbook being unreadable, never a 500.
+ * Every failure as a refusal: a part over its bound, or a string the engine cannot build, is
+ * `too_complex` (one of this reader's caps on its own work; `too_large` is only the CSV
+ * passing the upload's byte limit); anything else this module did not throw itself (a
+ * damaged zip) is the workbook being unreadable, never a 500.
  */
 function asXlsxError(err: unknown): XlsxRefusal | XlsxLimitError {
   if (err instanceof XlsxRefusal || err instanceof XlsxLimitError) return err;
-  if (err instanceof ZipEntryTooLargeError) return new XlsxLimitError('too_large');
-  if (err instanceof RangeError && /string length|array length|allocation/i.test(err.message)) return new XlsxLimitError('too_large');
+  if (err instanceof ZipEntryTooLargeError) return new XlsxLimitError('too_complex');
+  if (err instanceof RangeError && /string length|array length|allocation/i.test(err.message)) return new XlsxLimitError('too_complex');
   return new XlsxRefusal('unreadable', err instanceof Error ? `${err.name}: ${err.message}` : 'unknown error');
 }
 

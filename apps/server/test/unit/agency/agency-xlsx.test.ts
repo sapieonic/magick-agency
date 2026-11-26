@@ -485,14 +485,14 @@ describe('limits: stop as soon as one is passed', () => {
     expect(buf.length).toBeLessThan(200_000);
     const err = await refusal(openXlsxWorkbook(buf, { ...LIMITS, maxSheetXmlBytes: 10_000_000 }));
     expect(err).toBeInstanceOf(XlsxLimitError);
-    expect((err as XlsxLimitError).kind).toBe('too_large');
+    expect((err as XlsxLimitError).kind).toBe('too_complex');
   });
 
   it('caps the shared strings held in memory', async () => {
     const buf = handWorkbook({ sharedStrings: Array.from({ length: 1000 }, () => 'x'.repeat(100)), sheets: [{ name: 'S', xml: '<sheetData/>' }] });
     const err = await refusal(openXlsxWorkbook(buf, { ...LIMITS, maxSharedStringChars: 50_000 }));
     expect(err).toBeInstanceOf(XlsxLimitError);
-    expect((err as XlsxLimitError).kind).toBe('too_large');
+    expect((err as XlsxLimitError).kind).toBe('too_complex');
   });
 });
 
@@ -738,19 +738,19 @@ describe('shared strings: each string costs, and their number is capped', () => 
   it('charges an empty string 16 characters: 20 million of them are refused at once', { timeout: 30_000 }, async () => {
     const buf = handWorkbook({ sharedStrings: '<si/>'.repeat(20_000_000), sheets: [{ name: 'S', xml: oneCell }] });
     const run = await timed(() => openXlsxWorkbook(buf, LIMITS));
-    expect(run.error).toMatchObject({ kind: 'too_large' });
+    expect(run.error).toMatchObject({ kind: 'too_complex' });
     expect(run.ms).toBeLessThan(10_000);
   });
 
   it('counts 16 characters for every string, empty ones included', async () => {
     const buf = handWorkbook({ sharedStrings: '<si/>'.repeat(1_000), sheets: [{ name: 'S', xml: oneCell }] });
-    expect(await refusal(openXlsxWorkbook(buf, { ...LIMITS, maxSharedStringChars: 15_000 }))).toMatchObject({ kind: 'too_large' });
+    expect(await refusal(openXlsxWorkbook(buf, { ...LIMITS, maxSharedStringChars: 15_000 }))).toMatchObject({ kind: 'too_complex' });
     expect((await openXlsxWorkbook(buf, { ...LIMITS, maxSharedStringChars: 16_000 })).rows).toBe(1);
   });
 
   it('refuses more strings than the sheet could hold cells', async () => {
     const buf = handWorkbook({ sharedStrings: Array.from({ length: 101 }, (_, i) => String(i)), sheets: [{ name: 'S', xml: oneCell }] });
-    expect(await refusal(openXlsxWorkbook(buf, { ...LIMITS, maxDataRows: 9, maxColumns: 10 }))).toMatchObject({ kind: 'too_large' });
+    expect(await refusal(openXlsxWorkbook(buf, { ...LIMITS, maxDataRows: 9, maxColumns: 10 }))).toMatchObject({ kind: 'too_complex' });
     expect((await openXlsxWorkbook(buf, { ...LIMITS, maxDataRows: 10, maxColumns: 10 })).rows).toBe(1);
   });
 });
@@ -768,14 +768,14 @@ describe('work: decompression bounded by the compressed size, cells by a budget'
     }
     const buf = zipParts(parts);
     const run = await timed(() => openXlsxWorkbook(buf, LIMITS));
-    expect(run.error).toMatchObject({ kind: 'too_large' });
+    expect(run.error).toMatchObject({ kind: 'too_complex' });
     expect(run.ms).toBeLessThan(5_000);
   });
 
   it('counts empty cells against the budget a pass may visit', async () => {
     const xml = `<sheetData>${Array.from({ length: 100 }, (_, r) => `<row>${'<c/>'.repeat(1_000)}</row>`).join('')}</sheetData>`;
     const buf = handWorkbook({ sheets: [{ name: 'S', xml }] });
-    expect(await refusal(openXlsxWorkbook(buf, { ...LIMITS, maxCells: 50_000 }))).toMatchObject({ kind: 'too_large' });
+    expect(await refusal(openXlsxWorkbook(buf, { ...LIMITS, maxCells: 50_000 }))).toMatchObject({ kind: 'too_complex' });
     expect((await openXlsxWorkbook(buf, { ...LIMITS, maxCells: 100_000 })).rows).toBe(0);
   });
 });
@@ -894,5 +894,28 @@ describe('the refusals leaf', () => {
 
   it('the cell-too-long message names the cap it is refused at', () => {
     expect(xlsxRefusalMessage('cell_too_long')).toContain(XLSX_MAX_CELL_CHARS.toLocaleString('en-IN'));
+  });
+});
+
+describe('PR review: too_large is the CSV byte limit only', () => {
+  it('a workbook whose sheet XML expands more than 100 times its compressed size (empty styled cells) is too_complex, not too_large', { timeout: 30_000 }, async () => {
+    const rowXml = `<row>${'<c s="1"/>'.repeat(2_000)}</row>`;
+    const parts = excelParts({ sheets: [{ name: 'S', xml: '@@' }], styles: { cellXfs: '<xf numFmtId="0"/><xf numFmtId="4"/>' } });
+    for (const p of parts) {
+      if (typeof p[1] === 'string' && p[1].includes('@@')) {
+        const [a, b] = p[1].split('@@');
+        p[1] = Buffer.concat([Buffer.from(`${a}<sheetData>`), ...Array<Buffer>(2_500).fill(Buffer.from(rowXml)), Buffer.from(`</sheetData>${b}`)]);
+      }
+    }
+    const buf = zipParts(parts);
+    const err = await refusal(openXlsxWorkbook(buf, LIMITS));
+    expect(err).toBeInstanceOf(XlsxLimitError);
+    expect(err).toMatchObject({ kind: 'too_complex' });
+  });
+
+  it('only the CSV passing its byte limit is too_large', async () => {
+    const rowsXml = Array.from({ length: 2_000 }, (_, i) => row(i + 1, num(`A${i + 1}`, String(9_000_000_000 + i)))).join('');
+    const workbook = await openXlsxWorkbook(handWorkbook({ sheets: [{ name: 'S', xml: `<sheetData>${rowsXml}</sheetData>` }] }), { ...LIMITS, maxCsvBytes: 1_000, maxSheetXmlBytes: 10_000_000 });
+    expect(await refusal((async () => { for await (const _ of workbook.toCsv()) { /* read */ } })())).toMatchObject({ kind: 'too_large' });
   });
 });

@@ -420,3 +420,38 @@ describe('fresh review: text-only formats, digitless sections, huge Generals, th
     expect(csv.split('\n')[0]!.split(',')[0]).toHaveLength(309);
   });
 });
+
+describe('PR review: a phone-like header keeps full digits only under a plain-digits format', () => {
+  const xf = (ids: number[]) => '<xf numFmtId="0"/>' + ids.map((id) => `<xf numFmtId="${id}" applyNumberFormat="1"/>`).join('');
+  async function sheetCsv(headers: string[], cells: Array<[value: string, style: number]>, numFmts: string, ids: number[]): Promise<string> {
+    const letters = 'ABCDEFGHIJ';
+    const buf = handWorkbook({
+      styles: { numFmts, cellXfs: xf(ids) },
+      sheets: [{
+        name: 'S',
+        xml: '<sheetData><row r="1">' + headers.map((h, i) => `<c r="${letters[i]}1" t="inlineStr"><is><t>${h}</t></is></c>`).join('') + '</row>'
+          + '<row r="2">' + cells.map(([v, s], i) => `<c r="${letters[i]}2" s="${s}"><v>${v}</v></c>`).join('') + '</row></sheetData>',
+      }],
+    });
+    return (await csvOf(buf)).split('\n')[1]!;
+  }
+
+  it('a percent, currency or literal format in a phone-like column is rendered as shown, whole numbers too', async () => {
+    const numFmts = '<numFmt numFmtId="164" formatCode="&quot;₹&quot;#,##0.00"/><numFmt numFmtId="165" formatCode="0&quot; pcs&quot;"/><numFmt numFmtId="166" formatCode="#,##0,"/>';
+    // Contact Rate, Cancellation Charges, Hotel, Cancellation %, Contact Units, Cancelled (thousands)
+    expect(await sheetCsv(
+      ['Contact Rate', 'Contact Rate', 'Cancellation Charges', 'Cancellation Charges', 'Hotel', 'Cancellation %', 'Contact Units', 'Cancelled (thousands)'],
+      [['0.5', 1], ['1', 1], ['1250.5', 2], ['1250', 2], ['3', 3], ['2', 1], ['7', 3], ['1250000', 4]],
+      numFmts, [9, 164, 165, 166],
+    )).toBe('50%,100%,"₹1,250.50","₹1,250.00",3 pcs,200%,7 pcs,"1,250"');
+  });
+
+  it('a plain-digits format (grouping and decimals only) in a phone column keeps the full digits', async () => {
+    const numFmts = '<numFmt numFmtId="164" formatCode="#,##0.00;[Red]#,##0.00"/><numFmt numFmtId="165" formatCode="#,##0_);(#,##0)"/>';
+    expect(await sheetCsv(
+      ['Mobile', 'Phone', 'Alt mobile', 'Contact No', 'Tel', 'Cell'],
+      [['9876543210', 1], ['9876543211', 2], ['9876543212', 3], ['9876543213', 4], ['9876543214', 5], ['9876543215', 0]],
+      numFmts, [3, 2, 164, 165, 11],
+    )).toBe('9876543210,9876543211,9876543212,9876543213,9876543214,9876543215');
+  });
+});

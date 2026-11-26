@@ -626,6 +626,23 @@ function renderSection(section: FormatSection, v: number, rounded: { int: string
 }
 
 /**
+ * Whether `x` under `style` shows as plain digits, grouping and decimals aside: General,
+ * a format not rendered (scientific and the like, which write the value), padding, or a
+ * number format whose section for `x` has no `%`, no scaling comma and no text (literal
+ * words, a currency or locale symbol; spaces from `_x` padding do not count). The Excel
+ * conversion writes a phone column's whole number in full only then (IM8), so `#,##0` or
+ * `0.00` keeps `9876543210` while `0%` and `"₹"#,##0.00` are shown as they are.
+ */
+export function showsPlainDigits(x: number, style: NumberStyle): boolean {
+  if (style.kind === 'plain' || style.kind === 'pad') return true;
+  if (style.kind !== 'format') return false;
+  const picked = pickSection(x, style.sections);
+  if (!picked || picked.section.fallback) return true;
+  const { section } = picked;
+  return section.factor === 1 && section.tokens.every((token) => token.t !== 'lit' || token.s.trim() === '');
+}
+
+/**
  * A number as its format shows it, or null when the format is not rendered (the caller
  * writes the value instead). `style` is a compiled number format.
  */

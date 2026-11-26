@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { performance } from 'node:perf_hooks';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { execFileSync, fork, type ChildProcess } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -281,6 +282,105 @@ describe('convertXlsxInChild', () => {
     } finally {
       delete process.env['XLSX_RUNNER_TEST_SECRET'];
     }
+  });
+
+  describe('how it ended is decided once nothing more can come from the child', () => {
+    type Step = 'opened' | 'csv' | 'exit0' | 'exit1' | 'end' | 'refusal' | 'disconnect' | 'close';
+    /**
+     * A child that does what `script` says, in that order, one step a tick. Node does not
+     * deliver a child's last IPC message before its `exit` event, so a script can put `exit`
+     * first: the order a loaded host can produce.
+     */
+    function scripted(script: Step[]): XlsxFork {
+      return () => {
+        const child = new EventEmitter() as unknown as ChildProcess & { connected: boolean };
+        const stdout = new PassThrough();
+        const stderr = new PassThrough();
+        const stdin = new PassThrough();
+        stdin.resume();
+        let code: number | null = null;
+        Object.assign(child, {
+          stdin, stdout, stderr, pid: 2 ** 22 + 7, exitCode: null, signalCode: null, connected: true, kill: () => true,
+        });
+        const run = (i: number) => {
+          const step = script[i];
+          if (step === undefined) return;
+          switch (step) {
+            case 'opened':
+              child.emit('message', { t: 'opened', sheet: { name: 'S', other_sheet_names: [], other_sheet_count: 0 }, rows: 2, columns: 1 });
+              break;
+            case 'csv':
+              stdout.end('Mobile\n9876500001\n');
+              break;
+            case 'exit0':
+            case 'exit1':
+              code = step === 'exit0' ? 0 : 1;
+              Object.assign(child, { exitCode: code });
+              child.emit('exit', code, null);
+              break;
+            case 'end':
+              child.emit('message', { t: 'end' });
+              break;
+            case 'refusal':
+              child.emit('message', { t: 'error', error: { name: 'XlsxRefusal', kind: 'unreadable', message: 'unreadable' } });
+              break;
+            case 'disconnect':
+              child.connected = false;
+              child.emit('disconnect');
+              break;
+            case 'close':
+              stderr.end();
+              child.emit('close', code, null);
+              break;
+          }
+          setImmediate(() => run(i + 1));
+        };
+        setImmediate(() => run(0));
+        return child;
+      };
+    }
+
+    it('an exit 0 before the last message (`end`) is a good workbook, not a crash', async () => {
+      const conversion = await convertXlsxInChild(rowsWorkbook(1), LIMITS, {
+        fork: scripted(['opened', 'csv', 'exit0', 'end', 'disconnect', 'close']),
+      });
+      expect(await readAll(conversion)).toBe('Mobile\n9876500001\n');
+      expect(conversion.failure()).toBeNull();
+      expect(xlsxConversionRunning()).toBe(false);
+    });
+
+    it('the same when `close` comes before the channel disconnects, decided at the disconnect', async () => {
+      const t0 = Date.now();
+      const conversion = await convertXlsxInChild(rowsWorkbook(1), LIMITS, {
+        fork: scripted(['opened', 'csv', 'exit0', 'close', 'end', 'disconnect']),
+      });
+      expect(await readAll(conversion)).toBe('Mobile\n9876500001\n');
+      expect(conversion.failure()).toBeNull();
+      // At the disconnect, not the fallback for a channel that stays open (2 s).
+      expect(Date.now() - t0).toBeLessThan(1_000);
+    });
+
+    it('an exit before the refusal it sent is that refusal', async () => {
+      const err = await rejection(convertXlsxInChild(rowsWorkbook(1), LIMITS, {
+        fork: scripted(['exit1', 'refusal', 'disconnect', 'close']),
+      }));
+      expect(err).toBeInstanceOf(XlsxRefusal);
+      expect(err).toMatchObject({ kind: 'unreadable' });
+    });
+
+    it('an exit with no message at all is still a crash, and frees the slot', async () => {
+      const pending = convertXlsxInChild(rowsWorkbook(1), LIMITS, { fork: scripted(['exit1', 'disconnect', 'close']) });
+      const err = await rejection(pending);
+      expect((err as Error).message).toMatch(/stopped before it finished \(exit code 1\)/);
+      expect(xlsxConversionRunning()).toBe(false);
+    });
+
+    it('a CSV that ends with no `end` message is a crash, not a good workbook', async () => {
+      const conversion = await convertXlsxInChild(rowsWorkbook(1), LIMITS, {
+        fork: scripted(['opened', 'csv', 'exit0', 'disconnect', 'close']),
+      });
+      expect((await rejection(readAll(conversion)) as Error).message).toMatch(/stopped before it finished/);
+    });
   });
 
   it('a fork that cannot start (EMFILE: no pipes, `error` then `close`) is a rejection, not a crash, and frees the slot', async () => {

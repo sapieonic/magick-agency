@@ -3,6 +3,7 @@
  * rejected-rows download. Part of `proxy-agency-campaigns.routes.ts`.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { MultipartFile } from '@fastify/multipart';
 import { z } from 'zod';
 import crypto from 'node:crypto';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
@@ -126,11 +127,14 @@ const UPLOAD_REFUSAL_MESSAGES = {
     + `and a file can be up to ${MAX_FILE_MB} MB. Split the customers into smaller files and upload them again.`,
   tooSlow: 'This workbook took too long to read. Save the sheet with your customers as a CSV file, '
     + 'or as a workbook with only that sheet, and upload it again.',
-  tooComplex: 'This workbook needs more memory to read than the server allows. Save the sheet with your customers '
-    + 'as a CSV file, or as a workbook with only that sheet, and upload it again.',
+  tooComplex: 'This workbook is too large or complex to read. Save the sheet with your customers as a CSV file, '
+    + 'or as a workbook with only that sheet, and upload it again.',
   busy: 'Another Excel file is being read just now. Try again in a minute.',
   shutdown: 'The server is restarting. Upload the file again in a minute.',
   storage: 'The file was read, but it could not be saved in time. Upload it again in a few minutes.',
+  noFile: 'No file uploaded.',
+  malformed: 'The upload could not be read: the file was cut off or the form is malformed. Please upload it again.',
+  stopped: 'The upload was stopped before it finished.',
 } as const;
 
 /** The per-user cap's words (`XlsxStartCap`): when to try again, and that a CSV is never held up. */
@@ -176,6 +180,7 @@ function refuseXlsx(err: unknown, reply: FastifyReply): FastifyReply | null {
       case 'too_slow':
         return refuseUpload(reply, 422, 'workbook_too_slow', UPLOAD_REFUSAL_MESSAGES.tooSlow);
       case 'too_much_memory':
+      case 'too_complex':
         return refuseUpload(reply, 422, 'workbook_too_complex', UPLOAD_REFUSAL_MESSAGES.tooComplex);
       case 'too_many_rows':
         return refuseUpload(reply, 422, 'too_many_rows', AGENCY_LIMIT_MESSAGES.tooManyRows(AGENCY_MAX_ROWS));
@@ -191,6 +196,46 @@ function refuseXlsx(err: unknown, reply: FastifyReply): FastifyReply | null {
     }
   }
   return null;
+}
+
+/** How long the rest of a refused upload's request (the form's end, after the file) is waited for. */
+const DISCARD_TAIL_MS = 5_000;
+
+/**
+ * Read the rest of an upload the route refuses before reading its file (a workbook while one
+ * converts, or over its user's cap), dropping every byte. Answering while the browser is still
+ * sending makes Node close the connection under it, and a browser reports that reset as a
+ * network error without reading the answer. Bounded by the multipart file limit: a file past
+ * it stops the reading there. True when the whole request was read; false when it was not
+ * (past the limit, or the form's end never came), and the answer then closes the connection.
+ */
+async function discardUpload(file: MultipartFile, request: FastifyRequest): Promise<boolean> {
+  const stream = file.file;
+  if (!stream.readableEnded && !stream.destroyed) {
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      stream.once('end', done);
+      stream.once('close', done);
+      stream.once('error', done);
+      stream.once('limit', done);
+      stream.resume();
+    });
+  }
+  if (stream.truncated) return false;
+  const raw = request.raw;
+  if (!raw.readableEnded && !raw.destroyed) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(done, DISCARD_TAIL_MS);
+      function done() {
+        clearTimeout(timer);
+        resolve();
+      }
+      raw.once('end', done);
+      raw.once('close', done);
+      raw.once('error', done);
+    });
+  }
+  return raw.readableEnded;
 }
 
 /** What a refused workbook's log line says, never the file's content. */
@@ -345,22 +390,26 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
     }, async (request, reply) => {
       const file = await request.file();
       if (!file) {
-        return reply.code(400).send({ error: 'Validation Error', message: 'No file uploaded.' });
+        return refuseUpload(reply, 400, 'no_file', UPLOAD_REFUSAL_MESSAGES.noFile);
       }
       const userKey = request.user?.id ?? '';
       // A workbook over its user's cap, or a second one while one converts, is told so before
       // its body is read into memory; the authoritative checks are below, once the bytes say
       // it is a workbook, and the runner's own.
-      const rateLimited = (): FastifyReply | null => {
-        const retryAfter = xlsxStarts.retryAfterSeconds(userKey);
-        if (retryAfter === 0) return null;
+      const rateLimitedFor = (): number => xlsxStarts.retryAfterSeconds(userKey);
+      const refuseRateLimited = (retryAfter: number): FastifyReply => {
         log.info({ tenantId: request.tenantId, reason: 'rate_limited' }, 'Agency roster workbook refused');
         return refuseUpload(reply, 429, 'upload_rate_limited', rateLimitedMessage(retryAfter), retryAfter);
       };
       if (isWorkbookName(file.filename)) {
-        const limited = rateLimited();
-        if (limited) return limited;
-        if (xlsxConversionRunning()) {
+        const retryAfter = rateLimitedFor();
+        const busy = retryAfter === 0 && xlsxConversionRunning();
+        if (retryAfter > 0 || busy) {
+          // The file is neither held in memory nor converted, but the rest of it is read and
+          // dropped before the answer; otherwise a browser still sending it would see the
+          // connection reset instead of the 429. Neither the slot nor the cap is held meanwhile.
+          if (!(await discardUpload(file, request))) reply.header('Connection', 'close');
+          if (retryAfter > 0) return refuseRateLimited(retryAfter);
           log.info({ tenantId: request.tenantId, reason: 'busy' }, 'Agency roster workbook refused');
           return refuseXlsx(new XlsxBusyError(), reply);
         }
@@ -381,10 +430,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
         }
         if (typeof (err as { statusCode?: unknown }).statusCode === 'number') throw err;
         log.warn({ err, tenantId: request.tenantId }, 'Agency roster upload refused: malformed multipart body');
-        return reply.code(400).send({
-          error: 'Validation Error',
-          message: 'The upload could not be read: the file was cut off or the form is malformed. Please upload it again.',
-        });
+        return refuseUpload(reply, 400, 'upload_malformed', UPLOAD_REFUSAL_MESSAGES.malformed);
       }
 
       // What the file is, by its bytes and then its name (`detectUploadFormat`): an `.xls`
@@ -415,9 +461,9 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       reply.raw.on('close', onClose);
       try {
         if (format === 'xlsx') {
-          // A workbook under another name (`customers.csv`) meets the cap only now.
-          const limited = rateLimited();
-          if (limited) return limited;
+          // A workbook under another name (`customers.csv`) meets the cap only now (its body read).
+          const retryAfter = rateLimitedFor();
+          if (retryAfter > 0) return refuseRateLimited(retryAfter);
           // A start counts only when the slot is free, so a `workbook_busy` costs the user nothing.
           if (!xlsxConversionRunning()) xlsxStarts.record(userKey);
           try {
@@ -427,7 +473,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
             if (answer) return answer;
             if (gone.signal.aborted) {
               log.info({ tenantId: request.tenantId, bytes: fileSizeBytes }, 'Agency roster workbook abandoned by the client');
-              return reply.code(400).send({ error: 'Validation Error', message: 'The upload was stopped before it finished.' });
+              return refuseUpload(reply, 400, 'upload_stopped', UPLOAD_REFUSAL_MESSAGES.stopped);
             }
             throw err;
           }
@@ -459,7 +505,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
             if (answer) return answer;
             if (gone.signal.aborted) {
               log.info({ tenantId: request.tenantId, bytes: fileSizeBytes }, 'Agency roster workbook abandoned by the client');
-              return reply.code(400).send({ error: 'Validation Error', message: 'The upload was stopped before it finished.' });
+              return refuseUpload(reply, 400, 'upload_stopped', UPLOAD_REFUSAL_MESSAGES.stopped);
             }
             throw cause;
           }

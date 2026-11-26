@@ -158,10 +158,13 @@ export interface AgencyUploadSheet {
  * `{ error, code, message }`, `message` in plain words for the supervisor.
  * - 400 `workbook_unsupported` (an old `.xls` or a password-protected workbook),
  *   `not_a_workbook`, `workbook_unreadable`, `workbook_no_sheet` (no visible worksheet),
- *   `cell_too_long`.
+ *   `cell_too_long`; and for any file, `no_file` (the form carried none), `upload_malformed`
+ *   (the body was cut off or is not a multipart form), `upload_stopped` (the client went
+ *   away before the upload finished).
  * - 413 `file_too_large`: the file, or the CSV an Excel file becomes, is over the size limit.
  * - 422 `too_many_rows`, `too_many_columns` (the ingest's own limits, checked at upload for an
- *   Excel file), `workbook_too_slow`, `workbook_too_complex`.
+ *   Excel file), `workbook_too_slow`, `workbook_too_complex` (the reader's heap cap, or one of
+ *   its caps on work: shared strings, cells, a part that expands too far).
  * - 429 `workbook_busy` and `upload_rate_limited`, with `retry_after_seconds` and `Retry-After`.
  * - 503 `server_restarting`, `upload_storage_slow`, with `retry_after_seconds` and `Retry-After`.
  */
@@ -171,6 +174,9 @@ export type AgencyUploadRefusalCode =
   | 'workbook_unreadable'
   | 'workbook_no_sheet'
   | 'cell_too_long'
+  | 'no_file'
+  | 'upload_malformed'
+  | 'upload_stopped'
   | 'file_too_large'
   | 'too_many_rows'
   | 'too_many_columns'

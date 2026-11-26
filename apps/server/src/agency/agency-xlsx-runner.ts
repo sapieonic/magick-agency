@@ -66,6 +66,13 @@ const XLSX_CHILD_HEAP_MB = 1024;
  */
 const XLSX_CHILD_DEADLINE_MS = 5 * 60 * 1000;
 
+/**
+ * How long a child's IPC channel may stay open once the child has exited and its stdio has
+ * closed, before how it ended is decided without the messages still owed (none should be:
+ * the channel's other end died with the child).
+ */
+const CHANNEL_GRACE_MS = 2_000;
+
 /** The last bytes of the child's stderr kept, to tell a heap exhaustion from another crash. */
 const STDERR_TAIL_BYTES = 16 * 1024;
 
@@ -278,30 +285,60 @@ export function convertXlsxInChild(
     current = stop;
     live.add(stop);
 
-    // Settling first: a fork that could not start (EMFILE) emits `error` and then `close`.
-    child.on('error', (err) => {
-      fail(err);
-      if (child.pid === undefined) onGone(null, null);
-    });
-    // The child has exited (or never started): the slot is free. A clean finish keeps the
-    // deadline running, since the S3 upload of the CSV may still be under way.
-    const onGone = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (exited) return;
-      exited = true;
-      release();
-      if (failure === null && !(ended && code === 0)) {
-        failure = /heap out of memory|Reached heap limit/i.test(stderr) || signal === 'SIGABRT'
-          || (signal === 'SIGKILL' && !killedByUs)
+    // How the child ended is decided once nothing more can arrive from it: it has exited, its
+    // stdio has closed (`close`) and its IPC channel has disconnected. Node does not deliver a
+    // child's last IPC message (`end`, `error`) before its `exit` event, so an exit alone,
+    // even an exit 0 after the CSV, is not yet a crash. The slot is freed at `exit` all the same.
+    let exitCode: number | null = null;
+    let exitSignal: NodeJS.Signals | null = null;
+    let stdioClosed = false;
+    let decided = false;
+    let channelGrace: NodeJS.Timeout | null = null;
+    const decide = (force = false) => {
+      if (decided || !exited || !stdioClosed) return;
+      if (!force && child.connected === true) {
+        // Its last messages are still on the way: `disconnect` decides. A channel that stays
+        // open past its process (nothing should hold it) is not waited on for long.
+        channelGrace ??= setTimeout(() => decide(true), CHANNEL_GRACE_MS);
+        channelGrace.unref();
+        return;
+      }
+      decided = true;
+      if (channelGrace) clearTimeout(channelGrace);
+      if (failure === null && !(ended && exitCode === 0)) {
+        failure = /heap out of memory|Reached heap limit/i.test(stderr) || exitSignal === 'SIGABRT'
+          || (exitSignal === 'SIGKILL' && !killedByUs)
           ? new XlsxLimitError('too_much_memory')
-          : new Error(`The workbook reader stopped before it finished (${signal ?? `exit code ${code}`}): ${stderr.slice(-500)}`);
+          : new Error(`The workbook reader stopped before it finished (${exitSignal ?? `exit code ${exitCode}`}): ${stderr.slice(-500)}`);
       }
       settle();
-    };
-    child.on('exit', onGone);
-    child.on('close', (code, signal) => {
-      onGone(code, signal);
       if (failure === null) csv.end();
+    };
+    // The child has exited (or never started): the slot is free. A clean finish keeps the
+    // deadline running, since the S3 upload of the CSV may still be under way.
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (exited) return;
+      exited = true;
+      exitCode = code;
+      exitSignal = signal;
+      release();
+      decide();
+    };
+    // A fork that could not start (EMFILE) emits `error` and then `close`, and has no channel.
+    child.on('error', (err) => {
+      fail(err);
+      if (child.pid === undefined) {
+        stdioClosed = true;
+        onExit(null, null);
+      }
     });
+    child.on('exit', onExit);
+    child.on('close', (code, signal) => {
+      onExit(code, signal);
+      stdioClosed = true;
+      decide();
+    });
+    child.on('disconnect', () => decide());
 
     const { stdin, stdout, stderr: errStream } = child;
     if (!stdin || !stdout || !errStream) {

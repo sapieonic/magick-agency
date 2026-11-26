@@ -376,7 +376,7 @@ describe('refusals (integration)', () => {
     expect(res.json()).toEqual({
       error: 'Validation Error',
       code: 'workbook_too_complex',
-      message: 'This workbook needs more memory to read than the server allows. Save the sheet with your customers as a CSV file, or as a workbook with only that sheet, and upload it again.',
+      message: 'This workbook is too large or complex to read. Save the sheet with your customers as a CSV file, or as a workbook with only that sheet, and upload it again.',
     });
     expect(s3.files.size).toBe(0);
   });
