@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/sapieonic/magick-agency/compare/server-v0.36.0...server-v0.37.0) (2026-11-26)
+
+
+### Features
+
+* **grafana:** default to the magickagency stack and route every alert to Slack ([#131](https://github.com/sapieonic/magick-agency/issues/131)) ([adbd052](https://github.com/sapieonic/magick-agency/commit/adbd0525828e0ef76cfdd726cc644e968e97b26c))
+
 ## [0.36.0](https://github.com/sapieonic/magick-agency/compare/server-v0.35.0...server-v0.36.0) (2026-11-26)
 
 

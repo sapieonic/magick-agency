@@ -1,5 +1,5 @@
 {
-  "apps/server": "0.36.0",
+  "apps/server": "0.37.0",
   "apps/console": "0.36.0",
   "apps/super-admin": "0.8.0",
   "apps/report-renderer": "0.6.2",
