@@ -36,7 +36,7 @@ apps/mobile/
                         Call back into the soft phone), contacts (My contacts: contact assignment),
                         customers (Customer history: search one number from the Calls tab,
                         docs/customer-history.md), settings
-    ui/                 shared primitives (pills, cards, the live dot)
+    ui/                 shared primitives (pills, cards, the live dot, the keyboard)
   packages/
     agency_wire/        wire types for the API and the station socket, hand-written against
                         packages/contracts and checked by its fixtures (packages/contracts/fixtures/agent)

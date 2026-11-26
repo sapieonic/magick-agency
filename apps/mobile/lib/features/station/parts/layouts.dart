@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/tokens.dart';
+import '../../../ui/keyboard.dart';
 import 'banners.dart';
 import 'need_help.dart';
 import 'top_bar.dart';
@@ -9,6 +10,13 @@ import 'top_bar.dart';
 /// The one page shape every station screen uses (AS1, design-spec §1 and §4): the top bar, the
 /// state's band, the screen's content (scrolling), and its actions pinned at the bottom, full
 /// width, in thumb reach. At 200% text the content scrolls; the main action never moves off screen.
+///
+/// The one exception is the on-screen keyboard. While it is up the page is given to what is being
+/// typed (a note): the pinned actions are hidden, and on a short page ([keyboardShortPage]) the band
+/// scrolls with the content as it does at large text. Otherwise the keyboard, the band, the top bar
+/// and the actions riding on the keyboard would leave the content no height at all, and the agent
+/// could not see the note or its label. The actions come back the moment the keyboard goes down
+/// (Android's back, the keyboard's own button), in the same place.
 ///
 /// Under the band, in this order and at most one line each: the one-time listening notice, "your
 /// customer is waiting", a slow internet line, the microphone, what ended while away, and how the
@@ -43,8 +51,16 @@ class StationPage extends StatelessWidget {
   /// still (AS1), and a press and hold on a fact is not taken for a drag.
   final bool revealOnPush;
 
+  /// Under this much height left with the keyboard up (a small phone: 360×640 with a 300 dp
+  /// keyboard leaves about 300), the band scrolls with the content.
+  static const keyboardShortPage = 420.0;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => KeyboardOpenBuilder(
+    builder: (context, keyboard) => LayoutBuilder(builder: (context, box) => _page(context, keyboard, box.maxHeight)),
+  );
+
+  Widget _page(BuildContext context, bool keyboard, double height) {
     final t = context.tokens;
     final content = [
       if (banners) ...[
@@ -57,9 +73,10 @@ class StationPage extends StatelessWidget {
       ],
       ...body,
     ];
-    // Large text on a small phone: the band scrolls with the content, so the content and the
-    // pinned action always have room. Otherwise the band stays put.
-    final tight = MediaQuery.textScalerOf(context).scale(16) / 16 > 1.3;
+    // Large text on a small phone, or the keyboard up on a short page: the band scrolls with the
+    // content, so the content (and the pinned action, or the note being typed) always has room.
+    // Otherwise the band stays put.
+    final tight = MediaQuery.textScalerOf(context).scale(16) / 16 > 1.3 || (keyboard && height < keyboardShortPage);
     return ColoredBox(
       color: t.bgPrimary,
       child: Column(
@@ -85,7 +102,15 @@ class StationPage extends StatelessWidget {
               ),
             ),
           ),
-          if (actions != null) StationActionArea(child: actions!),
+          // Hidden with the keyboard up, its state kept (a hold in progress, a busy label): it is
+          // back, as it was, the moment the keyboard goes down.
+          if (actions != null)
+            Visibility(
+              key: const Key('station-actions'),
+              visible: !keyboard,
+              maintainState: true,
+              child: StationActionArea(child: actions!),
+            ),
         ],
       ),
     );

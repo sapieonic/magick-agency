@@ -271,6 +271,19 @@ content, and the main action full width at the bottom in thumb reach (`widgets/a
 happened?, faded until it is ready, whose press says what is missing ("Choose one first."). At 200%
 text the band scrolls with the content and the main action keeps its place.
 
+**While the keyboard is up, the page is the note.** The one exception to the pinned action: with the
+on-screen keyboard open (On call, What happened?, an inbound call and its outcome, any field on a
+`StationPage`), the pinned actions are hidden, their state kept, and come back in their place the
+moment the keyboard goes down (Android's back, the keyboard's own button); the agent closes the
+keyboard to press Save or Hang up. On a short page (under 420 dp left over the keyboard, a small
+phone) the band also scrolls with the content, as at 200% text; on a taller one it stays, with its
+clock. Otherwise the top bar, the band and the actions riding on the keyboard left the content no
+height at all, and the agent could not see the note they were typing. Once the keyboard has settled,
+the note's label ("Note", "Note (needed)") and its save status scroll into view with the field, not
+only the line being typed (`RevealWhileTyping`, `lib/ui/keyboard.dart`; the soft phone's notes do the
+same). A `Scaffold` takes the keyboard out of its body's `MediaQuery`, so the page reads it from the
+window (`keyboardOpenOf`). Guarded by `test/features/station/station_keyboard_test.dart`.
+
 | Screen | When | Main action |
 |---|---|---|
 | 01 Start of day | the pre-flight (before the join), and `offline` after it | Start work |

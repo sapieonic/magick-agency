@@ -2949,7 +2949,7 @@ available), the splash, theme tokens mirrored from `packages/web-ui` and the sta
 (`StateTokens`, from `docs/agent-station/mockups/tokens.css`; light until the agent picks dark, AS14),
 and shared widgets.
 
-Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `app/routes.dart`, `app/shell.dart`, `app/splash_screen.dart`, `app/theme/app_theme.dart`, `app/theme/tokens.dart`, `ui/primitives.dart`
+Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `app/routes.dart`, `app/shell.dart`, `app/splash_screen.dart`, `app/theme/app_theme.dart`, `app/theme/tokens.dart`, `ui/primitives.dart`, `ui/keyboard.dart` (whether the on-screen keyboard is open, read from the window; `RevealWhileTyping`, the notes block brought into view with its label while typing)
 
 | Test file | Cases |
 |---|---|
@@ -3290,6 +3290,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_floor_assist_test.dart` (LF35, LF38: Need help in the top bar behind the flag, on every working screen (on calls only after an older server's `help_not_on_call`), asking, "Help asked · 0:42" ticking and cancelling, only the status a live region (never the ticking age), Cancel's semantics, open between calls without a new raise, the answer's notice as a live region and its dismiss, Need help pressed again after a message answered it, a refusal apart from the action error, 48 dp and its hint, 200% text; the break against its limit: left rounded up (never "0:00 left"), Break over in red-orange with how late, none without a limit or on a reserved code, 200% text) | 21 |
 | `apps/mobile/test/features/station/station_copy_jargon_test.dart` (AS15, spec §6.6: every literal of `StationCopy`, `InboundCopy`, `FloorAssistCopy` and `PreflightCopy`, read from the source, and the soft phone's What happened? lines with the shared block and promise lines, say none of the jargon list in `test/support/station_jargon.dart`) | 6 |
 | `apps/mobile/test/features/station/station_dial_activity_test.dart` (Ready's "Dialling a customer…", the count line, ringing over No calls right now, stopped calls unchanged, the live region only while dialling, 200% text) | 7 |
+| `apps/mobile/test/features/station/station_keyboard_test.dart` (the keyboard up: on wrap-up, Time is over, On call, an inbound call and its outcome, at 360×800 and 360×640, 1× and 2× text, the notes label, save status and field in view and tappable, the pinned actions hidden and back when it closes; the band pinned on a tall phone, scrolling on a short one; the soft phone's notes label in view) | 22 |
 | `apps/mobile/test/features/station/station_link_test.dart` (Internet problem and Call problem, Try again now only once the retries gave up, Need help offline, another device, work ended) | ~12 |
 | `apps/mobile/test/features/station/station_listen_notice_test.dart` (the standing line, docs/listening.md LS2: Monitoring and recording under ⋮ More and on both soft-phone surfaces behind the client flag, `FeatureFlags.liveListenEnabled`; Start of day's line; the one-time notice until Got it, per agent and account, on a call too; 200% text) | 15 |
 | `apps/mobile/test/features/station/station_logic_test.dart` (with the console's break-chip and Save & take break words) | 24 |
