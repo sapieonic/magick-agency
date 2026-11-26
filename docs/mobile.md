@@ -1439,12 +1439,17 @@ the flag is on). Break limits are not behind it.
 - **A supervisor's message** (`lib/features/station/supervisor_message_banner.dart`, LF36): the
   shell shows it at the top of every tab, over a call too, never as a dialog: plain text as sent
   (never markup or a link), "Anitha N · 10:05" ("Your supervisor" with no name), on this device's
-  clock. Several queue, oldest first: the banner shows one and "2 more messages"; Dismiss shows the
-  next. Each id is shown once (a resent frame is ignored), at most 20 are held, and leaving the
+  clock. Several queue, oldest first: the banner shows one, its own Dismiss, and a "Show 2 more
+  messages" button (48 dp) that opens it to every queued message, oldest first, each with its
+  sender, time, text and Dismiss, beside "Dismiss all" and "Show less" (LF36's addendum: testers did
+  not find the next message behind Dismiss). Open, the list is at most a third of the screen tall
+  and scrolls inside, so a call under it stays on screen; a message arriving while it is open joins
+  it, and it closes by itself once one is left. Each id is shown once (a resent frame is ignored), at most 20 are held, and leaving the
   station forgets them. Each is announced to a screen reader once as it arrives ("Message from Anitha
   N: …", polite), sender and text together. The banner is not a live region: one would say a
-  message twice as it arrives and again on a second message or a dismissal, where nothing new
-  arrived. A soft-phone session gets them too: the core publishes them beside the shell's signals
+  message twice as it arrives and again on a second message, a dismissal or opening the list, where
+  nothing new arrived. Nothing in it takes focus. Messages are one-way (LF5): once a message answers
+  Need help, the request has ended and Need help can be pressed again. A soft-phone session gets them too: the core publishes them beside the shell's signals
   (`StationHost.messages`, `supervisorMessagesProvider`), not in the campaign view.
   - **One vibration, never a sound** (LF39): the phone vibrates once (`HapticFeedback.vibrate`)
     when a new message arrives, on a call too (a tone could be heard by the customer; a vibration

@@ -323,6 +323,15 @@ void main() {
         final msgs = app.container.read(supervisorMessagesProvider);
         expect(msgs.single.from, 'Your supervisor');
         expect(msgs.single.text, 'Offer the 3-month plan');
+        // Answered: nothing open, so Need help can be pressed again, with the message still shown;
+        // the new request opens (a supervisor's message is one-way, LF5: asking again is the reply).
+        expect(app.view!.help.stage, HelpStage.none);
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody(raised: '2026-11-01T09:05:00.000Z'));
+        app.run(app.controller.raiseHelp());
+        expect(app.requests('POST', helpPath), hasLength(2));
+        expect(app.view!.help.stage, HelpStage.open);
+        expect(app.view!.help.notice, isNull);
+        expect(app.container.read(supervisorMessagesProvider), hasLength(1), reason: 'asking again dismisses no message');
         app.dispose();
       });
     });

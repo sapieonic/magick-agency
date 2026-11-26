@@ -177,6 +177,24 @@ void main() {
       semantics.dispose();
     });
 
+    testWidgets('answered with a message, on a break: Need help is back and pressing it asks again', (tester) async {
+      final h = await pumpStation(
+        tester,
+        station(
+          phase: AgentPhase.onBreak,
+          onBreak: BreakInfo(code: 'tea', label: 'Tea break', since: t0),
+          help: const HelpView(notice: 'Reshma Mohammad answered with a message.', noticeTone: HelpNoticeTone.success),
+        ),
+        needHelp: true,
+      );
+      expect(find.text('Reshma Mohammad answered with a message.'), findsOneWidget);
+      expect(find.byKey(const Key('cancel-help')), findsNothing);
+      expect(tester.widget<OutlinedButton>(find.byKey(const Key('need-help'))).onPressed, isNotNull);
+      await tester.tap(find.byKey(const Key('need-help')));
+      await tester.pump();
+      expect(h.actions.count('raiseHelp'), 1);
+    });
+
     testWidgets('a refusal under the button, dismissible; the station\'s own error line untouched', (tester) async {
       final h = await pumpStation(tester, inWrapup(help: const HelpView(error: 'You can ask for help during a call, or while you finish one.')),
           needHelp: true);

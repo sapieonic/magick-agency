@@ -68,7 +68,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Anitha N · 10:05'), findsOneWidget);
       expect(find.text('Offer the 3-month plan, the waiver is approved.'), findsOneWidget);
-      expect(find.text('2 more messages'), findsOneWidget);
+      expect(find.text('Show 2 more messages'), findsOneWidget);
       // Above the tab's content, not over it.
       final banner = tester.getRect(find.byKey(const Key('supervisor-message')));
       final page = tester.getRect(find.textContaining('at /home'));
@@ -78,7 +78,7 @@ void main() {
       c.read(_messages.notifier).set([msg('m2', text: 'Wrap up this call', from: 'Your supervisor'), msg('m3')]);
       await tester.pumpAndSettle();
       expect(find.text('Your supervisor · 10:05'), findsOneWidget);
-      expect(find.text('1 more message'), findsOneWidget);
+      expect(find.text('Show 1 more message'), findsOneWidget);
     });
 
     testWidgets('on every tab, and over a call (the tab bar hidden): never a dialog, nothing held up', (tester) async {
@@ -125,8 +125,6 @@ void main() {
       return announcements;
     }
 
-    String said(Object? m) => ((m! as Map)['data'] as Map)['message'] as String;
-
     testWidgets('each message is announced once as it arrives, politely; a dismissal says nothing again', (tester) async {
       // With semantics on, so a live region (which a screen reader re-reads whenever its text
       // changes, beside the announcement) would be seen.
@@ -142,7 +140,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(announcements.map(said).last, 'Message from Ravi: Wrap up this call');
-      expect(liveRegions(tester), isEmpty, reason: '"1 more message" appearing is not a new message to read out');
+      expect(liveRegions(tester), isEmpty, reason: '"Show 1 more message" appearing is not a new message to read out');
       c.read(_messages.notifier).set([msg('m2', text: 'Wrap up this call', from: 'Ravi')]);
       await tester.pump();
       await tester.pump();
@@ -176,4 +174,179 @@ void main() {
       expect(tester.getSize(find.byKey(const Key('supervisor-message'))).height, lessThan(640 * 0.6));
     });
   });
+
+  group('several messages: every one readable without guessing (LF36, addendum 2026-11-26)', () {
+    final burst = [
+      msg('m1', text: 'hlo', from: 'Reshma Mohammad'),
+      msg('m2', text: 'Offer the 3-month plan', from: 'Reshma Mohammad'),
+      msg('m3', text: 'Call me after this one', from: 'Ravi'),
+    ];
+    final list = find.byKey(const Key('supervisor-message-list'));
+    final more = find.byKey(const Key('supervisor-message-more'));
+
+    Future<List<Object?>> pumpBanner(WidgetTester tester, {double textScale = 1, Size size = const Size(360, 800)}) async {
+      tester.view.devicePixelRatio = 3;
+      tester.view.physicalSize = size * 3;
+      addTearDown(tester.view.reset);
+      final announcements = <Object?>[];
+      // Announcements only: a tap's semantics event rides the same channel.
+      tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, (m) async {
+        if ((m! as Map)['type'] == 'announce') announcements.add(m);
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: c,
+        child: MaterialApp(
+          theme: buildTheme(AppTokens.light, Brightness.light),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(supportsAnnounce: true, textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
+          home: const Scaffold(body: Column(children: [SupervisorMessageBanner(), Expanded(child: Placeholder(key: Key('the-call')))])),
+        ),
+      ));
+      return announcements;
+    }
+
+    testWidgets('one shown, and a 48 dp button saying how many more; pressing it shows every text, oldest first', (tester) async {
+      final semantics = tester.ensureSemantics();
+      c.read(_messages.notifier).set(burst);
+      await pumpBanner(tester);
+      expect(find.text('hlo'), findsOneWidget);
+      expect(find.text('Offer the 3-month plan'), findsNothing);
+      expect(find.text('Show 2 more messages'), findsOneWidget);
+      expect(tester.getSize(more).height, greaterThanOrEqualTo(48));
+      expect(tester.getSemantics(more).flagsCollection.isButton, isTrue, reason: 'a screen reader says it can be pressed');
+      expect(list, findsNothing);
+
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      expect(list, findsOneWidget);
+      for (final m in burst) {
+        expect(find.text(m.text), findsOneWidget, reason: m.id);
+      }
+      expect(find.text('Reshma Mohammad · 10:05'), findsNWidgets(2));
+      expect(find.text('Ravi · 10:05'), findsOneWidget);
+      expect(find.text('3 messages'), findsOneWidget);
+      final ys = [for (final m in burst) tester.getTopLeft(find.text(m.text)).dy];
+      expect(ys, orderedEquals([...ys]..sort()), reason: 'oldest first');
+      expect(more, findsNothing);
+      expect(dismissed, isEmpty, reason: 'opening the list dismisses nothing');
+      semantics.dispose();
+    });
+
+    testWidgets('open: each Dismiss takes only its own; a new message joins the list; one left, it closes', (tester) async {
+      c.read(_messages.notifier).set(burst);
+      await pumpBanner(tester);
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('dismiss-supervisor-message-m2')));
+      expect(dismissed, ['m2']);
+      c.read(_messages.notifier).set([burst[0], burst[2]]);
+      await tester.pumpAndSettle();
+      expect(list, findsOneWidget, reason: 'still open with two left');
+      expect(find.text('hlo'), findsOneWidget);
+      expect(find.text('Call me after this one'), findsOneWidget);
+      expect(find.text('Offer the 3-month plan'), findsNothing);
+
+      c.read(_messages.notifier).set([burst[0], burst[2], msg('m4', text: 'Good work today')]);
+      await tester.pumpAndSettle();
+      expect(find.text('Good work today'), findsOneWidget, reason: 'a message arriving while open shows in the list');
+      expect(find.text('3 messages'), findsOneWidget);
+
+      c.read(_messages.notifier).set([burst[2]]);
+      await tester.pumpAndSettle();
+      expect(list, findsNothing, reason: 'one left: back to the single banner');
+      expect(find.byKey(const Key('dismiss-all-supervisor-messages')), findsNothing);
+      expect(find.text('Call me after this one'), findsOneWidget);
+      expect(find.byKey(const Key('dismiss-supervisor-message')), findsOneWidget);
+
+      // The next burst starts with one shown again.
+      c.read(_messages.notifier).set([burst[2], msg('m5', text: 'One more thing')]);
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(find.text('Show 1 more message'), findsOneWidget);
+    });
+
+    testWidgets('Dismiss all clears the burst in one press; Show less closes the list', (tester) async {
+      final semantics = tester.ensureSemantics();
+      c.read(_messages.notifier).set(burst);
+      await pumpBanner(tester);
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('supervisor-message-fewer')));
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(find.text('Show 2 more messages'), findsOneWidget);
+      expect(dismissed, isEmpty);
+
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      final all = find.byKey(const Key('dismiss-all-supervisor-messages'));
+      expect(tester.getSize(all).height, greaterThanOrEqualTo(48));
+      expect(tester.getSemantics(all).label, 'Dismiss all messages');
+      expect(tester.getSemantics(all).flagsCollection.isButton, isTrue);
+      await tester.tap(all);
+      expect(dismissed, ['m1', 'm2', 'm3']);
+      c.read(_messages.notifier).set(const []);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('supervisor-message')), findsNothing);
+      semantics.dispose();
+    });
+
+    testWidgets('twenty held, open on 360×800: the list is at most a third of the screen and scrolls inside; the call stays on screen',
+        (tester) async {
+      c.read(_messages.notifier).set([for (var i = 1; i <= 20; i++) msg('m$i', text: 'Message number $i, a line or two long so it wraps.')]);
+      await pumpBanner(tester);
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(tester.getSize(list).height, lessThanOrEqualTo(800 / 3));
+      final call = tester.getRect(find.byKey(const Key('the-call')));
+      expect(call.height, greaterThan(800 * 0.5), reason: 'the call under the banner keeps most of the screen');
+      // The last one is reached by scrolling inside the list.
+      final last = find.text('Message number 20, a line or two long so it wraps.');
+      await tester.dragUntilVisible(last, find.descendant(of: list, matching: find.byType(SingleChildScrollView)), const Offset(0, -200));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(last).bottom, lessThanOrEqualTo(tester.getRect(list).bottom + 0.5));
+      expect(tester.getRect(find.byKey(const Key('the-call'))), call, reason: 'scrolling inside the list moves nothing under it');
+    });
+
+    testWidgets('open at 200% text on 360×640: no overflow, still bounded', (tester) async {
+      c.read(_messages.notifier).set([for (var i = 1; i <= 5; i++) msg('m$i', text: 'x ' * 120)]);
+      await pumpBanner(tester, textScale: 2, size: const Size(360, 640));
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(tester.getSize(list).height, lessThanOrEqualTo(640 / 3));
+    });
+
+    testWidgets('opening, closing and dismissing say nothing again: each id announced once, no live region', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final announcements = await pumpBanner(tester);
+      c.read(_messages.notifier).set(burst.sublist(0, 2));
+      await tester.pump();
+      await tester.pump();
+      expect(announcements, hasLength(2));
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      expect(announcements, hasLength(2), reason: 'opening the list is not a new message');
+      expect(liveRegions(tester), isEmpty);
+      c.read(_messages.notifier).set(burst);
+      await tester.pump();
+      await tester.pump();
+      expect(announcements.map(said).skip(2), ['Message from Ravi: Call me after this one']);
+      c.read(_messages.notifier).set([burst[2]]);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('dismiss-supervisor-message')));
+      await tester.pumpAndSettle();
+      expect(announcements, hasLength(3));
+      expect(liveRegions(tester), isEmpty);
+      semantics.dispose();
+    });
+  });
 }
+
+String said(Object? m) => ((m! as Map)['data'] as Map)['message'] as String;
