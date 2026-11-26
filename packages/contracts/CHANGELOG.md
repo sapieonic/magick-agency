@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.31.0...contracts-v0.32.0) (2026-11-26)
+
+
+### Features
+
+* **server,console,contracts:** customer upload accepts an Excel (.xlsx) workbook as well as CSV (IM8) ([#127](https://github.com/sapieonic/magick-agency/issues/127)) ([2e85fcc](https://github.com/sapieonic/magick-agency/commit/2e85fcc2f588248920971f2674c6ef1ea66190e9))
+* **server,console,super-admin,contracts,db,observability,web-ui:** VoiceLink on tenants' own carrier accounts, with carrier account modes (CR1–CR15) ([#130](https://github.com/sapieonic/magick-agency/issues/130)) ([eebb67a](https://github.com/sapieonic/magick-agency/commit/eebb67ac8af7cb1418239fafce9cc3c73e248d9e))
+
 ## [0.31.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.30.0...contracts-v0.31.0) (2026-11-24)
 
 

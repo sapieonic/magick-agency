@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.36.0](https://github.com/sapieonic/magick-agency/compare/console-v0.35.0...console-v0.36.0) (2026-11-26)
+
+
+### Features
+
+* **console,mobile:** Need help on every soft phone screen, a message vibration, floor assist telemetry (LF39) ([#126](https://github.com/sapieonic/magick-agency/issues/126)) ([882633b](https://github.com/sapieonic/magick-agency/commit/882633b4d0decd12dc7a4d783912a6fb20918332))
+* **server,console,contracts:** customer upload accepts an Excel (.xlsx) workbook as well as CSV (IM8) ([#127](https://github.com/sapieonic/magick-agency/issues/127)) ([2e85fcc](https://github.com/sapieonic/magick-agency/commit/2e85fcc2f588248920971f2674c6ef1ea66190e9))
+* **server,console,super-admin,contracts,db,observability,web-ui:** VoiceLink on tenants' own carrier accounts, with carrier account modes (CR1–CR15) ([#130](https://github.com/sapieonic/magick-agency/issues/130)) ([eebb67a](https://github.com/sapieonic/magick-agency/commit/eebb67ac8af7cb1418239fafce9cc3c73e248d9e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.32.0
+    * @magick-agency/domain bumped to 0.17.1
+    * @magick-agency/web-ui bumped to 0.5.0
+
 ## [0.35.0](https://github.com/sapieonic/magick-agency/compare/console-v0.34.0...console-v0.35.0) (2026-11-24)
 
 
