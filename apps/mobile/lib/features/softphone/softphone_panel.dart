@@ -10,6 +10,7 @@ import '../../app/theme/app_theme.dart';
 import '../../app/theme/tokens.dart';
 import '../../core/softphone/softphone_view.dart';
 import '../../core/station/station_view.dart';
+import '../../ui/keyboard.dart' show KeepTypingInView;
 import '../../ui/primitives.dart';
 import '../station/logic/facts.dart' show firstFactLine;
 import '../station/parts/banners.dart' show BusyLabel, ListenFirstNoticeCard, ListenInfoButton;
@@ -186,11 +187,15 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
-                  child: SingleChildScrollView(
-                    key: const Key('softphone-scroll'),
-                    controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: body),
+                  // A refusal or warning in the actions under it shortens the column: the note being
+                  // typed comes back into view with its label.
+                  child: KeepTypingInView(
+                    child: SingleChildScrollView(
+                      key: const Key('softphone-scroll'),
+                      controller: _scroll,
+                      padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: body),
+                    ),
                   ),
                 ),
                 _ActionArea(maxHeight: box.maxHeight / 2, child: bottom),

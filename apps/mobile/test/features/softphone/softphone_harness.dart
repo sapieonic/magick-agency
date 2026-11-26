@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:magick_agency_agent/app/shell.dart' show ShellBody;
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
@@ -252,7 +254,7 @@ Future<void> settle(WidgetTester tester) async {
 
 /// Pumps the Phone screen ([phoneScreen]) or the panel alone on [surface].
 ///
-/// [statusBar], [keyboard] and [shell] put the phone's own chrome around it:
+/// [statusBar], [keyboard], [navBar] and [shell] put the phone's own chrome around it:
 /// see [setPhoneInsets] and [ShellScaffold].
 Future<SoftphoneHarness> pumpSoftphone(
   WidgetTester tester,
@@ -264,6 +266,7 @@ Future<SoftphoneHarness> pumpSoftphone(
   Size size = const Size(390, 844),
   double statusBar = 0,
   double keyboard = 0,
+  double navBar = 0,
   bool shell = false,
   bool disableAnimations = false,
   bool supportsAnnounce = false,
@@ -276,7 +279,7 @@ Future<SoftphoneHarness> pumpSoftphone(
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
-  setPhoneInsets(tester, statusBar: statusBar, keyboard: keyboard);
+  setPhoneInsets(tester, statusBar: statusBar, keyboard: keyboard, navBar: navBar);
   addTearDown(tester.view.reset);
 
   final platformCalls = <MethodCall>[];
@@ -362,17 +365,25 @@ Future<SoftphoneHarness> pumpSoftphone(
 
 // ── A real phone ──────────────────────────────────────────────────────
 
-/// A status bar of [statusBar] dp (the top inset SafeArea takes away) and a
-/// soft keyboard of [keyboard] dp over the bottom of the screen.
-void setPhoneInsets(WidgetTester tester, {double statusBar = 0, double keyboard = 0}) {
+/// A status bar of [statusBar] dp (the top inset SafeArea takes away), a
+/// soft keyboard of [keyboard] dp over the bottom of the screen, and the
+/// system's navigation bar ([navBar] dp: about 24 for the gesture bar, 48 for
+/// three buttons) at the bottom. As the engine reports them: the keyboard
+/// covers the navigation bar, so the bottom padding is what of the bar the
+/// keyboard leaves (none once it is up), while the view padding keeps it.
+void setPhoneInsets(WidgetTester tester, {double statusBar = 0, double keyboard = 0, double navBar = 0}) {
   final ratio = tester.view.devicePixelRatio;
-  tester.view.padding = FakeViewPadding(top: statusBar * ratio);
+  tester.view.padding = FakeViewPadding(top: statusBar * ratio, bottom: math.max(0, navBar - keyboard) * ratio);
+  tester.view.viewPadding = FakeViewPadding(top: statusBar * ratio, bottom: navBar * ratio);
   tester.view.viewInsets = FakeViewPadding(bottom: keyboard * ratio);
 }
 
 /// The app shell as it nests a tab: a Scaffold with the five-tab
-/// NavigationBar, around the branch's own navigator ([child]). The real shell
-/// hides the bar during a live call; this one always shows it, the tighter case.
+/// NavigationBar, around the branch's own navigator ([child]), nested with the
+/// app's own [ShellBody] in a column as `AppShell` nests it, so a tab gets the
+/// `MediaQuery` it gets in the app (the keyboard's inset included or not). The
+/// real shell hides the bar during a live call; this one always shows it, the
+/// tighter case.
 class ShellScaffold extends StatelessWidget {
   const ShellScaffold({super.key, required this.selected, required this.child});
 
@@ -381,7 +392,7 @@ class ShellScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    body: child,
+    body: Column(children: [Expanded(child: ShellBody(removeTop: false, child: child))]),
     bottomNavigationBar: NavigationBar(
       selectedIndex: selected,
       destinations: const [
