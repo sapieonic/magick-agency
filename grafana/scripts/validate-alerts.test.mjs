@@ -61,21 +61,70 @@ const FORBIDDEN_METRICS = {
 const PER_PROCESS_LABELS = new Set(['instance', 'service_instance_id']);
 
 /**
- * The `deployment` label template the notification policy groups on (the same
- * text the stack's other services used). The policy routes on the value
- * this renders, so a drift here silently re-routes agency's pages: change it
- * only together with the policy.
+ * The `deployment` label template the notification policy (routing.tf) groups
+ * and matches on. The policy routes on the value this renders, so a drift here
+ * silently re-routes agency's alerts (staging's daily re-send, the nightly
+ * mutes): change it only together with the policy.
  */
 const ROUTED_DEPLOYMENT_LABEL = '{{ if match "-Staging$" $labels.service_name }}staging{{ else if match "-Dedicated$" $labels.service_name }}dedicated{{ else if $labels.service_name }}production{{ else }}unknown{{ end }}';
 
-/** The labels a rule may add of its own, and their allowed values (the policy's mute route). */
+/** The labels a rule may add of its own, and their allowed values (the policy's nightly mute route). */
 const RULE_LABELS = { nightly_window: ['mute'] };
 
-/** Routing resources: declared in routing.tf and nowhere else. */
+/** Routing resources, classic and app-platform: declared in routing.tf and nowhere else. */
 const ROUTING_FILE = 'routing.tf';
-const ROUTING_RESOURCES = ['grafana_notification_policy', 'grafana_contact_point', 'grafana_mute_timing', 'grafana_message_template'];
-/** What the policy, and its critical route, group by. */
-const POLICY_GROUP_BY = '["grafana_folder", "alertname", "deployment"]';
+const ROUTING_RESOURCES = [
+  'grafana_notification_policy', 'grafana_contact_point', 'grafana_mute_timing', 'grafana_message_template',
+  'grafana_apps_notifications_routingtree_v1beta1', 'grafana_apps_notifications_timeinterval_v1beta1',
+  'grafana_apps_notifications_inhibitionrule_v1beta1',
+];
+/** What the policy groups by. */
+const POLICY_GROUP_BY = ['grafana_folder', 'alertname', 'deployment'];
+/** Every route's receiver: the one Slack contact point. */
+const SLACK_CONTACT_POINT = 'grafana_contact_point.agency_slack.name';
+
+/**
+ * A minimal reader for the HCL in routing.tf: `children(body, name)` returns the
+ * bodies of the `name { ... }` blocks directly inside `body` (brace-balanced,
+ * strings skipped), `attr(body, key)` the raw value of `key = ...` at body's own
+ * level, whatever `terraform fmt` does to the spacing.
+ */
+function scanBlocks(text) {
+  const out = [];
+  let depth = 0;
+  let start = -1;
+  let header = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
+    if (c === '{') {
+      if (depth === 0) { start = i + 1; header = text.slice(text.lastIndexOf('\n', i) + 1, i).trim(); }
+      depth++;
+    } else if (c === '}') {
+      depth--;
+      if (depth === 0) out.push({ header, body: text.slice(start, i) });
+    }
+  }
+  return out;
+}
+function children(body, name) {
+  return scanBlocks(body).filter((b) => b.header === name || b.header.startsWith(`${name} `)).map((b) => b.body);
+}
+function ownLevel(body) {
+  let out = '';
+  let depth = 0;
+  for (const c of body) { if (c === '{') depth++; else if (c === '}') depth--; else if (depth === 0) out += c; }
+  return out;
+}
+function attr(body, key) {
+  return new RegExp(`(?:^|\\n)\\s*${key}\\s*=\\s*([^\\n]+)`).exec(ownLevel(body))?.[1].trim() ?? null;
+}
+function list(raw) {
+  return raw === null ? null : [...raw.matchAll(/"([^"]*)"|([A-Za-z_][\w.]*)/g)].map((m) => m[1] ?? m[2]);
+}
+function matchers(policy) {
+  return children(policy, 'matcher').map((m) => `${list(attr(m, 'label'))[0]} ${list(attr(m, 'match'))[0]} ${list(attr(m, 'value'))[0]}`).sort().join(' & ');
+}
 
 /** Names agency's selector must, and must not, select. */
 const AGENCY_NAMES = ['magick-agency', 'magick-agency-Staging', 'magick-agency-Dedicated'];
@@ -478,16 +527,51 @@ describe('agency alert rules', () => {
       if (/hooks\.slack\.com\/services\/[A-Za-z0-9]/.test(text)) problems.push(`${file}: a literal Slack webhook URL — it is a secret, pass it as TF_VAR_slack_webhook_url`);
     }
     const routing = readFileSync(tf(ROUTING_FILE), 'utf8');
-    const policies = routing.match(/resource "grafana_notification_policy"/g) ?? [];
-    if (policies.length !== 1) problems.push(`${ROUTING_FILE}: ${policies.length} grafana_notification_policy resources — the policy is a stack singleton, declare exactly one`);
-    const groupBys = [...routing.matchAll(/\n\s+group_by\s+= (\[[^\]]*\])/g)].map((m) => m[1]);
-    if (groupBys.length !== 2 || groupBys.some((g) => g !== POLICY_GROUP_BY)) {
-      problems.push(`${ROUTING_FILE}: the policy and its critical route must group by ${POLICY_GROUP_BY} (found ${groupBys.join(', ') || 'none'})`);
+    const resources = scanBlocks(routing).filter((b) => b.header.startsWith('resource '));
+    const resource = (type) => resources.filter((b) => b.header.startsWith(`resource "${type}"`));
+    for (const r of resources) {
+      const type = /^resource "([^"]+)"/.exec(r.header)[1];
+      if (!ROUTING_RESOURCES.includes(type)) problems.push(`${ROUTING_FILE}: ${type} is not a routing resource`);
     }
-    if (!/matcher \{\s*label = "severity"\s*match = "="\s*value = "critical"\s*\}/.test(routing)) problems.push(`${ROUTING_FILE}: no nested policy matching severity = critical`);
-    if (!/slack \{\s*url = var\.slack_webhook_url\s*\}/.test(routing)) problems.push(`${ROUTING_FILE}: the Slack contact point must post to var.slack_webhook_url`);
-    const webhookVar = /variable "slack_webhook_url" \{([^}]*)\}/.exec(readFileSync(tf('variables.tf'), 'utf8'))?.[1];
-    if (!webhookVar || !/\n\s+sensitive\s+= true\s*\n/.test(webhookVar)) problems.push('variables.tf: slack_webhook_url must be declared sensitive');
+
+    // One Slack contact point, fed by the sensitive variable.
+    const slack = resource('grafana_contact_point').flatMap((cp) => children(cp.body, 'slack'));
+    if (resource('grafana_contact_point').length !== 1 || slack.length !== 1 || attr(slack[0], 'url') !== 'var.slack_webhook_url') {
+      problems.push(`${ROUTING_FILE}: one contact point, one slack integration, url = var.slack_webhook_url`);
+    }
+    const webhookVar = scanBlocks(readFileSync(tf('variables.tf'), 'utf8')).find((b) => b.header === 'variable "slack_webhook_url"');
+    if (!webhookVar || attr(webhookVar.body, 'sensitive') !== 'true') problems.push('variables.tf: slack_webhook_url must be declared sensitive');
+
+    // The policy: a singleton, every route to Slack, the tree in routing.tf's header.
+    const policies = resource('grafana_notification_policy');
+    if (policies.length !== 1) problems.push(`${ROUTING_FILE}: ${policies.length} grafana_notification_policy resources — the policy is a stack singleton, declare exactly one`);
+    const root = policies[0]?.body ?? '';
+    const want = (what, got, exp) => { if (JSON.stringify(got) !== JSON.stringify(exp)) problems.push(`${ROUTING_FILE}: ${what} is ${JSON.stringify(got)}, want ${JSON.stringify(exp)}`); };
+    want('the policy\'s group_by', list(attr(root, 'group_by')), POLICY_GROUP_BY);
+    want('the policy\'s repeat_interval', attr(root, 'repeat_interval'), '"4h"');
+    const walk = (body, path) => {
+      want(`${path} contact_point`, attr(body, 'contact_point'), SLACK_CONTACT_POINT);
+      for (const k of ['continue', 'active_timings']) if (attr(body, k) !== null) problems.push(`${ROUTING_FILE}: ${path} sets ${k}`);
+      children(body, 'policy').forEach((p, i) => walk(p, `${path} > ${matchers(p) || `route ${i}`}`));
+    };
+    walk(root, 'policy');
+    const shape = (body) => children(body, 'policy').map((p) => ({
+      on: matchers(p),
+      mute: list(attr(p, 'mute_timings')),
+      repeat: attr(p, 'repeat_interval'),
+      ...(children(p, 'policy').length ? { routes: shape(p) } : {}),
+    }));
+    want('the route tree', shape(root), [
+      { on: 'alertname = DatasourceError', mute: null, repeat: null },
+      { on: 'deployment =~ staging|dedicated & nightly_window = mute', mute: ['grafana_mute_timing.nightly_dedicated.name'], repeat: null, routes: [
+        { on: 'deployment = staging', mute: ['grafana_mute_timing.nightly_staging.name'], repeat: '"1d"' },
+        { on: 'severity = critical', mute: ['grafana_mute_timing.nightly_dedicated.name'], repeat: '"1h"' },
+      ] },
+      { on: 'deployment = staging', mute: null, repeat: '"1d"' },
+      { on: 'severity = critical', mute: null, repeat: '"1h"' },
+    ]);
+    const mutes = Object.fromEntries(resource('grafana_mute_timing').map((m) => [/"([^"]+)" "([^"]+)"$/.exec(m.header)[2], list(attr(m.body, 'name'))[0]]));
+    want('the mute timings', mutes, { nightly_staging: 'nightly-staging', nightly_dedicated: 'nightly-dedicated' });
     assert.deepEqual(problems, [], `routing contract broken:\n  ${problems.join('\n  ')}`);
   });
 

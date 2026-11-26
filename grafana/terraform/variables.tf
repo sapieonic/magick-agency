@@ -68,7 +68,12 @@ variable "grafana_public_url" {
 variable "slack_webhook_url" {
   type        = string
   sensitive   = true
-  description = "Slack incoming-webhook URL every agency alert posts to (routing.tf). A secret: set TF_VAR_slack_webhook_url, never commit it."
+  description = "Slack incoming-webhook URL every agency alert posts to (routing.tf). A secret: set TF_VAR_slack_webhook_url, never commit it. Every apply needs the same one: a different webhook moves every agency alert to its channel."
+
+  validation {
+    condition     = startswith(var.slack_webhook_url, "https://hooks.slack.com/services/")
+    error_message = "slack_webhook_url must be a Slack incoming-webhook URL (https://hooks.slack.com/services/...)."
+  }
 }
 
 variable "slack_contact_point_name" {
