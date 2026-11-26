@@ -1496,18 +1496,40 @@ the flag is on). Break limits are not behind it.
   messages" button (48 dp) that opens it to every queued message, oldest first, each with its
   sender, time, text and Dismiss, beside "Dismiss all"; the same button then reads "Show less"
   (LF36's addendum: testers did not find the next message behind Dismiss). A message arriving while
-  the list is open joins it, and it closes by itself once one is left. Each id is shown once (a
-  resent frame is ignored), at most 20 are held, and leaving the station forgets them.
+  the list is open joins it and the list scrolls to it (animated, at once with reduced motion; not
+  while the agent's finger is on the list; no focus moves). The list closes by itself once one is
+  left, and when a call arrives (`callArrivalProvider`: a campaign call coming, an inbound call
+  offered, either connecting, a soft-phone call connecting; never wrap-up or an owed outcome),
+  which dismisses nothing. Each id is shown once (a resent frame is ignored), at most 20 are held,
+  and leaving the station forgets them. Manas decided the review on 2026-11-26 (LF36): no replies
+  from the agent.
+  - **Dismiss all and Undo.** Dismiss all takes the messages off the banner at once and leaves
+    "3 messages dismissed" with a 48 dp Undo in its place for 6 seconds (12 with a screen reader
+    on), said once, politely ("3 messages dismissed. Press Undo to bring them back."). The banner
+    holds the dismissal itself and calls the seam's dismiss for each id only when the window ends,
+    so the controller is unchanged and the shell keeps the banner (the queue is not empty yet).
+    Undo brings them back where they were, oldest first, with nothing announced or vibrated again
+    (they never left the queue). A message arriving in the window shows, with Undo under it while
+    there is room for both (not with the keyboard up: the one row is the new message's), and Undo
+    puts the others back before it. A second Dismiss all sends the first at once, and the banner
+    going (the station closing) sends one still pending. The 20-message cap is the controller's:
+    one dropped in the window is simply not brought back.
   - **Room.** The shell gives the banner its body's height (the keyboard and the tab bar already
     off it), and the banner, shut or open, takes at most about a third of what is left under the
     status bar, never less than one message beside its 48 dp Dismiss (64 dp); its text and list
     scroll inside, so the tab under it keeps the rest and nothing overflows. While the on-screen
     keyboard is up it takes only that one row, on any phone: a third of the room over the keyboard
     left a note being typed on a 360×640 phone 52 to 58 dp, its label and, at 200% text, the line
-    being typed out of view, and a refusal over the station's actions 7 to 12 dp. With the keyboard
-    up, or when a third cannot hold the open list (144 dp: a phone on its side), the banner shows
-    the first message with "· 2 more messages" after its time and no button, and the list opens
-    again once the keyboard is down and there is room, if it was open. The first cut sized it from
+    being typed out of view, and a refusal over the station's actions 7 to 12 dp. With no room for
+    the open list the banner shows the first message and says how to get the room (LF36, decided
+    2026-11-26): with the keyboard up, a 48 dp "See all 3" beside its Dismiss, inside the one row at
+    any text size (labelled "Hide the keyboard to see all 3 messages"), which takes focus off the
+    field being typed in and hides the keyboard, then opens the list once the keyboard is down
+    (asked to see all, the list opens; pressed from a hardware keyboard, focus goes to the list's
+    button); with the keyboard down but a third too small for the list (144 dp: a phone on its
+    side), "Turn your phone upright to see all 3 messages" after its time, words and not a button;
+    in a short window standing up (split screen), "· 2 more messages". The list opens again once
+    there is room, if it was open and no call arrived since. The first cut sized it from
     the whole window, so with the keyboard up the list could leave the tab nothing.
   - **Screen readers and focus.** Each message is announced once as it arrives ("Message from
     Anitha N: …", polite), sender and text together. The banner is not a live region: one would
@@ -1517,7 +1539,9 @@ the flag is on). Break limits are not behind it.
     Dismiss says whose message it takes away ("Dismiss the message from Anitha N"). Nothing takes
     focus on arrival; only when one of its controls had focus and went (its message dismissed, the
     list closed by itself) does focus move: to the next message's Dismiss, else the one before,
-    else the button.
+    else the button, else Undo. The list closed by a call moves focus in it to the button (or keeps
+    it on the first message's Dismiss), never to another message's Dismiss; Dismiss all moves it to
+    Undo, and Undo to the button.
   - Messages are one-way (LF5): once a message answers Need help, the request has ended and Need
     help can be pressed again, on the station and on the Phone tab. A soft-phone session gets them
     too: the core publishes them beside the shell's signals (`StationHost.messages`,

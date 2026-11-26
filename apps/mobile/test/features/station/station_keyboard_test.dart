@@ -217,7 +217,11 @@ void main() {
           if (message) {
             expect(tester.getSize(find.byKey(const Key('supervisor-message'))).height, SupervisorMessageBanner.least,
                 reason: 'the banner takes its one row while the keyboard is up');
-            expect(find.textContaining('· 2 more messages'), findsOneWidget, reason: 'with how many more wait');
+            // The way to see the rest (LF36, decided 2026-11-26): a 48 dp "See all 3" inside that row.
+            final seeAll = find.byKey(const Key('supervisor-message-see-all'));
+            expect(find.descendant(of: seeAll, matching: find.text('See all 3')), findsOneWidget, reason: 'with how to see all three');
+            expect(seeAll.hitTestable(), findsOneWidget);
+            expect(tester.getSize(seeAll).height, greaterThanOrEqualTo(48));
           }
           // 360×640 with a 300 dp keyboard leaves a 316 dp page; under a message's row, 252. There
           // the note keeps less (75 dp, 52 while a refusal shows over the actions), and the line

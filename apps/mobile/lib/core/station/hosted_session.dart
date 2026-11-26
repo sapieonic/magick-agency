@@ -148,7 +148,13 @@ bool urlCarriesToken(String url) => RegExp(r'[?&]token=[^&]+').hasMatch(url);
 /// campaign view's contract is unchanged.
 @immutable
 final class StationHost {
-  const StationHost({this.signals = const StationSignals(), this.softphone, this.messages = const [], this.help = const HelpView()});
+  const StationHost({
+    this.signals = const StationSignals(),
+    this.softphone,
+    this.messages = const [],
+    this.help = const HelpView(),
+    this.callArrival,
+  });
 
   static const none = StationHost();
 
@@ -163,16 +169,21 @@ final class StationHost {
   /// view to read it from (LF39).
   final HelpView help;
 
+  /// A call arriving on either kind of session, as a key that changes with each one
+  /// (`callArrivalProvider`): the shell's message banner closes its open list on it.
+  final String? callArrival;
+
   @override
   bool operator ==(Object other) =>
       other is StationHost &&
       other.signals == signals &&
       other.softphone == softphone &&
       identical(other.messages, messages) &&
-      other.help == help;
+      other.help == help &&
+      other.callArrival == callArrival;
 
   @override
-  int get hashCode => Object.hash(signals, softphone, identityHashCode(messages), help);
+  int get hashCode => Object.hash(signals, softphone, identityHashCode(messages), help, callArrival);
 }
 
 /// The slot [StationHost] is written to. Only the station controller sets it.

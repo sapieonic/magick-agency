@@ -13,6 +13,8 @@ import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/station/supervisor_message_banner.dart';
 
 import '../core/auth/support/harness.dart';
+import '../features/station/station_harness.dart' show call, station;
+import '../features/station/station_inbound_test.dart' show caller, inboundStation;
 import 'shell_harness.dart';
 
 /// A supervisor's message (floor assist, LF5; the app's LF36): the shell shows it at the top of
@@ -26,6 +28,15 @@ class _Messages extends Notifier<List<SupervisorMessageView>> {
 }
 
 final _messages = NotifierProvider<_Messages, List<SupervisorMessageView>>(_Messages.new);
+
+/// The station's view, as the station screens' harness sets it: a call on screen is a view with it.
+class _View extends Notifier<StationView?> {
+  @override
+  StationView? build() => null;
+  void set(StationView? v) => state = v;
+}
+
+final _view = NotifierProvider<_View, StationView?>(_View.new);
 
 SupervisorMessageView msg(String id, {String text = 'Offer the 3-month plan, the waiver is approved.', String from = 'Anitha N'}) =>
     SupervisorMessageView(id: id, text: text, from: from, sentAt: DateTime(2026, 11, 19, 10, 5));
@@ -54,6 +65,8 @@ void main() {
     c = shellContainer(extra: [
       supervisorMessagesProvider.overrideWith((ref) => ref.watch(_messages)),
       dismissSupervisorMessageProvider.overrideWithValue(dismissed.add),
+      // The seam's own default reads the call arriving off the view.
+      stationViewProvider.overrideWith((ref) => ref.watch(_view)),
     ]);
   });
   tearDown(() => c.dispose());
@@ -297,7 +310,13 @@ void main() {
       expect(allSaid.flagsCollection.isFocused, isNot(Tristate.none), reason: 'it can take focus');
       expect(allSaid.hasAction(SemanticsAction.tap), isTrue);
       await tester.tap(all);
-      expect(dismissed, ['m1', 'm2', 'm3']);
+      await tester.pump();
+      for (final m in burst) {
+        expect(find.text(m.text), findsNothing, reason: '${m.id} leaves the banner at once');
+      }
+      expect(dismissed, isEmpty, reason: 'not yet: Undo can still bring them back');
+      await tester.pump(SupervisorMessageBanner.undoWindow);
+      expect(dismissed, ['m1', 'm2', 'm3'], reason: 'the window over, each dismissed by id, oldest first');
       c.read(_messages.notifier).set(const []);
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('supervisor-message')), findsNothing);
@@ -508,6 +527,463 @@ void main() {
         expect(tester.getSize(dismissOf(id)).height, greaterThanOrEqualTo(48), reason: id);
       }
       semantics.dispose();
+    });
+  });
+
+  // ── LF36, decided 2026-11-26 ──
+
+  final burst3 = [
+    msg('m1', text: 'hlo', from: 'Reshma Mohammad'),
+    msg('m2', text: 'Offer the 3-month plan', from: 'Reshma Mohammad'),
+    msg('m3', text: 'Call me after this one', from: 'Ravi'),
+  ];
+  final list = find.byKey(const Key('supervisor-message-list'));
+  final toggle = find.byKey(const Key('supervisor-message-toggle'));
+  final all = find.byKey(const Key('dismiss-all-supervisor-messages'));
+  final undo = find.byKey(const Key('undo-dismiss-all-supervisor-messages'));
+  final undoLine = find.byKey(const Key('supervisor-message-undo-line'));
+  final seeAll = find.byKey(const Key('supervisor-message-see-all'));
+  final bannerBox = find.byKey(const Key('supervisor-message'));
+
+  /// The banner over a note field and the call, on a 360×800 phone; the announcements it sends.
+  Future<List<Object?>> pumpOver(WidgetTester tester, {bool disableAnimations = false, bool screenReader = false}) async {
+    tester.view.devicePixelRatio = 3;
+    tester.view.physicalSize = const Size(360, 800) * 3;
+    addTearDown(tester.view.reset);
+    final announcements = <Object?>[];
+    tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, (m) async {
+      if ((m! as Map)['type'] == 'announce') announcements.add(m);
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: c,
+      child: MaterialApp(
+        theme: buildTheme(AppTokens.light, Brightness.light),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(supportsAnnounce: true, disableAnimations: disableAnimations, accessibleNavigation: screenReader),
+          child: child!,
+        ),
+        home: const Scaffold(
+          body: Column(children: [SupervisorMessageBanner(), TextField(key: Key('notes')), Expanded(child: Placeholder(key: Key('the-call')))]),
+        ),
+      ),
+    ));
+    return announcements;
+  }
+
+  FocusNode focusOf(WidgetTester tester, Finder f) =>
+      Focus.of(tester.element(find.descendant(of: f, matching: find.byWidgetPredicate((w) => w is Text || w is Icon)).first));
+  FocusNode notesFocus(WidgetTester tester) =>
+      tester.widget<EditableText>(find.descendant(of: find.byKey(const Key('notes')), matching: find.byType(EditableText))).focusNode;
+  FocusNode? focused() => FocusManager.instance.primaryFocus;
+
+  /// The texts on screen in the order they are laid out, of [ids].
+  List<String> order(WidgetTester tester, List<SupervisorMessageView> ms) {
+    final ys = {for (final m in ms) m.id: tester.getTopLeft(find.text(m.text)).dy};
+    return [...ys.keys]..sort((a, b) => ys[a]!.compareTo(ys[b]!));
+  }
+
+  Future<void> openList(WidgetTester tester) async {
+    tester.widget<ButtonStyleButton>(toggle).onPressed!();
+    await tester.pumpAndSettle();
+    expect(list, findsOneWidget);
+  }
+
+  group('Dismiss all can be undone (LF36, decided 2026-11-26)', () {
+    testWidgets('"3 messages dismissed" and a 48 dp Undo hold the banner\'s place, said once, politely; Undo brings them back in order, said to no one again, dismissed never',
+        (tester) async {
+      final semantics = tester.ensureSemantics();
+      final announcements = await pumpOver(tester);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pump();
+      await tester.pump();
+      expect(announcements, hasLength(3));
+      await openList(tester);
+      await tester.tap(all);
+      await tester.pump();
+      await tester.pump();
+      expect(bannerBox, findsOneWidget, reason: 'the banner stays, for Undo');
+      expect(find.text('3 messages dismissed'), findsOneWidget);
+      for (final m in burst3) {
+        expect(find.text(m.text), findsNothing, reason: m.id);
+      }
+      expect(tester.getSize(undo).height, greaterThanOrEqualTo(48));
+      final undoSaid = tester.getSemantics(undo).getSemanticsData();
+      expect(undoSaid.label, 'Undo: bring the 3 messages back');
+      expect(undoSaid.flagsCollection.isButton, isTrue);
+      expect(announcements.map(said).skip(3), ['3 messages dismissed. Press Undo to bring them back.']);
+      expect(((announcements.last! as Map)['data'] as Map)['assertiveness'], isNot(1), reason: 'politely');
+      expect(liveRegions(tester), isEmpty, reason: 'said once, by the announcement');
+      expect(tester.getSize(bannerBox).height, lessThanOrEqualTo(64.5), reason: 'one row');
+
+      await tester.pump(const Duration(seconds: 3));
+      await tester.tap(undo);
+      await tester.pumpAndSettle();
+      expect(undoLine, findsNothing);
+      expect(find.text('hlo'), findsOneWidget, reason: 'the first back in its place');
+      expect(find.text('Show 2 more messages'), findsOneWidget);
+      await openList(tester);
+      expect(order(tester, burst3), ['m1', 'm2', 'm3'], reason: 'oldest first, as they were');
+      expect(announcements, hasLength(4), reason: 'nothing is said again: they never left');
+      await tester.pump(SupervisorMessageBanner.undoWindowScreenReader * 2);
+      expect(dismissed, isEmpty, reason: 'undone: never dismissed');
+      semantics.dispose();
+    });
+
+    testWidgets('no Undo: dismissed through the seam, each by id, when the window ends and not before', (tester) async {
+      await pumpOver(tester);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      await tester.tap(all);
+      await tester.pump(SupervisorMessageBanner.undoWindow - const Duration(milliseconds: 100));
+      expect(dismissed, isEmpty);
+      expect(undo, findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(dismissed, ['m1', 'm2', 'm3']);
+      c.read(_messages.notifier).set(const []);
+      await tester.pumpAndSettle();
+      expect(bannerBox, findsNothing);
+    });
+
+    testWidgets('with a screen reader on, the window is longer', (tester) async {
+      await pumpOver(tester, screenReader: true);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      await tester.tap(all);
+      await tester.pump(SupervisorMessageBanner.undoWindow + const Duration(seconds: 1));
+      expect(dismissed, isEmpty, reason: 'time to hear the line and find Undo');
+      await tester.pump(SupervisorMessageBanner.undoWindowScreenReader - SupervisorMessageBanner.undoWindow);
+      expect(dismissed, ['m1', 'm2', 'm3']);
+    });
+
+    testWidgets('a message arriving in the window shows, with Undo under it; Undo puts the others back before it, oldest first', (tester) async {
+      final announcements = await pumpOver(tester);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      await tester.tap(all);
+      await tester.pump();
+      c.read(_messages.notifier).set([...burst3, msg('m4', text: 'Good work today')]);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Good work today'), findsOneWidget, reason: 'the new one shows');
+      expect(find.text('hlo'), findsNothing);
+      expect(find.text('3 messages dismissed'), findsOneWidget, reason: 'Undo still offered, under it');
+      expect(tester.getRect(undoLine).top, greaterThanOrEqualTo(tester.getRect(find.text('Good work today')).bottom));
+      expect(announcements.map(said).where((a) => a.contains('Good work today')), hasLength(1));
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(undo);
+      await tester.pumpAndSettle();
+      expect(find.text('hlo'), findsOneWidget);
+      expect(find.text('Show 3 more messages'), findsOneWidget);
+      await openList(tester);
+      expect(order(tester, [...burst3, msg('m4', text: 'Good work today')]), ['m1', 'm2', 'm3', 'm4']);
+      expect(announcements.map(said).where((a) => a.startsWith('Message from')), hasLength(4), reason: 'each id once');
+      await tester.pump(SupervisorMessageBanner.undoWindowScreenReader);
+      expect(dismissed, isEmpty);
+    });
+
+    testWidgets('a message arriving in the window, no Undo: only the others are dismissed; it stays', (tester) async {
+      await pumpOver(tester);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      await tester.tap(all);
+      await tester.pump();
+      c.read(_messages.notifier).set([...burst3, msg('m4', text: 'Good work today')]);
+      await tester.pump(SupervisorMessageBanner.undoWindow);
+      expect(dismissed, ['m1', 'm2', 'm3']);
+      c.read(_messages.notifier).set([msg('m4', text: 'Good work today')]);
+      await tester.pumpAndSettle();
+      expect(find.text('Good work today'), findsOneWidget);
+      expect(undoLine, findsNothing);
+    });
+
+    testWidgets('a second Dismiss all sends the first at once; the banner going sends one still pending', (tester) async {
+      await pumpOver(tester);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      await tester.tap(all);
+      await tester.pump();
+      c.read(_messages.notifier).set([...burst3, msg('m4', text: 'One'), msg('m5', text: 'Two')]);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      await tester.tap(all);
+      await tester.pump();
+      expect(dismissed, ['m1', 'm2', 'm3'], reason: 'the first one, replaced');
+      expect(find.text('2 messages dismissed'), findsOneWidget);
+      c.read(_messages.notifier).set([msg('m4', text: 'One'), msg('m5', text: 'Two')]);
+      await tester.pump();
+      // The banner goes (the station closing, the shell leaving): what it held is sent.
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      expect(dismissed, ['m1', 'm2', 'm3', 'm4', 'm5']);
+    });
+
+    testWidgets('focus: Dismiss all from the keyboard moves it to Undo, Undo to the button; pressed with a tap, nothing takes it', (tester) async {
+      await pumpOver(tester);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      focusOf(tester, toggle).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      focusOf(tester, all).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(focused(), same(focusOf(tester, undo)), reason: 'Undo, the one thing left to press');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.text('hlo'), findsOneWidget);
+      expect(focused(), same(focusOf(tester, toggle)), reason: 'the button that opens them again');
+
+      final notes = notesFocus(tester)..requestFocus();
+      await tester.pump();
+      await openList(tester);
+      tester.widget<ButtonStyleButton>(all).onPressed!();
+      await tester.pumpAndSettle();
+      tester.widget<ButtonStyleButton>(undo).onPressed!();
+      await tester.pumpAndSettle();
+      expect(focused(), same(notes), reason: 'a screen reader\'s press moves no input focus');
+    });
+  });
+
+  group('the keyboard up: See all hides it (LF36, decided 2026-11-26)', () {
+    void keyboard(WidgetTester tester, double dp) => tester.view.viewInsets = FakeViewPadding(bottom: dp * 3);
+
+    testWidgets('the note lets go of focus, the keyboard is told to hide, and the list opens once it is down', (tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpOver(tester);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await tester.showKeyboard(find.byKey(const Key('notes')));
+      keyboard(tester, 300);
+      await tester.pumpAndSettle();
+      expect(tester.testTextInput.isVisible, isTrue);
+      expect(tester.getSize(bannerBox).height, lessThanOrEqualTo(64.5), reason: 'one row');
+      expect(find.descendant(of: seeAll, matching: find.text('See all 3')), findsOneWidget);
+      expect(tester.getSize(seeAll).height, greaterThanOrEqualTo(48));
+      final said = tester.getSemantics(seeAll).getSemanticsData();
+      expect(said.label, 'Hide the keyboard to see all 3 messages');
+      expect(said.flagsCollection.isButton, isTrue);
+      expect(toggle, findsNothing);
+
+      tester.testTextInput.log.clear();
+      await tester.tap(seeAll);
+      await tester.pump();
+      expect(notesFocus(tester).hasFocus, isFalse, reason: 'the note lets go of focus');
+      expect(tester.testTextInput.isVisible, isFalse, reason: 'the keyboard is hidden');
+      expect(tester.testTextInput.log.map((m) => m.method), contains('TextInput.hide'));
+      expect(dismissed, isEmpty);
+
+      keyboard(tester, 0);
+      await tester.pumpAndSettle();
+      expect(list, findsOneWidget, reason: 'asked to see all: the list opens');
+      expect(find.descendant(of: toggle, matching: find.text('Show less')), findsOneWidget);
+      expect(order(tester, burst3), ['m1', 'm2', 'm3']);
+      semantics.dispose();
+    });
+
+    testWidgets('pressed from a hardware keyboard: once there is room, focus is on the list\'s button', (tester) async {
+      await pumpOver(tester);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      keyboard(tester, 300);
+      await tester.pumpAndSettle();
+      focusOf(tester, seeAll).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      keyboard(tester, 0);
+      await tester.pumpAndSettle();
+      expect(list, findsOneWidget);
+      expect(focused(), same(focusOf(tester, toggle)));
+    });
+
+    testWidgets('Undo\'s line with the keyboard up: one row, its 48 dp Undo', (tester) async {
+      await pumpOver(tester);
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      await tester.tap(all);
+      await tester.pump();
+      keyboard(tester, 300);
+      await tester.pump();
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(tester.getSize(bannerBox).height, lessThanOrEqualTo(64.5));
+      expect(undo.hitTestable(), findsOneWidget);
+      expect(tester.getSize(undo).height, greaterThanOrEqualTo(48));
+    });
+  });
+
+  group('a call arriving closes the open list (LF36, decided 2026-11-26)', () {
+    testWidgets('a campaign call as it comes and as it connects, each time; waiting and wrap-up leave it; nothing dismissed', (tester) async {
+      await pumpOver(tester);
+      c.read(_view.notifier).set(station());
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+
+      c.read(_view.notifier).set(station(phase: AgentPhase.reserved, call: call()));
+      await tester.pumpAndSettle();
+      expect(list, findsNothing, reason: 'Call coming: the call has the screen');
+      expect(find.text('hlo'), findsOneWidget, reason: 'the banner stays, closed');
+      expect(find.text('Show 2 more messages'), findsOneWidget);
+
+      await openList(tester);
+      c.read(_view.notifier).set(station(phase: AgentPhase.onCall, call: call(bridgedAt: DateTime(2026, 11, 19, 10, 6))));
+      await tester.pumpAndSettle();
+      expect(list, findsNothing, reason: 'it connected');
+
+      await openList(tester);
+      c.read(_view.notifier).set(station(phase: AgentPhase.wrapup, call: call(bridgedAt: DateTime(2026, 11, 19, 10, 6))));
+      await tester.pumpAndSettle();
+      expect(list, findsOneWidget, reason: 'wrap-up: nothing arrived');
+      c.read(_view.notifier).set(station());
+      await tester.pumpAndSettle();
+      expect(list, findsOneWidget, reason: 'waiting again');
+
+      c.read(_view.notifier).set(station(phase: AgentPhase.reserved, call: call(attemptId: 'a2')));
+      await tester.pumpAndSettle();
+      expect(list, findsNothing, reason: 'the next call');
+      expect(dismissed, isEmpty, reason: 'closing dismisses nothing');
+    });
+
+    testWidgets('an inbound call offered closes it', (tester) async {
+      await pumpOver(tester);
+      c.read(_view.notifier).set(station());
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      c.read(_view.notifier).set(inboundStation(inbound: caller()));
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(dismissed, isEmpty);
+    });
+
+    testWidgets('focus in the list goes to the button that opens it; focus anywhere else is not taken', (tester) async {
+      await pumpOver(tester);
+      c.read(_view.notifier).set(station());
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      focusOf(tester, find.byKey(const ValueKey('dismiss-supervisor-message-m3'))).requestFocus();
+      await tester.pump();
+      c.read(_view.notifier).set(station(phase: AgentPhase.reserved, call: call()));
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(focused(), same(focusOf(tester, toggle)), reason: 'kept in the banner');
+
+      c.read(_view.notifier).set(station());
+      await tester.pumpAndSettle();
+      final notes = notesFocus(tester)..requestFocus();
+      await tester.pump();
+      await openList(tester);
+      c.read(_view.notifier).set(station(phase: AgentPhase.reserved, call: call(attemptId: 'a2')));
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(focused(), same(notes), reason: 'never taken from elsewhere');
+    });
+
+    testWidgets('open, then the keyboard up, then a call: the list does not open again as the keyboard goes', (tester) async {
+      await pumpOver(tester);
+      c.read(_view.notifier).set(station());
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      c.read(_view.notifier).set(station(phase: AgentPhase.reserved, call: call()));
+      await tester.pumpAndSettle();
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(find.text('Show 2 more messages'), findsOneWidget);
+    });
+  });
+
+  group('a message arriving while the list is open scrolls into view (LF36, decided 2026-11-26)', () {
+    final eight = [for (var i = 1; i <= 8; i++) msg('m$i', text: 'Message $i')];
+    final ninth = msg('m9', text: 'Message 9, the newest');
+    ScrollPosition position(WidgetTester tester) =>
+        tester.widget<SingleChildScrollView>(find.descendant(of: list, matching: find.byType(SingleChildScrollView))).controller!.position;
+    bool inList(WidgetTester tester, Finder f) {
+      final r = tester.getRect(f);
+      final l = tester.getRect(list);
+      return r.top >= l.top - 0.5 && r.bottom <= l.bottom + 0.5;
+    }
+
+    testWidgets('the list scrolls to the newest; focus stays where it was; said once', (tester) async {
+      final announcements = await pumpOver(tester);
+      c.read(_messages.notifier).set(eight);
+      await tester.pumpAndSettle();
+      final notes = notesFocus(tester)..requestFocus();
+      await tester.pump();
+      await openList(tester);
+      expect(position(tester).pixels, 0, reason: 'at the top, the oldest');
+      expect(position(tester).maxScrollExtent, greaterThan(0), reason: 'more than the list shows');
+      c.read(_messages.notifier).set([...eight, ninth]);
+      await tester.pumpAndSettle();
+      expect(inList(tester, find.text(ninth.text)), isTrue, reason: 'the newest in view');
+      expect(position(tester).pixels, position(tester).maxScrollExtent);
+      expect(focused(), same(notes), reason: 'no focus moves');
+      expect(announcements.map(said).where((a) => a.contains('the newest')), hasLength(1));
+    });
+
+    testWidgets('it animates there', (tester) async {
+      await pumpOver(tester);
+      c.read(_messages.notifier).set(eight);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      c.read(_messages.notifier).set([...eight, ninth]);
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      final p = position(tester);
+      expect(p.pixels, allOf(greaterThan(0), lessThan(p.maxScrollExtent)), reason: 'on its way');
+      await tester.pumpAndSettle();
+      expect(position(tester).pixels, position(tester).maxScrollExtent);
+    });
+
+    testWidgets('with reduced motion it moves at once', (tester) async {
+      await pumpOver(tester, disableAnimations: true);
+      c.read(_messages.notifier).set(eight);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      c.read(_messages.notifier).set([...eight, ninth]);
+      await tester.pump();
+      await tester.pump();
+      expect(position(tester).pixels, position(tester).maxScrollExtent, reason: 'no animation');
+    });
+
+    testWidgets('the agent\'s finger on the list: it is not moved', (tester) async {
+      await pumpOver(tester);
+      c.read(_messages.notifier).set(eight);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, -30));
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, -10));
+      await tester.pump();
+      final held = position(tester).pixels;
+      expect(held, greaterThan(0));
+      c.read(_messages.notifier).set([...eight, ninth]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(position(tester).pixels, held, reason: 'not yanked from under the finger');
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(position(tester).pixels, lessThan(position(tester).maxScrollExtent), reason: 'nor afterwards');
     });
   });
 }

@@ -299,6 +299,42 @@ void main() {
       expect(find.text('You are 17:05 late. Start calls now.'), findsOneWidget);
     });
   });
+
+  group('a supervisor\'s messages over the station (LF36, decided 2026-11-26)', () {
+    final queued = [
+      for (var i = 1; i <= 3; i++)
+        SupervisorMessageView(id: 'm$i', text: 'Message number $i', from: 'Reshma Mohammad', sentAt: DateTime(2026, 11, 19, 10, 5)),
+    ];
+    final list = find.byKey(const Key('supervisor-message-list'));
+    final toggle = find.byKey(const Key('supervisor-message-toggle'));
+
+    testWidgets('the open list closes when a call comes and again when it connects, in the app\'s shell; nothing dismissed', (tester) async {
+      final dismissed = <String>[];
+      final h = await pumpStation(tester, station(), shell: true, size: const Size(411, 917), statusBar: 24, extra: [
+        supervisorMessagesProvider.overrideWith((ref) => queued),
+        dismissSupervisorMessageProvider.overrideWithValue(dismissed.add),
+      ]);
+      await settle(tester);
+      await tester.tap(toggle);
+      await settle(tester);
+      expect(list, findsOneWidget);
+
+      await h.setView(station(phase: AgentPhase.reserved, call: call()));
+      expect(list, findsNothing, reason: 'Call coming');
+      expect(find.text('Show 2 more messages'), findsOneWidget, reason: 'closed, every message still there');
+
+      await tester.tap(toggle);
+      await settle(tester);
+      await h.setView(onCall);
+      expect(list, findsNothing, reason: 'it connected');
+
+      await tester.tap(toggle);
+      await settle(tester);
+      await h.setView(inWrapup());
+      expect(list, findsOneWidget, reason: 'wrap-up is not a call arriving');
+      expect(dismissed, isEmpty);
+    });
+  });
 }
 
 /// The text of every live region on screen.
