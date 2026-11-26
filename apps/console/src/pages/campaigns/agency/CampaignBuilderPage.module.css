@@ -52,6 +52,15 @@
   line-height: 1.5;
 }
 
+/* The page's error line with a request id under it (a masked error): the chip on its own line. */
+.errorWithId {
+  composes: error;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 /* The current step. Its cards bring their own panels. */
 .body {
   display: flex;

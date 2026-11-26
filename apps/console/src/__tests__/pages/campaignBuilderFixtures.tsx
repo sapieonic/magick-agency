@@ -198,7 +198,7 @@ export const saveDraftButton = () => footerButton('Save as draft');
 
 /** Drop a CSV on the Customers step. */
 export function dropCsv(name = 'collections_aug.csv') {
-  const input = screen.getByLabelText('CSV file') as HTMLInputElement;
+  const input = screen.getByLabelText('Excel or CSV file') as HTMLInputElement;
   fireEvent.change(input, { target: { files: [new File(['Cust Mobile\n9820041772\n'], name, { type: 'text/csv' })] } });
 }
 

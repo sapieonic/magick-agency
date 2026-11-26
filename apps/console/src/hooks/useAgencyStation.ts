@@ -34,7 +34,7 @@ import {
   silentTooLong,
   withDeadline,
 } from '../utils/agencyStationLiveness';
-import { INITIAL_STATION_STATE, stationReducer } from '../utils/agencyStationReducer';
+import { INITIAL_STATION_STATE, stationReducer, type StationHelpPressAction } from '../utils/agencyStationReducer';
 import { parseDialActivity } from '../utils/agencyStationIdle';
 import { toAbsoluteWsUrl } from '../utils/agencyStationWsUrl';
 import { useStationUnloadGuard } from './useStationUnloadGuard';
@@ -218,6 +218,7 @@ export function useAgencyStation(
     dialActivity,
     help,
     helpNotice,
+    helpFrames,
     supervisorMessages,
   } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
@@ -1677,8 +1678,9 @@ export function useAgencyStation(
   const reconnect = useCallback(() => restart(supersededRef.current), [restart]);
 
   // Floor assist's own writes into the station state (the raise and cancel answers, the agent's
-  // dismissals). `dispatch` is stable, so these are too.
+  // presses and dismissals). `dispatch` is stable, so these are too.
   const setHelp = useCallback((next: AgencySessionHelp | null) => dispatch({ type: 'help_set', help: next }), []);
+  const noteHelpPress = useCallback((press: StationHelpPressAction) => dispatch(press), []);
   const dismissHelpNotice = useCallback(() => dispatch({ type: 'help_notice_dismissed' }), []);
   const dismissSupervisorMessage = useCallback(
     (id: string) => dispatch({ type: 'supervisor_message_dismissed', id }),
@@ -1761,8 +1763,10 @@ export function useAgencyStation(
     dialActivity,
     help,
     helpNotice,
+    helpFrames,
     supervisorMessages,
     setHelp,
+    noteHelpPress,
     dismissHelpNotice,
     dismissSupervisorMessage,
     reconnect,

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Footprints } from 'lucide-react';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { sendSupervisorMessage } from '../../../api/agencyFloorAssist';
+import { trackAgencySupervisorMessageSent } from '../../../analytics/events';
 import { useTenant } from '../../../contexts/TenantContext';
 import { COMING_TO_DESK_TEXT, messageRefusal } from '../../../utils/agency/floorAssist';
 import styles from './LiveFloor.module.css';
@@ -13,6 +14,7 @@ import styles from './LiveFloor.module.css';
  * answered whatever the agent was doing, a call or none. Pressed again while it is on its way, it
  * does nothing. Sent, a toast says so (the next floor read clears the request); refused, a toast
  * says why in the console's words (`messageRefusal`). Shown only where Talk is: floor assist on.
+ * Sent, it is `agency_supervisor_message_sent` with `kind: 'coming_to_desk'` (LF39).
  *
  * `compact` is the card's icon button; otherwise the row's button with its words.
  */
@@ -31,6 +33,7 @@ export function ComingToDeskButton({ sessionId, name, compact = false }: {
     setSending(true);
     try {
       await sendSupervisorMessage(sessionId, COMING_TO_DESK_TEXT, tenantId, accountId);
+      trackAgencySupervisorMessageSent({ kind: 'coming_to_desk' });
       showToast(`Told ${name} you are coming to their desk.`, 'success');
     } catch (err: unknown) {
       showToast(messageRefusal(err, name), 'error');

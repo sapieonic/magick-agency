@@ -138,6 +138,14 @@ describe('phone-column suggestion', () => {
     expect(result.suggested_phone_column).toBe('Mobile');
   });
 
+  it('reads the header by the rule the Excel conversion uses (`looksLikePhoneHeader`): every phone-like header breaks the tie', async () => {
+    const { looksLikePhoneHeader } = await import('../../../src/agency/phone-header.js');
+    for (const header of ['Contact Number', 'Phone No.', 'Alt mobile', 'Tel', 'MSISDN', 'Cell']) {
+      expect(looksLikePhoneHeader(header), header).toBe(true);
+      expect(suggestPhoneColumn([stat('Ref', 1), stat(header, 1)]).suggested_phone_column, header).toBe(header);
+    }
+  });
+
   it('still declines when BOTH candidates look phone-ish — the spec\'s hard case', () => {
     // `Mobile` vs `Alt Mobile`: the header bonus applies to both and cancels, so
     // the tie stands and the operator picks. This is the case the header bonus

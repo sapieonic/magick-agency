@@ -172,7 +172,7 @@ section holds it beside `abandonment_ceiling_pct`, `campaign-template-sections.t
 served and typed for the console's Resume warning, decisions AW1–AW3; the internal
 handlers serialise it in `apps/server/src/api/responses/agency-campaign.response.ts`), the carriers a
 campaign may dial on (`AgencyCarrier`, `AgencyCarriersResponse`; served by the public layer itself), ingest
-(`AgencyIngest*`, `AgencyUploadResponse`, `AgencyColumn*`), retry policy
+(`AgencyIngest*`, `AgencyUploadResponse` with its `AgencyUploadSheet`, `AgencyColumn*`), retry policy
 (`AgencyRetryOutcome` / `Policy` / `Rule`), `AGENCY_RETRY_REFUSAL_CODES`, staffing
 (`AgencyMyAssignment(s)`, `AgencyAssignment`, `AgencyAssignedAgent`, `AgencyAgentAssignment`,
 `AgencyStaffingHistory*`), the `*WithName` roster and group rows, activity (`agency-activity.ts`),

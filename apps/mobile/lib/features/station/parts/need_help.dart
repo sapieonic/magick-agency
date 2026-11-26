@@ -13,16 +13,17 @@ import '../station_providers.dart';
 /// and its cancel are the top bar's `NeedHelpButton`.
 ///
 /// Behind the account's `agency_floor_assist_enabled` ([stationNeedHelpProvider]): off, nothing
-/// shows.
+/// shows. The hosted session's ([sessionHelpProvider]): a campaign station's, or the Phone tab's
+/// soft-phone session's (LF39).
 class NeedHelpCard extends ConsumerWidget {
   const NeedHelpCard({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (!ref.watch(stationNeedHelpProvider)) return const SizedBox.shrink();
-    final help = ref.watch(stationViewProvider.select((v) => v?.help ?? const HelpView()));
+    final help = ref.watch(sessionHelpProvider);
     if (help.notice == null && help.error == null) return const SizedBox.shrink();
-    final actions = ref.read(stationActionsProvider);
+    final actions = ref.read(sessionHelpActionsProvider);
     final children = <Widget>[
       if (help.notice != null)
         _Line(

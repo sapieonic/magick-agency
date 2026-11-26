@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 import type { AgencyIngestJob } from '../../types/agency-campaign';
 import { ApiError } from '../../api/client';
+import { BUSY_REFUSALS, WORKBOOK_UNSUPPORTED } from '../helpers/uploadRefusals';
 import {
   ANALYSIS,
   UNSURE_ANALYSIS,
@@ -33,7 +34,7 @@ import {
 const mocks = vi.hoisted(() => ({
   useTenant: vi.fn(),
   getIngestLimits: vi.fn(),
-  uploadRosterCsv: vi.fn(),
+  uploadCustomerFile: vi.fn(),
   analyzeRosterColumns: vi.fn(),
   startRosterIngest: vi.fn(),
   getIngestJob: vi.fn(),
@@ -78,7 +79,7 @@ vi.mock('../../hooks/useCampaignStaffing', async (importOriginal) => ({
 }));
 vi.mock('../../api/agencyCampaigns', () => ({
   getIngestLimits: mocks.getIngestLimits,
-  uploadRosterCsv: mocks.uploadRosterCsv,
+  uploadCustomerFile: mocks.uploadCustomerFile,
   analyzeRosterColumns: mocks.analyzeRosterColumns,
   startRosterIngest: mocks.startRosterIngest,
   getIngestJob: mocks.getIngestJob,
@@ -136,7 +137,7 @@ beforeEach(() => {
     max_cell_bytes: 4096,
     max_file_bytes: 512 * 1024 * 1024,
   });
-  mocks.uploadRosterCsv.mockResolvedValue({
+  mocks.uploadCustomerFile.mockResolvedValue({
     s3_key: 'agency-ingest/t1/u1/collections_aug.csv',
     file_name: 'collections_aug.csv',
     dedupe_columns: [],
@@ -193,7 +194,7 @@ describe('the check that starts by itself, and Add N customers (CS8, IM2)', () =
   });
 
   it('a check that failed offers the way back: a corrected file, or other columns', async () => {
-    await reachCheck(check({ status: 'failed', error_code: 'malformed_csv', error_message: 'Could not read the CSV: Invalid Closing Quote.' }));
+    await reachCheck(check({ status: 'failed', error_code: 'malformed_csv', error_message: 'Could not read the file: Invalid Closing Quote.' }));
     const recovery = await screen.findByTestId('ingest-recovery', undefined, { timeout: 4000 });
     expect(within(recovery).getByRole('button', { name: 'Upload a corrected file' })).toBeTruthy();
     expect(footerButton('Skip for now')).toBeTruthy();
@@ -256,6 +257,81 @@ describe('the check that starts by itself, and Add N customers (CS8, IM2)', () =
       'a1',
     );
     expect(mocks.updateAgencyCampaign.mock.invocationCallOrder[0]!).toBeLessThan(mocks.importCheckedFile.mock.invocationCallOrder[0]!);
+  });
+});
+
+describe('an Excel file on Customers (CS7)', () => {
+  it('says which sheet was read and which were not, and keeps saying it after moving between steps', async () => {
+    mocks.uploadCustomerFile.mockResolvedValue({
+      s3_key: 'agency-ingest/t1/u1/customers.csv',
+      file_name: 'Customers May.xlsx',
+      file_size_bytes: 9000,
+      format: 'xlsx',
+      sheet: { name: 'Customers', other_sheet_names: ['Paid', 'Archive'], other_sheet_count: 2 },
+    });
+    serveJobs(check({ file_name: 'Customers May.xlsx' }), imported());
+    await renderPage();
+    fillBasics();
+    goToStep('Customers');
+    dropCsv('Customers May.xlsx');
+    await screen.findByTestId('chip-ready', undefined, { timeout: 4000 });
+    const others = 'This file has 2 other sheets (‘Paid’, ‘Archive’) that were not read. To import them, move those customers to the sheet ‘Customers’, or save each sheet as its own file.';
+    const row = screen.getByTestId('file-row');
+    expect(within(row).getByText('Customers May.xlsx')).toBeTruthy();
+    expect(within(row).getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
+    expect(within(row).getByTestId('sheet-others').textContent).toBe(others);
+
+    goToStep('Name & number');
+    expect(screen.queryByTestId('file-row')).toBeNull();
+    goToStep('Customers');
+    expect(within(screen.getByTestId('file-row')).getByTestId('sheet-read').textContent).toBe('Read from the sheet ‘Customers’.');
+    expect(screen.getByTestId('sheet-others').textContent).toBe(others);
+  });
+
+  it('says a refused workbook in the server’s words, and offers the picker again', async () => {
+    const { message } = WORKBOOK_UNSUPPORTED.body;
+    mocks.uploadCustomerFile.mockRejectedValue(new ApiError(WORKBOOK_UNSUPPORTED.status, WORKBOOK_UNSUPPORTED.body));
+    await renderPage();
+    fillBasics();
+    goToStep('Customers');
+    dropCsv('Locked.xlsx');
+    expect((await screen.findByTestId('builder-error')).textContent).toBe(message);
+    expect(mocks.analyzeRosterColumns).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Choose a file' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('says a file over the size limit plainly, with the limit, when the 413 is an HTML page from the proxy', async () => {
+    mocks.uploadCustomerFile.mockRejectedValue(new ApiError(413, undefined));
+    await renderPage();
+    fillBasics();
+    goToStep('Customers');
+    await screen.findByTestId('ingest-limits');
+    dropCsv('Huge.xlsx');
+    expect((await screen.findByTestId('builder-error')).textContent).toBe('This file is too large. A file can be up to 512 MB.');
+  });
+});
+
+describe('a workbook refused while another is being read', () => {
+  it.each(BUSY_REFUSALS)('says a %i in the server’s words, never a generic error, and offers the picker again', async (status, refusal) => {
+    const { message } = refusal.body;
+    mocks.uploadCustomerFile.mockRejectedValue(new ApiError(status, refusal.body, 'req-77'));
+    await renderPage();
+    fillBasics();
+    goToStep('Customers');
+    dropCsv('Second.xlsx');
+    const alert = await screen.findByTestId('builder-error');
+    // The sentence alone: a request id (a 5xx carries one for support) is its own chip, never
+    // run into the sentence.
+    expect(within(alert).getByTestId('builder-error-message').textContent).toBe(message);
+    expect(alert.textContent).not.toMatch(/something went wrong|server error|API error/i);
+    if (status >= 500) {
+      expect(within(alert).getByText('req-77').tagName).toBe('CODE');
+      expect(within(alert).getByRole('button', { name: 'Copy request ID' })).toBeTruthy();
+    } else {
+      expect(alert.textContent).not.toContain('req-77');
+    }
+    expect(mocks.analyzeRosterColumns).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Choose a file' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

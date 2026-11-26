@@ -76,6 +76,9 @@ on the live socket (`StationRegistry`'s `caps`), never the session row (IQ46,
 - A new feature flag is declared in `packages/contracts/src/flags.ts` and registered in
   `src/feature-flags/registry.ts`.
 - Redis holds leases, station and call tokens; it must not evict (`.env.example`).
+- `scripts/build.mjs` has two entries: `dist/index.js` and `dist/xlsx-worker.js`, the child process
+  an Excel upload is converted in (IM8, `agency-xlsx-runner.ts`). It is forked with only `PATH` and
+  its own heap cap; keep its imports to the converter (no config, no pool, no logger setup).
 
 ## Tests
 

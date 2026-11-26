@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:agency_wire/agency_wire.dart' show StationFrame;
 import 'package:agent_audio/agent_audio.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../audio/audio_engine.dart';
@@ -73,3 +76,11 @@ final stationUnauthorizedSinkProvider = Provider<void Function(Object error)>(
 /// Whether the agent wants sounds on this phone (Me → Sounds: "Ring and call tones on this
 /// phone"), read when the inbound chime is due. Injectable so tests need no stored preferences.
 final stationSoundsProvider = Provider<bool Function()>((ref) => () => ref.read(localPreferencesProvider).sounds);
+
+/// Whether the agent wants the phone to vibrate (Me → Vibration, also ⋮ More → Sound), read when a
+/// supervisor's message arrives (LF39). Injectable so tests need no stored preferences.
+final stationHapticsProvider = Provider<bool Function()>((ref) => () => ref.read(localPreferencesProvider).haptics);
+
+/// One short vibration, never a sound: a supervisor's message arrived (LF39). A vibration cannot be
+/// heard by the customer on a call; a tone could. Injectable so tests count them.
+final stationVibrateProvider = Provider<void Function()>((ref) => () => unawaited(HapticFeedback.vibrate()));
