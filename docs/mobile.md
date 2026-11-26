@@ -1505,15 +1505,18 @@ the flag is on). Break limits are not behind it.
   from the agent.
   - **Dismiss all and Undo.** Dismiss all takes the messages off the banner at once and leaves
     "3 messages dismissed" with a 48 dp Undo in its place for 6 seconds (12 with a screen reader
-    on), said once, politely ("3 messages dismissed. Press Undo to bring them back."). The banner
+    on), said once, politely ("3 messages dismissed. Press Undo to bring them back.", below). The banner
     holds the dismissal itself and calls the seam's dismiss for each id only when the window ends,
     so the controller is unchanged and the shell keeps the banner (the queue is not empty yet).
-    Undo brings them back where they were, oldest first, with nothing announced or vibrated again
+    Undo brings them back where they were, oldest first, the list open as it was when Dismiss all
+    was pressed (shut if a call arrived in the window), with nothing announced or vibrated again
     (they never left the queue). A message arriving in the window shows, with Undo under it while
     there is room for both (not with the keyboard up: the one row is the new message's), and Undo
     puts the others back before it. A second Dismiss all sends the first at once, and the banner
-    going (the station closing) sends one still pending. The 20-message cap is the controller's:
-    one dropped in the window is simply not brought back.
+    going while the messages are still queued (the shell leaving) sends one still pending. The
+    station closing sends nothing: its queue empties first, and the banner lets the pending ids go
+    with it. The 20-message cap is the controller's: one dropped in the window is simply not
+    brought back.
   - **Room.** The shell gives the banner its body's height (the keyboard and the tab bar already
     off it), and the banner, shut or open, takes at most about a third of what is left under the
     status bar, never less than one message beside its 48 dp Dismiss (64 dp); its text and list
@@ -1522,26 +1525,50 @@ the flag is on). Break limits are not behind it.
     left a note being typed on a 360×640 phone 52 to 58 dp, its label and, at 200% text, the line
     being typed out of view, and a refusal over the station's actions 7 to 12 dp. With no room for
     the open list the banner shows the first message and says how to get the room (LF36, decided
-    2026-11-26): with the keyboard up, a 48 dp "See all 3" beside its Dismiss, inside the one row at
-    any text size (labelled "Hide the keyboard to see all 3 messages"), which takes focus off the
+    2026-11-26): with the keyboard up, and room for the list once it is down (counted as the room
+    now, the keyboard's height back, less what a tab bar may take: 80 dp and the navigation bar's
+    inset, so never more than the shell will give), a 48 dp "See all 3" beside its Dismiss, inside
+    the one row (labelled "Hide the keyboard to see all 3 messages"), which takes focus off the
     field being typed in and hides the keyboard, then opens the list once the keyboard is down
     (asked to see all, the list opens; pressed from a hardware keyboard, focus goes to the list's
-    button); with the keyboard down but a third too small for the list (144 dp: a phone on its
-    side), "Turn your phone upright to see all 3 messages" after its time, words and not a button;
-    in a short window standing up (split screen), "· 2 more messages". The list opens again once
-    there is room, if it was open and no call arrived since. The first cut sized it from
-    the whole window, so with the keyboard up the list could leave the tab nothing.
-  - **Screen readers and focus.** Each message is announced once as it arrives ("Message from
-    Anitha N: …", polite), sender and text together. The banner is not a live region: one would
-    say a message twice as it arrives and again on a second message, a dismissal or opening the
-    list, where nothing new arrived. "Show 2 more messages" and "Show less" are one button, which keeps
+    button; with no room for it by then, turned on its side since, the wish goes, and nothing
+    opens later unasked). The button takes at most half of what the row leaves beside the icon and
+    the Dismiss, so the message keeps at least as much; where "See all 3" does not fit whole there
+    it reads "All 3", and narrower still it is its icon alone, its label the whole sentence every
+    way (measured with the app's fonts, 3 and 20 messages: its words at 100% on 320 to 411 dp, but
+    "All 20" on 320 dp, and at 150% on 411 dp; "All 3" or "All 20" at 150% on 320 and 360 dp and at
+    200%, but the icon alone with 20 on 320 dp; the first cut's ellipsis cut it short from 130% on
+    320 dp and at 200% on 360 dp, and left the message 116 dp). On a phone on
+    its side, keyboard up or down, the third is too small for the list (144 dp) even with the
+    keyboard gone: "Turn your phone upright to see all 3 messages" after its time, words and not a
+    button (the first cut offered See all there, which hid the keyboard and opened nothing, then
+    opened the list unasked once the phone was upright); in a short window standing up (split
+    screen), "· 2 more messages". The list opens again once there is room, if it was open and no
+    call arrived since. The first cut sized it from the whole window, so with the keyboard up the
+    list could leave the tab nothing.
+  - **Screen readers and focus.** Each message is said once as it arrives ("Message from
+    Anitha N: …", polite), sender and text together, and Dismiss all's line once as it is pressed.
+    On iOS they are announcements (`SemanticsService.sendAnnouncement`, where
+    `MediaQuery.supportsAnnounceOf` is true). Android takes no announcements: its embedding always
+    reports `supportsAnnounce` false, so until 2026-11-26 TalkBack heard neither a message arriving
+    nor that Undo was there (a screen reader's press moves no input focus to it). There the banner
+    has a one-pixel live region of its own, out of sight, as `PhaseAnnouncer` and the soft phone's
+    announcer do: its words are only ever what is to be said (the newest arrivals, or Dismiss all's
+    line), and it is a new node for each, so TalkBack reads each once and nothing else (a
+    dismissal, opening or closing the list, Undo, the keyboard moving) changes it. The banner
+    itself is not a live region: one would say a message twice as it arrives and again on a second
+    message, a dismissal or opening the list, where nothing new arrived. The tests hear both ways
+    (`supportsAnnounce` true and false), the live region by the embedding's rule (a live region
+    whose words are new to its node is read). "Show 2 more messages" and "Show less" are one button, which keeps
     focus as it opens and closes the list and says whether the list is open (expanded). Each
     Dismiss says whose message it takes away ("Dismiss the message from Anitha N"). Nothing takes
     focus on arrival; only when one of its controls had focus and went (its message dismissed, the
     list closed by itself) does focus move: to the next message's Dismiss, else the one before,
     else the button, else Undo. The list closed by a call moves focus in it to the button (or keeps
     it on the first message's Dismiss), never to another message's Dismiss; Dismiss all moves it to
-    Undo, and Undo to the button.
+    Undo, and Undo to the button. A banner mounted afresh while an earlier one's Dismiss all is
+    still on its way to the seam would show and say those messages once more; the shell keeps one
+    banner mounted while the queue is not empty, so it does not arise.
   - Messages are one-way (LF5): once a message answers Need help, the request has ended and Need
     help can be pressed again, on the station and on the Phone tab. A soft-phone session gets them
     too: the core publishes them beside the shell's signals (`StationHost.messages`,
@@ -1846,6 +1873,12 @@ from the browser or file manager it was opened from.
   `en-IN` voice, the manifest's `TTS_SERVICE` query on Android 11+ and the plugin's iOS audio session
   beside the call's are unverified.
 - **The listening notice (2026-11-16/17) is widget-tested only**: the button, the sheet and `ListenFirstNoticeCard` have not been seen on a phone.
+- **The message banner's review fixes (2026-11-26) are widget-tested only.** See all calls
+  `TextInput.hide` after the field lets go of focus: whether Android's keyboards (Gboard, Samsung
+  Keyboard) go down on it, and how their insets animate as they do, is unverified. Nor has TalkBack
+  been heard reading a message as it arrives, or Dismiss all's line and its Undo, through the
+  banner's live region: the tests follow the Android embedding's rule for live regions, not a
+  phone. VoiceOver has not heard the announcements either (iOS does not build).
 - **Floor assist (2026-11-19) has run only against the fixtures and fakes.** Need help, the message
   banner and the break countdown are unit- and widget-tested with the contract's sample frames in the
   server's order (`flutter test`, `dart test`), and the server's side drives a simulated phone station

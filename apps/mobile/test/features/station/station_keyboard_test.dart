@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderCustomPaint;
+import 'package:flutter/rendering.dart' show RenderCustomPaint, RenderParagraph;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
@@ -217,9 +217,15 @@ void main() {
           if (message) {
             expect(tester.getSize(find.byKey(const Key('supervisor-message'))).height, SupervisorMessageBanner.least,
                 reason: 'the banner takes its one row while the keyboard is up');
-            // The way to see the rest (LF36, decided 2026-11-26): a 48 dp "See all 3" inside that row.
+            // The way to see the rest (LF36, decided 2026-11-26): a 48 dp "See all 3" inside that row,
+            // "All 3" where those words do not fit whole beside the message (large text).
             final seeAll = find.byKey(const Key('supervisor-message-see-all'));
-            expect(find.descendant(of: seeAll, matching: find.text('See all 3')), findsOneWidget, reason: 'with how to see all three');
+            final text = find.descendant(of: seeAll, matching: find.byType(Text));
+            final words = tester.widget<Text>(text);
+            expect(words.data, anyOf('See all 3', 'All 3'), reason: 'with how to see all three');
+            expect(words.semanticsLabel, 'Hide the keyboard to see all 3 messages');
+            expect(tester.renderObject<RenderParagraph>(find.descendant(of: text, matching: find.byType(RichText))).didExceedMaxLines, isFalse,
+                reason: 'its words whole');
             expect(seeAll.hitTestable(), findsOneWidget);
             expect(tester.getSize(seeAll).height, greaterThanOrEqualTo(48));
           }

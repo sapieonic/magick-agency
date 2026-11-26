@@ -522,8 +522,8 @@ abstract final class StationCopy {
   /// The control that opens the banner to every queued message ([n] waiting behind the one shown).
   static String showMoreMessages(int n) => n == 1 ? 'Show 1 more message' : 'Show $n more messages';
   static String messagesCount(int n) => n == 1 ? '1 message' : '$n messages';
-  /// After the sender and time when the list is not open for want of room (the keyboard is up, or a
-  /// phone on its side).
+  /// After the sender and time when the list has no room in a short window standing up (split
+  /// screen), the keyboard up or down: hiding the keyboard would not make room either.
   static String moreMessages(int n) => n == 1 ? '1 more message' : '$n more messages';
   static const showFewerMessages = 'Show less';
   static const dismissAllMessages = 'Dismiss all';
@@ -533,8 +533,12 @@ abstract final class StationCopy {
   /// While the keyboard is up, with more than one message ([n] in all): the button that hides the
   /// keyboard so the banner has room again, and opens the list. Its label says what it does.
   static String seeAllMessages(int n) => 'See all $n';
+  /// The same button's words when "See all 3" does not fit beside the message (large text, a
+  /// narrow phone); its label stays [seeAllMessagesLabel]. Narrower still, the icon alone.
+  static String seeAllMessagesShort(int n) => 'All $n';
   static String seeAllMessagesLabel(int n) => 'Hide the keyboard to see all $n messages';
-  /// After the sender and time on a phone on its side, where the list has no room ([n] in all).
+  /// After the sender and time on a phone on its side, where the list has no room ([n] in all),
+  /// the keyboard up or down: with it down there is still no room.
   static String turnUprightToSeeAll(int n) => 'Turn your phone upright to see all $n messages';
   /// What is left in the banner's place for a few seconds after Dismiss all, with Undo.
   static String messagesDismissed(int n) => n == 1 ? '1 message dismissed' : '$n messages dismissed';

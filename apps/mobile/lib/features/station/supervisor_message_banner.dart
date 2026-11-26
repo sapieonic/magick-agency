@@ -27,9 +27,11 @@ import 'station_copy.dart';
 /// Dismiss all can be undone: the messages leave the banner at once, "3 messages dismissed" and
 /// Undo take their place for [undoWindow] ([undoWindowScreenReader] with a screen reader on), and
 /// only then are they dismissed through the seam, each by id. Undo brings them back in their
-/// place, oldest first, saying nothing again (they never left the queue). A message arriving in
-/// the window shows, with Undo under it while there is room; a second Dismiss all, or the banner
-/// going (the station closing), dismisses the first at once.
+/// place, oldest first, the list open as it was, saying nothing again (they never left the queue).
+/// A message arriving in the window shows, with Undo under it while there is room; a second
+/// Dismiss all, or the banner going while they are still queued (the shell leaving), dismisses the
+/// first at once. The station closing sends nothing: its queue empties first, and with it the
+/// pending ids.
 ///
 /// Room: the banner takes at most a third of the room it is given (the shell gives it the space
 /// between the status bar and the keyboard or tab bar), never less than one message beside its
@@ -37,15 +39,23 @@ import 'station_copy.dart';
 /// While the on-screen keyboard is up it takes only that one row, on any phone: the tab under it is
 /// being typed in, and on a small phone a third of the room would leave the note no line of its
 /// own. With more than one message and no room for the list, it says how to get the room: with the
-/// keyboard up, a "See all 3" button that hides the keyboard and opens the list; with the keyboard
-/// down on a phone on its side (a third cannot hold the open list, [listRoom]), "Turn your phone
-/// upright to see all 3 messages" after the time; else, "· 2 more messages". The list opens again
-/// once there is room, if it was open.
+/// keyboard up and room for the list once it is down, a "See all 3" button that hides the keyboard
+/// and opens the list (narrower at large text: "All 3", then its icon alone); on a phone on its
+/// side (a third cannot hold the open list, [listRoom], even with the keyboard down), "Turn your
+/// phone upright to see all 3 messages" after the time; else, "· 2 more messages". The list opens
+/// again once there is room, if it was open; See all with no room once the keyboard is down opens
+/// nothing later.
 ///
-/// Each message is announced to a screen reader once, as it arrives (politely, after what is being
-/// read), sender and text together. The banner is not a live region: one would say a message twice
-/// as it arrives, and again whenever the banner changes (a second message queued, a dismissal,
-/// opening the list), where nothing new arrived. Nothing here takes focus on its own: only when one
+/// Each message is said to a screen reader once, as it arrives (politely, after what is being
+/// read), sender and text together, and so is Dismiss all's line. Where the platform takes
+/// announcements (iOS) they are sent as such and the banner has no live region: one around the
+/// banner would say a message twice as it arrives, and again whenever the banner changes (a second
+/// message queued, a dismissal, opening the list), where nothing new arrived. Android takes none
+/// (its embedding always reports [MediaQuery.supportsAnnounceOf] false), so there the banner says
+/// them through a one-pixel live region of its own, out of sight, whose words are only ever what
+/// is to be said: a new node for each arrival and each Dismiss all, its words unchanged by a
+/// dismissal, opening the list or Undo, so TalkBack reads each once. Nothing here takes focus on
+/// its own: only when one
 /// of its controls had focus and went (its message dismissed, the list closed by itself or by a
 /// call, Dismiss all, Undo) does focus move, to the next message's Dismiss, else the one before,
 /// else the button, else the first Dismiss, else Undo. The button that opens and closes the list is
@@ -62,6 +72,14 @@ class SupervisorMessageBanner extends ConsumerStatefulWidget {
   /// Undo's line under a message that arrived after Dismiss all: its 48 dp Undo and the gap under it.
   static const double undoLine = Space.touch + Space.sm;
 
+  /// What a message's row takes besides the message and "See all": its padding, the icon, the gap
+  /// and the 48 dp Dismiss. See all takes at most half of the rest, so the message keeps as much.
+  static const double rowChrome = Space.lg + 20 + Space.md + Space.xs + Space.touch;
+
+  /// What the shell's tab bar may take from the room once the keyboard is down (Material's own
+  /// height for it, more than the app's): the room "See all" counts on is never more than it gets.
+  static const double tabBarAllowance = 80;
+
   /// How long Dismiss all can be undone.
   static const undoWindow = Duration(seconds: 6);
 
@@ -73,13 +91,15 @@ class SupervisorMessageBanner extends ConsumerStatefulWidget {
 }
 
 /// Dismiss all, not yet sent: [ids] in the queue's order, the seam's [dismiss] as it was then,
-/// and the [timer] that sends it.
+/// the [timer] that sends it, and whether the list was open (Undo opens it again, unless a call
+/// arrived since).
 final class _Dismissal {
-  _Dismissal(this.ids, this.dismiss, this.timer);
+  _Dismissal(this.ids, this.dismiss, this.timer, {required this.wasOpen});
 
   final List<String> ids;
   final void Function(String id) dismiss;
   final Timer timer;
+  bool wasOpen;
 }
 
 class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanner> {
@@ -119,18 +139,32 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
   /// "See all" had focus when pressed: once the keyboard is down, focus goes to the list's button.
   bool _focusOnRoom = false;
 
+  /// "See all" was pressed: once the keyboard is down the list opens, or, with no room for it even
+  /// then, the wish is let go, so the list never opens later unasked.
+  bool _seeAllAsked = false;
+
+  /// What the live region says where the platform takes no announcements (Android): the newest
+  /// arrival, or Dismiss all's line. [_sayKey] is new for each, so each is a new node, said once;
+  /// nothing else changes either.
+  String _say = '';
+  int _sayKey = 0;
+
   @override
   void initState() {
     super.initState();
-    // Manual, and fired at once: a message already queued when the shell mounts is said too.
+    // Manual, and fired at once: a message already queued when the shell mounts is said too. (A
+    // banner mounted afresh while an old one's Dismiss all is still on its way to the seam would
+    // say those once more; the shell keeps one banner while the queue is not empty.)
     ref.listenManual(supervisorMessagesProvider, _onMessages, fireImmediately: true);
     ref.listenManual<String?>(callArrivalProvider, _onCallArrival);
   }
 
   @override
   void dispose() {
-    // The banner going (the station closing, the shell leaving) sends a Dismiss all still pending:
-    // the agent asked for it. After this frame, so no provider changes while the tree is torn down.
+    // The banner going while a Dismiss all is pending and its ids still queued (the shell leaving)
+    // sends it: the agent asked for it. The station closing sends nothing: its queue empties first
+    // and [_onMessages] lets the pending ids go. After this frame, so no provider changes while the
+    // tree is torn down.
     final p = _pending;
     if (p != null) {
       p.timer.cancel();
@@ -177,6 +211,9 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
     if (shown.length <= 1) _expanded = false;
     final fresh = [for (final m in next) if (_announced.add(m.id)) m];
     if (fresh.isNotEmpty) {
+      // For the live region (read in build, which the watch repaints): the new ones, together.
+      _say = [for (final m in fresh) StationCopy.messageAnnouncement(m.from, m.text)].join('\n');
+      _sayKey++;
       // After the frame: the first call comes from initState, where the context cannot be read.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !MediaQuery.supportsAnnounceOf(context)) return;
@@ -202,6 +239,9 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
   void _onCallArrival(String? prev, String? next) {
     if (next == null || next == prev) return;
     _focusOnRoom = false;
+    _seeAllAsked = false;
+    // Undo after a call arrived puts the messages back with the list shut: the call has the screen.
+    _pending?.wasOpen = false;
     if (!_expanded) return;
     final shown = _visible(ref.read(supervisorMessagesProvider));
     // Focus in the list stays in the banner: on the first message's Dismiss if it was there (the
@@ -230,6 +270,7 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
     unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
     setState(() {
       _expanded = true;
+      _seeAllAsked = true;
       _focusOnRoom = own;
     });
   }
@@ -244,8 +285,10 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
         ? SupervisorMessageBanner.undoWindowScreenReader
         : SupervisorMessageBanner.undoWindow;
     setState(() {
-      _pending = _Dismissal(ids, ref.read(dismissSupervisorMessageProvider), Timer(window, _sendPending));
+      _pending = _Dismissal(ids, ref.read(dismissSupervisorMessageProvider), Timer(window, _sendPending), wasOpen: _expanded);
       _expanded = false;
+      _say = StationCopy.messagesDismissedAnnouncement(ids.length);
+      _sayKey++;
     });
     if (MediaQuery.supportsAnnounceOf(context)) {
       unawaited(
@@ -271,7 +314,8 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
     if (mounted) setState(() {});
   }
 
-  /// Undo: the messages come back where they were (they never left the queue), said again to no one.
+  /// Undo: the messages come back where they were (they never left the queue), the list open if it
+  /// was, said again to no one.
   void _undo() {
     final p = _pending;
     if (p == null) return;
@@ -279,7 +323,10 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
     final queued = ref.read(supervisorMessagesProvider);
     final before = _visible(queued);
     p.timer.cancel();
-    setState(() => _pending = null);
+    setState(() {
+      _pending = null;
+      _expanded = p.wasOpen && queued.length > 1;
+    });
     _afterRepaint(held, before, queued);
   }
 
@@ -383,7 +430,7 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
     if (messages.isEmpty) return const SizedBox.shrink();
     final shown = _visible(messages);
     final t = context.tokens;
-    return Material(
+    final banner = Material(
       key: const Key('supervisor-message'),
       color: t.infoSubtle,
       child: DecoratedBox(
@@ -395,7 +442,8 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
               // keyboard or tab bar); placed with no bound, the window's height. While the keyboard
               // is up the tab under it is being typed in: one row, whatever the room.
               final room = box.maxHeight.isFinite ? box.maxHeight : MediaQuery.sizeOf(context).height;
-              final most = math.min(room, typing ? SupervisorMessageBanner.least : math.max(room / 3, SupervisorMessageBanner.least));
+              double third(double room) => math.max(room / 3, SupervisorMessageBanner.least);
+              final most = math.min(room, typing ? SupervisorMessageBanner.least : third(room));
               final pending = _pending;
               if (shown.isEmpty) {
                 // Every message dismissed, Undo's window open: its line holds the banner's place.
@@ -405,16 +453,32 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
                   child: _undoLine(context, pending?.ids.length ?? 0, under: false),
                 );
               }
-              if (!typing && _focusOnRoom) _focusAfterRoom(shown.first);
               // A message arrived in Undo's window: Undo under it, while both have room.
-              final undoUnder = pending != null && most >= SupervisorMessageBanner.least + SupervisorMessageBanner.undoLine;
-              final forMessages = undoUnder ? most - SupervisorMessageBanner.undoLine : most;
-              final listFits = shown.length > 1 && forMessages >= SupervisorMessageBanner.listRoom;
+              bool undoUnderIn(double most) => pending != null && most >= SupervisorMessageBanner.least + SupervisorMessageBanner.undoLine;
+              bool listFitsIn(double most) =>
+                  shown.length > 1 && (undoUnderIn(most) ? most - SupervisorMessageBanner.undoLine : most) >= SupervisorMessageBanner.listRoom;
+              final undoUnder = pending != null && undoUnderIn(most);
+              final listFits = listFitsIn(most);
+              // The room once the keyboard is down: the keyboard's height back, less what the tab
+              // bar may take (never more than the shell will give). With no bound given, the room
+              // is the window's already.
+              final view = View.of(context);
+              final inset = math.max(MediaQuery.viewInsetsOf(context).bottom, view.viewInsets.bottom / view.devicePixelRatio);
+              final bar = SupervisorMessageBanner.tabBarAllowance + view.viewPadding.bottom / view.devicePixelRatio;
+              final roomDown = box.maxHeight.isFinite ? room + math.max(0.0, inset - bar) : room;
+              final listFitsDown = listFitsIn(math.min(roomDown, third(roomDown)));
+              // See all pressed, the keyboard down: the list opens if it fits; with no room for it
+              // even now (turned on its side since), the wish goes, so nothing opens later unasked.
+              if (!typing && _seeAllAsked && (listFits || !listFitsDown)) {
+                _seeAllAsked = false;
+                if (!listFits) _expanded = false;
+                if (_focusOnRoom) _focusAfterRoom(shown.first);
+              }
               final open = listFits && _expanded;
               _shownOpen = open;
               if (!open) _dragging = false;
               final noRoom = shown.length > 1 && !listFits
-                  ? (typing
+                  ? (typing && listFitsDown
                         ? _NoRoom.keyboard
                         : (MediaQuery.orientationOf(context) == Orientation.landscape ? _NoRoom.sideways : _NoRoom.short))
                   : null;
@@ -433,6 +497,32 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
           ),
         ),
       ),
+    );
+    // Android: what is to be said, in a live region out of sight (see the class's notes). Always in
+    // a Stack, so the banner keeps its place in the tree whether or not the region is there.
+    final live = !MediaQuery.supportsAnnounceOf(context);
+    return Stack(
+      fit: StackFit.passthrough,
+      children: [
+        banner,
+        if (live)
+          Positioned(
+            left: 0,
+            top: 0,
+            width: 1,
+            height: 1,
+            child: KeyedSubtree(
+              key: ValueKey(_sayKey),
+              child: Semantics(
+                key: const Key('supervisor-message-live'),
+                container: true,
+                liveRegion: true,
+                label: _say,
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -514,32 +604,58 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
               ],
             ),
           ),
-          if (noRoom == _NoRoom.keyboard) _seeAllButton(t, messages.length, maxWidth: width * 0.4),
+          if (noRoom == _NoRoom.keyboard) _seeAllButton(context, t, messages.length, width: width),
           if (!open) _dismissButton(t, first, const Key('dismiss-supervisor-message')),
         ],
       ),
     );
   }
 
-  /// With the keyboard up: "See all 3", 48 dp, beside the message's Dismiss, at most [maxWidth]
-  /// wide so the message keeps its room at large text.
-  Widget _seeAllButton(AppTokens t, int n, {required double maxWidth}) => ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: maxWidth),
-        child: TextButton.icon(
-          key: const Key('supervisor-message-see-all'),
-          focusNode: _seeAllFocus,
-          onPressed: _seeAll,
-          style: _linkStyle(t).copyWith(padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: Space.sm))),
-          icon: const Icon(Icons.keyboard_hide_outlined, size: 20),
-          label: Text(
-            StationCopy.seeAllMessages(n),
-            maxLines: 1,
-            softWrap: false,
-            overflow: TextOverflow.ellipsis,
-            semanticsLabel: StationCopy.seeAllMessagesLabel(n),
-          ),
-        ),
-      );
+  /// With the keyboard up: "See all 3", 48 dp, beside the message's Dismiss in a row [width] wide.
+  /// It takes at most half of what the row leaves ([SupervisorMessageBanner.rowChrome]), so the
+  /// message keeps at least as much; where its words do not fit there whole (large text, a narrow
+  /// phone), "All 3", then the icon alone. Its label is the whole sentence every way.
+  Widget _seeAllButton(BuildContext context, AppTokens t, int n, {required double width}) {
+    final most = math.max(Space.touch, (width - SupervisorMessageBanner.rowChrome) / 2);
+    // The button's own text style, and what it adds to its words: its padding, the icon and the
+    // gap between them (8 dp at most).
+    final style = TextButtonTheme.of(context).style?.textStyle?.resolve(const {}) ?? Theme.of(context).textTheme.labelLarge;
+    const around = 2 * Space.sm + 20 + 8;
+    bool fits(String words) {
+      final p = TextPainter(
+        text: TextSpan(text: words, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1,
+      )..layout();
+      final w = p.width;
+      p.dispose();
+      return around + w <= most;
+    }
+
+    final words = [StationCopy.seeAllMessages(n), StationCopy.seeAllMessagesShort(n)].where(fits).firstOrNull;
+    final label = StationCopy.seeAllMessagesLabel(n);
+    final buttonStyle = _linkStyle(t).copyWith(padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: Space.sm)));
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: most),
+      child: words == null
+          ? TextButton(
+              key: const Key('supervisor-message-see-all'),
+              focusNode: _seeAllFocus,
+              onPressed: _seeAll,
+              style: buttonStyle,
+              child: Icon(Icons.keyboard_hide_outlined, size: 20, semanticLabel: label),
+            )
+          : TextButton.icon(
+              key: const Key('supervisor-message-see-all'),
+              focusNode: _seeAllFocus,
+              onPressed: _seeAll,
+              style: buttonStyle,
+              icon: const Icon(Icons.keyboard_hide_outlined, size: 20),
+              label: Text(words, maxLines: 1, softWrap: false, overflow: TextOverflow.ellipsis, semanticsLabel: label),
+            ),
+    );
+  }
 
   /// "3 messages dismissed" and Undo (48 dp): in the banner's place, or [under] a message that
   /// arrived since. Its words scroll inside at large text.
@@ -662,6 +778,7 @@ class _SupervisorMessageBannerState extends ConsumerState<SupervisorMessageBanne
   }
 }
 
-/// Why the open list has no room, with more than one message: the keyboard is up, the phone is on
-/// its side, or the window is short for some other reason (split screen).
+/// Why the open list has no room, with more than one message: the keyboard is up (and the list
+/// would fit with it down), the phone is on its side, or the window is short for some other reason
+/// (split screen).
 enum _NoRoom { keyboard, sideways, short }

@@ -19,7 +19,10 @@ import 'shell_harness.dart';
 
 /// A supervisor's message (floor assist, LF5; the app's LF36): the shell shows it at the top of
 /// every tab and over a call, never as a dialog; several queue; Dismiss takes the one shown away;
-/// each is announced to a screen reader once, and nothing else is (no live region).
+/// each is said to a screen reader once, and nothing else is: where the platform takes
+/// announcements (iOS) as one, with no live region; where it does not (Android, whose embedding
+/// always reports `supportsAnnounce` false) through the banner's own hidden live region, which
+/// these tests hear as TalkBack would ([hearLiveRegions]). The key tests run both ways.
 
 class _Messages extends Notifier<List<SupervisorMessageView>> {
   @override
@@ -55,6 +58,39 @@ List<String> liveRegions(WidgetTester tester) {
   walk(tester.binding.renderViews.first.owner!.semanticsOwner!.rootSemanticsNode!);
   return out;
 }
+
+/// What a screen reader on Android hears from live regions, from now on: a live region's words
+/// each time a semantics update brings one whose words are new to its node (a node new to the
+/// tree included), the Android embedding's rule (`AccessibilityBridge`: a live region whose label
+/// changed sends a content change, which TalkBack reads). Needs semantics on.
+List<String> hearLiveRegions(WidgetTester tester) {
+  final heard = <String>[];
+  var before = <int, String>{};
+  final owner = tester.binding.renderViews.first.owner!.semanticsOwner!;
+  void update() {
+    final now = <int, String>{};
+    void walk(SemanticsNode n) {
+      if (n.getSemanticsData().flagsCollection.isLiveRegion) now[n.id] = n.label;
+      n.visitChildren((c) {
+        walk(c);
+        return true;
+      });
+    }
+
+    walk(owner.rootSemanticsNode!);
+    for (final MapEntry(key: id, value: label) in now.entries) {
+      if (label.isNotEmpty && before[id] != label) heard.add(label);
+    }
+    before = now;
+  }
+
+  owner.addListener(update);
+  addTearDown(() => owner.removeListener(update));
+  return heard;
+}
+
+/// The two ways a message is said: as an announcement (iOS) or by a live region (Android).
+const ways = [(announce: true, name: 'announced (iOS)'), (announce: false, name: 'by its live region (Android)')];
 
 void main() {
   late List<String> dismissed;
@@ -116,7 +152,7 @@ void main() {
   });
 
   group('the banner', () {
-    Future<List<Object?>> pumpBanner(WidgetTester tester, {double textScale = 1, Size size = const Size(390, 844)}) async {
+    Future<List<Object?>> pumpBanner(WidgetTester tester, {double textScale = 1, Size size = const Size(390, 844), bool announce = true}) async {
       tester.view.devicePixelRatio = 3;
       tester.view.physicalSize = size * 3;
       addTearDown(tester.view.reset);
@@ -131,7 +167,7 @@ void main() {
         child: MaterialApp(
           theme: buildTheme(AppTokens.light, Brightness.light),
           builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(context).copyWith(supportsAnnounce: true, textScaler: TextScaler.linear(textScale)),
+            data: MediaQuery.of(context).copyWith(supportsAnnounce: announce, textScaler: TextScaler.linear(textScale)),
             child: child!,
           ),
           home: const Scaffold(body: Column(children: [SupervisorMessageBanner()])),
@@ -140,38 +176,58 @@ void main() {
       return announcements;
     }
 
-    testWidgets('each message is announced once as it arrives, politely; a dismissal says nothing again', (tester) async {
-      // With semantics on, so a live region (which a screen reader re-reads whenever its text
-      // changes, beside the announcement) would be seen.
-      final semantics = tester.ensureSemantics();
-      final announcements = await pumpBanner(tester);
-      c.read(_messages.notifier).set([msg('m1')]);
-      await tester.pump();
-      await tester.pump();
-      expect(announcements.map(said), ['Message from Anitha N: Offer the 3-month plan, the waiver is approved.']);
-      expect(((announcements.single! as Map)['data'] as Map)['assertiveness'], isNot(1));
-      expect(liveRegions(tester), isEmpty, reason: 'the announcement says it; a live region would say it twice');
-      c.read(_messages.notifier).set([msg('m1'), msg('m2', text: 'Wrap up this call', from: 'Ravi')]);
-      await tester.pump();
-      await tester.pump();
-      expect(announcements.map(said).last, 'Message from Ravi: Wrap up this call');
-      expect(liveRegions(tester), isEmpty, reason: '"Show 1 more message" appearing is not a new message to read out');
-      c.read(_messages.notifier).set([msg('m2', text: 'Wrap up this call', from: 'Ravi')]);
-      await tester.pump();
-      await tester.pump();
-      expect(announcements, hasLength(2));
-      expect(liveRegions(tester), isEmpty, reason: 'a dismissal says nothing (LF36)');
-      semantics.dispose();
-    });
+    for (final way in ways) {
+      testWidgets('each message is said once as it arrives, politely; a dismissal says nothing again: ${way.name}', (tester) async {
+        // With semantics on, so a live region (which a screen reader re-reads whenever its text
+        // changes) is heard.
+        final semantics = tester.ensureSemantics();
+        final heard = hearLiveRegions(tester);
+        final announcements = await pumpBanner(tester, announce: way.announce);
+        List<String> saidAll() => [...announcements.where((m) => (m! as Map)['type'] == 'announce').map(said), ...heard];
+        const first = 'Message from Anitha N: Offer the 3-month plan, the waiver is approved.';
+        c.read(_messages.notifier).set([msg('m1')]);
+        await tester.pump();
+        await tester.pump();
+        expect(saidAll(), [first]);
+        if (way.announce) {
+          expect(((announcements.single! as Map)['data'] as Map)['assertiveness'], isNot(1));
+          expect(liveRegions(tester), isEmpty, reason: 'the announcement says it; a live region would say it twice');
+        } else {
+          expect(announcements, isEmpty, reason: 'Android takes no announcements');
+          expect(liveRegions(tester), [first], reason: 'its one live region, polite');
+          final region = find.byKey(const Key('supervisor-message-live'));
+          expect(tester.getSize(region), const Size(1, 1), reason: 'out of sight');
+          expect(find.descendant(of: region, matching: find.byType(Text)), findsNothing);
+        }
+        c.read(_messages.notifier).set([msg('m1'), msg('m2', text: 'Wrap up this call', from: 'Ravi')]);
+        await tester.pump();
+        await tester.pump();
+        expect(saidAll(), [first, 'Message from Ravi: Wrap up this call'], reason: '"Show 1 more message" appearing is not a new message to read out');
+        c.read(_messages.notifier).set([msg('m2', text: 'Wrap up this call', from: 'Ravi')]);
+        await tester.pump();
+        await tester.pump();
+        expect(saidAll(), hasLength(2), reason: 'a dismissal says nothing (LF36)');
+        c.read(_messages.notifier).set(const []);
+        await tester.pumpAndSettle();
+        c.read(_messages.notifier).set([msg('m3', text: 'Wrap up this call', from: 'Ravi')]);
+        await tester.pump();
+        await tester.pump();
+        expect(saidAll(), hasLength(3), reason: 'the same words in a new message: said again');
+        semantics.dispose();
+      });
 
-    testWidgets('a message already queued when it mounts is announced too', (tester) async {
-      c.read(_messages.notifier).set([msg('m1')]);
-      final announcements = await pumpBanner(tester);
-      await tester.pump();
-      expect(announcements.map(said), ['Message from Anitha N: Offer the 3-month plan, the waiver is approved.']);
-    });
+      testWidgets('a message already queued when it mounts is said too: ${way.name}', (tester) async {
+        final semantics = tester.ensureSemantics();
+        final heard = hearLiveRegions(tester);
+        c.read(_messages.notifier).set([msg('m1')]);
+        final announcements = await pumpBanner(tester, announce: way.announce);
+        await tester.pump();
+        expect([...announcements.map(said), ...heard], ['Message from Anitha N: Offer the 3-month plan, the waiver is approved.']);
+        semantics.dispose();
+      });
+    }
 
-    testWidgets('no live region, plain text, a labelled dismiss of 48 dp', (tester) async {
+    testWidgets('where announcements are taken, no live region; plain text, a labelled dismiss of 48 dp', (tester) async {
       final semantics = tester.ensureSemantics();
       c.read(_messages.notifier).set([msg('m1', text: '<b>Not bold</b> https://example.test')]);
       await pumpBanner(tester);
@@ -199,7 +255,7 @@ void main() {
     final list = find.byKey(const Key('supervisor-message-list'));
     final more = find.byKey(const Key('supervisor-message-toggle'));
 
-    Future<List<Object?>> pumpBanner(WidgetTester tester, {double textScale = 1, Size size = const Size(360, 800)}) async {
+    Future<List<Object?>> pumpBanner(WidgetTester tester, {double textScale = 1, Size size = const Size(360, 800), bool announce = true}) async {
       tester.view.devicePixelRatio = 3;
       tester.view.physicalSize = size * 3;
       addTearDown(tester.view.reset);
@@ -215,7 +271,7 @@ void main() {
         child: MaterialApp(
           theme: buildTheme(AppTokens.light, Brightness.light),
           builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(context).copyWith(supportsAnnounce: true, textScaler: TextScaler.linear(textScale)),
+            data: MediaQuery.of(context).copyWith(supportsAnnounce: announce, textScaler: TextScaler.linear(textScale)),
             child: child!,
           ),
           home: const Scaffold(
@@ -350,29 +406,40 @@ void main() {
       expect(tester.getSize(find.byKey(const Key('supervisor-message'))).height, lessThanOrEqualTo(640 / 3 + 0.5));
     });
 
-    testWidgets('opening, closing and dismissing say nothing again: each id announced once, no live region', (tester) async {
-      final semantics = tester.ensureSemantics();
-      final announcements = await pumpBanner(tester);
-      c.read(_messages.notifier).set(burst.sublist(0, 2));
-      await tester.pump();
-      await tester.pump();
-      expect(announcements, hasLength(2));
-      await tester.tap(more);
-      await tester.pumpAndSettle();
-      expect(announcements, hasLength(2), reason: 'opening the list is not a new message');
-      expect(liveRegions(tester), isEmpty);
-      c.read(_messages.notifier).set(burst);
-      await tester.pump();
-      await tester.pump();
-      expect(announcements.map(said).skip(2), ['Message from Ravi: Call me after this one']);
-      c.read(_messages.notifier).set([burst[2]]);
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('dismiss-supervisor-message')));
-      await tester.pumpAndSettle();
-      expect(announcements, hasLength(3));
-      expect(liveRegions(tester), isEmpty);
-      semantics.dispose();
-    });
+    for (final way in ways) {
+      testWidgets('opening, closing and dismissing say nothing again: each id said once, ${way.name}', (tester) async {
+        final semantics = tester.ensureSemantics();
+        final heard = hearLiveRegions(tester);
+        final announcements = await pumpBanner(tester, announce: way.announce);
+        List<String> saidAll() => [...announcements.map(said), ...heard];
+        const first = 'Message from Reshma Mohammad: hlo';
+        const second = 'Message from Reshma Mohammad: Offer the 3-month plan';
+        c.read(_messages.notifier).set(burst.sublist(0, 2));
+        await tester.pump();
+        await tester.pump();
+        // Two arriving at once: each said, sender and text together (in one live region's words).
+        final arrived = way.announce ? [first, second] : ['$first\n$second'];
+        expect(saidAll(), arrived);
+        for (var i = 0; i < 3; i++) {
+          await tester.tap(more);
+          await tester.pumpAndSettle();
+        }
+        expect(list, findsOneWidget);
+        expect(saidAll(), arrived, reason: 'opening and closing the list is not a new message');
+        expect(liveRegions(tester), way.announce ? isEmpty : ['$first\n$second']);
+        c.read(_messages.notifier).set(burst);
+        await tester.pump();
+        await tester.pump();
+        expect(saidAll(), [...arrived, 'Message from Ravi: Call me after this one']);
+        c.read(_messages.notifier).set([burst[2]]);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('dismiss-supervisor-message')));
+        c.read(_messages.notifier).set(const []);
+        await tester.pumpAndSettle();
+        expect(saidAll(), hasLength(arrived.length + 1), reason: 'the list closing by itself and a dismissal say nothing');
+        semantics.dispose();
+      });
+    }
   });
 
   group('focus and what a screen reader is told (LF36, addendum 2026-11-26)', () {
@@ -545,8 +612,9 @@ void main() {
   final seeAll = find.byKey(const Key('supervisor-message-see-all'));
   final bannerBox = find.byKey(const Key('supervisor-message'));
 
-  /// The banner over a note field and the call, on a 360×800 phone; the announcements it sends.
-  Future<List<Object?>> pumpOver(WidgetTester tester, {bool disableAnimations = false, bool screenReader = false}) async {
+  /// The banner over a note field and the call, on a 360×800 phone; the announcements it sends
+  /// (none where they are not taken: [announce] false, as on Android).
+  Future<List<Object?>> pumpOver(WidgetTester tester, {bool disableAnimations = false, bool screenReader = false, bool announce = true}) async {
     tester.view.devicePixelRatio = 3;
     tester.view.physicalSize = const Size(360, 800) * 3;
     addTearDown(tester.view.reset);
@@ -562,7 +630,7 @@ void main() {
         theme: buildTheme(AppTokens.light, Brightness.light),
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(context)
-              .copyWith(supportsAnnounce: true, disableAnimations: disableAnimations, accessibleNavigation: screenReader),
+              .copyWith(supportsAnnounce: announce, disableAnimations: disableAnimations, accessibleNavigation: screenReader),
           child: child!,
         ),
         home: const Scaffold(
@@ -585,21 +653,29 @@ void main() {
     return [...ys.keys]..sort((a, b) => ys[a]!.compareTo(ys[b]!));
   }
 
+  /// Opens the list, if it is not open already.
   Future<void> openList(WidgetTester tester) async {
-    tester.widget<ButtonStyleButton>(toggle).onPressed!();
-    await tester.pumpAndSettle();
+    if (list.evaluate().isEmpty) {
+      tester.widget<ButtonStyleButton>(toggle).onPressed!();
+      await tester.pumpAndSettle();
+    }
     expect(list, findsOneWidget);
   }
 
   group('Dismiss all can be undone (LF36, decided 2026-11-26)', () {
-    testWidgets('"3 messages dismissed" and a 48 dp Undo hold the banner\'s place, said once, politely; Undo brings them back in order, said to no one again, dismissed never',
-        (tester) async {
+    for (final way in ways) {
+      testWidgets('"3 messages dismissed" and a 48 dp Undo hold the banner\'s place, said once, politely; Undo brings them back in order, the list open, said to no one again, dismissed never: ${way.name}',
+          (tester) async {
       final semantics = tester.ensureSemantics();
-      final announcements = await pumpOver(tester);
+      final heard = hearLiveRegions(tester);
+      final announcements = await pumpOver(tester, announce: way.announce);
+      List<String> saidAll() => [...announcements.map(said), ...heard];
       c.read(_messages.notifier).set(burst3);
       await tester.pump();
       await tester.pump();
-      expect(announcements, hasLength(3));
+      // Three at once: three announcements, or one live region's words.
+      final arrivals = way.announce ? 3 : 1;
+      expect(saidAll(), hasLength(arrivals));
       await openList(tester);
       await tester.tap(all);
       await tester.pump();
@@ -613,23 +689,55 @@ void main() {
       final undoSaid = tester.getSemantics(undo).getSemanticsData();
       expect(undoSaid.label, 'Undo: bring the 3 messages back');
       expect(undoSaid.flagsCollection.isButton, isTrue);
-      expect(announcements.map(said).skip(3), ['3 messages dismissed. Press Undo to bring them back.']);
-      expect(((announcements.last! as Map)['data'] as Map)['assertiveness'], isNot(1), reason: 'politely');
-      expect(liveRegions(tester), isEmpty, reason: 'said once, by the announcement');
+      expect(saidAll().skip(arrivals), ['3 messages dismissed. Press Undo to bring them back.']);
+      if (way.announce) {
+        expect(((announcements.last! as Map)['data'] as Map)['assertiveness'], isNot(1), reason: 'politely');
+        expect(liveRegions(tester), isEmpty, reason: 'said once, by the announcement');
+      } else {
+        expect(announcements, isEmpty);
+        expect(liveRegions(tester), ['3 messages dismissed. Press Undo to bring them back.'], reason: 'a live region, polite');
+      }
       expect(tester.getSize(bannerBox).height, lessThanOrEqualTo(64.5), reason: 'one row');
+      // The keyboard coming up and going down lays the line out again; it is not said again.
+      tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+      await tester.pump();
+      await tester.pump();
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pump();
+      await tester.pump();
+      expect(saidAll(), hasLength(arrivals + 1));
 
       await tester.pump(const Duration(seconds: 3));
       await tester.tap(undo);
       await tester.pumpAndSettle();
       expect(undoLine, findsNothing);
-      expect(find.text('hlo'), findsOneWidget, reason: 'the first back in its place');
-      expect(find.text('Show 2 more messages'), findsOneWidget);
-      await openList(tester);
+      expect(list, findsOneWidget, reason: 'back as they were: the list open, as it was for Dismiss all');
+      expect(find.descendant(of: toggle, matching: find.text('Show less')), findsOneWidget);
       expect(order(tester, burst3), ['m1', 'm2', 'm3'], reason: 'oldest first, as they were');
-      expect(announcements, hasLength(4), reason: 'nothing is said again: they never left');
+      expect(saidAll(), hasLength(arrivals + 1), reason: 'nothing is said again: they never left');
       await tester.pump(SupervisorMessageBanner.undoWindowScreenReader * 2);
       expect(dismissed, isEmpty, reason: 'undone: never dismissed');
       semantics.dispose();
+    });
+    }
+
+    testWidgets('Undo after a call arrived in the window: back with the list shut, the call has the screen', (tester) async {
+      await pumpOver(tester);
+      c.read(_view.notifier).set(station());
+      c.read(_messages.notifier).set(burst3);
+      await tester.pumpAndSettle();
+      await openList(tester);
+      await tester.tap(all);
+      await tester.pump();
+      c.read(_view.notifier).set(station(phase: AgentPhase.reserved, call: call()));
+      await tester.pump();
+      await tester.tap(undo);
+      await tester.pumpAndSettle();
+      expect(list, findsNothing);
+      expect(find.text('hlo'), findsOneWidget);
+      expect(find.text('Show 2 more messages'), findsOneWidget);
+      await tester.pump(SupervisorMessageBanner.undoWindowScreenReader);
+      expect(dismissed, isEmpty);
     });
 
     testWidgets('no Undo: dismissed through the seam, each by id, when the window ends and not before', (tester) async {
@@ -660,8 +768,13 @@ void main() {
       expect(dismissed, ['m1', 'm2', 'm3']);
     });
 
-    testWidgets('a message arriving in the window shows, with Undo under it; Undo puts the others back before it, oldest first', (tester) async {
-      final announcements = await pumpOver(tester);
+    for (final way in ways) {
+      testWidgets('a message arriving in the window shows, with Undo under it; Undo puts the others back before it, oldest first: ${way.name}',
+          (tester) async {
+      final semantics = tester.ensureSemantics();
+      final heard = hearLiveRegions(tester);
+      final announcements = await pumpOver(tester, announce: way.announce);
+      List<String> saidAll() => [...announcements.map(said), ...heard];
       c.read(_messages.notifier).set(burst3);
       await tester.pumpAndSettle();
       await openList(tester);
@@ -674,19 +787,20 @@ void main() {
       expect(find.text('hlo'), findsNothing);
       expect(find.text('3 messages dismissed'), findsOneWidget, reason: 'Undo still offered, under it');
       expect(tester.getRect(undoLine).top, greaterThanOrEqualTo(tester.getRect(find.text('Good work today')).bottom));
-      expect(announcements.map(said).where((a) => a.contains('Good work today')), hasLength(1));
+      expect(saidAll().where((a) => a.contains('Good work today')), hasLength(1));
       expect(tester.takeException(), isNull);
 
       await tester.tap(undo);
       await tester.pumpAndSettle();
-      expect(find.text('hlo'), findsOneWidget);
-      expect(find.text('Show 3 more messages'), findsOneWidget);
-      await openList(tester);
+      expect(list, findsOneWidget, reason: 'open, as it was');
       expect(order(tester, [...burst3, msg('m4', text: 'Good work today')]), ['m1', 'm2', 'm3', 'm4']);
-      expect(announcements.map(said).where((a) => a.startsWith('Message from')), hasLength(4), reason: 'each id once');
+      expect(saidAll().expand((a) => a.split('\n')).where((a) => a.startsWith('Message from')), hasLength(4), reason: 'each id once');
+      expect(saidAll().last, 'Message from Anitha N: Good work today', reason: 'Undo says nothing');
       await tester.pump(SupervisorMessageBanner.undoWindowScreenReader);
       expect(dismissed, isEmpty);
+      semantics.dispose();
     });
+    }
 
     testWidgets('a message arriving in the window, no Undo: only the others are dismissed; it stays', (tester) async {
       await pumpOver(tester);
@@ -768,7 +882,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.testTextInput.isVisible, isTrue);
       expect(tester.getSize(bannerBox).height, lessThanOrEqualTo(64.5), reason: 'one row');
-      expect(find.descendant(of: seeAll, matching: find.text('See all 3')), findsOneWidget);
+      // Its words, or "All 3" where they do not fit (this test's font is wider than the app's).
+      expect(find.descendant(of: seeAll, matching: find.byWidgetPredicate((w) => w is Text && ['See all 3', 'All 3'].contains(w.data))), findsOneWidget);
       expect(tester.getSize(seeAll).height, greaterThanOrEqualTo(48));
       final said = tester.getSemantics(seeAll).getSemanticsData();
       expect(said.label, 'Hide the keyboard to see all 3 messages');
@@ -922,8 +1037,11 @@ void main() {
       return r.top >= l.top - 0.5 && r.bottom <= l.bottom + 0.5;
     }
 
-    testWidgets('the list scrolls to the newest; focus stays where it was; said once', (tester) async {
-      final announcements = await pumpOver(tester);
+    for (final way in ways) {
+      testWidgets('the list scrolls to the newest; focus stays where it was; said once: ${way.name}', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final heard = hearLiveRegions(tester);
+      final announcements = await pumpOver(tester, announce: way.announce);
       c.read(_messages.notifier).set(eight);
       await tester.pumpAndSettle();
       final notes = notesFocus(tester)..requestFocus();
@@ -936,8 +1054,10 @@ void main() {
       expect(inList(tester, find.text(ninth.text)), isTrue, reason: 'the newest in view');
       expect(position(tester).pixels, position(tester).maxScrollExtent);
       expect(focused(), same(notes), reason: 'no focus moves');
-      expect(announcements.map(said).where((a) => a.contains('the newest')), hasLength(1));
+      expect([...announcements.map(said), ...heard].where((a) => a.contains('the newest')), hasLength(1));
+      semantics.dispose();
     });
+    }
 
     testWidgets('it animates there', (tester) async {
       await pumpOver(tester);

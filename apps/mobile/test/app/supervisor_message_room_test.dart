@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show SemanticsAction;
+import 'package:flutter/rendering.dart' show RenderParagraph, SemanticsAction;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,9 +17,11 @@ import 'shell_harness.dart';
 /// takes only that one row, whatever the phone, so the note being typed keeps its room. With no
 /// room for the open list it shows the first message and says how to get the room (LF36, decided
 /// 2026-11-26): with the keyboard up, a 48 dp "See all 3" that hides the keyboard, inside that one
-/// row; on a phone on its side, "Turn your phone upright to see all 3 messages"; in a short window
-/// standing up (split screen), how many more wait. It opens the list again once there is room. The
-/// app's own fonts are loaded, so heights are the ones a phone lays out.
+/// row, whole at any text size ("All 3", or its icon alone, where the words do not fit), and only
+/// where the list fits once the keyboard is down; on a phone on its side, keyboard up or down,
+/// "Turn your phone upright to see all 3 messages"; in a short window standing up (split screen),
+/// how many more wait. It opens the list again once there is room. The app's own fonts are loaded,
+/// so heights and widths are the ones a phone lays out.
 
 class _Messages extends Notifier<List<SupervisorMessageView>> {
   @override
@@ -41,6 +43,15 @@ final body = find.byKey(const ValueKey('shell-body'));
 final list = find.byKey(const Key('supervisor-message-list'));
 final toggle = find.byKey(const Key('supervisor-message-toggle'));
 final seeAll = find.byKey(const Key('supervisor-message-see-all'));
+
+/// Every paragraph in [f] laid out whole: none cut short by its line limit (an ellipsis).
+void expectWhole(WidgetTester tester, Finder f, String why) {
+  final paragraphs = tester.renderObjectList<RenderParagraph>(find.descendant(of: f, matching: find.byType(RichText)));
+  expect(paragraphs, isNotEmpty);
+  for (final p in paragraphs) {
+    expect(p.didExceedMaxLines, isFalse, reason: '"${p.text.toPlainText()}" cut short: $why');
+  }
+}
 
 void main() {
   setUpAll(() async {
@@ -126,18 +137,19 @@ void main() {
         expect(list.evaluate().isNotEmpty, listShown);
         if (n > 1 && !listShown) {
           expect(toggle, findsNothing, reason: 'no room for the list: no button that would open nothing');
-          if (kb > 0) {
+          if (kb > 0 && size.width < size.height) {
             // The way to the room, inside the one row: whole, 48 dp, and it takes a press.
             expect(seeAll.hitTestable(), findsOneWidget, reason: 'See all $n, with the keyboard up');
-            expect(find.descendant(of: seeAll, matching: find.textContaining('See all $n')), findsOneWidget);
+            expectWhole(tester, seeAll, 'See all $n');
             final b = tester.getRect(seeAll);
             expect(b.height, greaterThanOrEqualTo(48));
             final r = tester.getRect(banner);
             expect(b.top >= r.top - 0.5 && b.bottom <= r.bottom + 0.5 && b.right <= r.right + 0.5, isTrue, reason: '$b inside the banner $r');
-            expect(tester.getSize(find.byKey(const Key('supervisor-message-text'))).width, greaterThan(60),
-                reason: 'the message keeps a column of its own beside it');
+            expect(tester.getSize(find.byKey(const Key('supervisor-message-text'))).width, greaterThanOrEqualTo((size.width - 100) / 2 - 0.5),
+                reason: 'the message keeps at least half the row beside it');
           } else {
-            expect(seeAll, findsNothing, reason: 'no keyboard to hide');
+            // On its side even the keyboard going would leave no room: no See all to promise it.
+            expect(seeAll, findsNothing, reason: kb > 0 ? 'the list would not fit with the keyboard down either' : 'no keyboard to hide');
             expect(find.textContaining('Turn your phone upright to see all $n messages'), findsOneWidget, reason: 'a phone on its side');
           }
         }
@@ -222,6 +234,73 @@ void main() {
       });
     }
   }
+
+  group('See all is whole beside the message at any text size: its words, "All N", or its icon alone (LF36)', () {
+    for (final width in const [320.0, 360.0, 411.0]) {
+      for (final scale in const [1.0, 1.5, 2.0]) {
+        for (final n in const [3, 20]) {
+          testWidgets('${width.toInt()} dp at ${(scale * 100).toInt()}%, $n messages', (tester) async {
+            final semantics = tester.ensureSemantics();
+            await phone(tester, Size(width, 760), scale: scale, keyboard: 300);
+            c.read(_messages.notifier).set([for (var i = 1; i <= n; i++) msg('m$i')]);
+            await tester.pumpAndSettle();
+            expect(tester.takeException(), isNull);
+            expect(seeAll.hitTestable(), findsOneWidget);
+            expectWhole(tester, seeAll, '${width.toInt()} dp at $scale');
+            final said = tester.getSemantics(seeAll).getSemanticsData();
+            expect(said.label, 'Hide the keyboard to see all $n messages', reason: 'the whole sentence, whatever it shows');
+            expect(said.flagsCollection.isButton, isTrue);
+            final b = tester.getRect(seeAll);
+            expect(b.height, greaterThanOrEqualTo(48));
+            expect(b.width, greaterThanOrEqualTo(48));
+            expect(tester.getSize(banner).height, lessThanOrEqualTo(64.5), reason: 'one row');
+            final column = tester.getSize(find.byKey(const Key('supervisor-message-text'))).width;
+            expect(column, greaterThanOrEqualTo((width - 100) / 2 - 0.5), reason: 'the message keeps at least half the row');
+            final words = tester.widgetList<Text>(find.descendant(of: seeAll, matching: find.byType(Text))).map((t) => t.data).join();
+            // ignore: avoid_print
+            print('See all at ${width.toInt()} dp, ${(scale * 100).toInt()}%, $n: "${words.isEmpty ? '(icon)' : words}" '
+                '${b.width.toStringAsFixed(1)} dp wide, the message ${column.toStringAsFixed(1)} dp');
+            semantics.dispose();
+          });
+        }
+      }
+    }
+  });
+
+  testWidgets('on its side with the keyboard up: no See all that would open nothing; upright later, the list stays shut', (tester) async {
+    await phone(tester, const Size(800, 360), keyboard: 180);
+    c.read(_messages.notifier).set([msg('m1'), msg('m2'), msg('m3')]);
+    await tester.pumpAndSettle();
+    final line = find.text('Reshma Mohammad · 10:05 · Turn your phone upright to see all 3 messages');
+    expect(seeAll, findsNothing, reason: 'hiding the keyboard would not make room for the list');
+    expect(line, findsOneWidget, reason: 'the way to the room, with the keyboard up too');
+    expect(heights(tester).banner, lessThanOrEqualTo(64.5), reason: 'one row');
+    keyboard(tester, 0);
+    await tester.pumpAndSettle();
+    expect(line, findsOneWidget);
+    expect(list, findsNothing);
+    tester.view.physicalSize = const Size(360, 800) * 3;
+    await tester.pumpAndSettle();
+    expect(list, findsNothing, reason: 'nobody asked for it');
+    expect(find.text('Show 2 more messages'), findsOneWidget);
+  });
+
+  testWidgets('See all pressed, then turned on its side before the list could open: the wish goes, upright again it stays shut', (tester) async {
+    await phone(tester, const Size(360, 640), keyboard: 300);
+    c.read(_messages.notifier).set([msg('m1'), msg('m2'), msg('m3')]);
+    await tester.pumpAndSettle();
+    await tester.tap(seeAll);
+    await tester.pump();
+    tester.view.physicalSize = const Size(640, 360) * 3;
+    keyboard(tester, 0);
+    await tester.pumpAndSettle();
+    expect(list, findsNothing, reason: 'no room on its side');
+    expect(find.textContaining('Turn your phone upright to see all 3 messages'), findsOneWidget);
+    tester.view.physicalSize = const Size(360, 640) * 3;
+    await tester.pumpAndSettle();
+    expect(list, findsNothing, reason: 'the wish went with the room: it does not open later unasked');
+    expect(find.text('Show 2 more messages'), findsOneWidget);
+  });
 
   testWidgets('a short window standing up (split screen): how many more wait, not "turn your phone"', (tester) async {
     await phone(tester, const Size(400, 420));
