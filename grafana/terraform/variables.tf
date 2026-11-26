@@ -1,6 +1,6 @@
 variable "grafana_url" {
   type        = string
-  description = "Grafana Cloud stack URL, e.g. https://sapieonic.grafana.net. Falls back to the GRAFANA_URL env var when empty."
+  description = "Grafana Cloud stack URL, e.g. https://magickagency.grafana.net. Falls back to the GRAFANA_URL env var when empty."
   default     = ""
 }
 
@@ -13,8 +13,8 @@ variable "grafana_auth" {
 
 variable "stack_id" {
   type        = number
-  description = "Grafana Cloud stack ID (the N in the \"stacks-N\" namespace). 1508287 is sapieonic.grafana.net."
-  default     = 1508287
+  description = "Grafana Cloud stack ID (the N in the \"stacks-N\" namespace). 1923468 is magickagency.grafana.net."
+  default     = 1923468
 }
 
 variable "folder_uid" {
@@ -25,7 +25,7 @@ variable "folder_uid" {
 
 variable "folder_title" {
   type        = string
-  description = "Title of that folder. The stack's notification policy groups by grafana_folder, so this appears in alert notifications."
+  description = "Title of that folder. The notification policy (routing.tf) groups by grafana_folder, so this appears in alert notifications."
   default     = "Magick Agency Alerts"
 }
 
@@ -62,5 +62,22 @@ variable "alert_eval_interval_seconds" {
 variable "grafana_public_url" {
   type        = string
   description = "Browser URL of the stack, used to build dashboard links in alert annotations."
-  default     = "https://sapieonic.grafana.net"
+  default     = "https://magickagency.grafana.net"
+}
+
+variable "slack_webhook_url" {
+  type        = string
+  sensitive   = true
+  description = "Slack incoming-webhook URL every agency alert posts to (routing.tf). A secret: set TF_VAR_slack_webhook_url, never commit it. Every apply needs the same one: a different webhook moves every agency alert to its channel."
+
+  validation {
+    condition     = startswith(var.slack_webhook_url, "https://hooks.slack.com/services/")
+    error_message = "slack_webhook_url must be a Slack incoming-webhook URL (https://hooks.slack.com/services/...)."
+  }
+}
+
+variable "slack_contact_point_name" {
+  type        = string
+  description = "Name of the Slack contact point routing.tf creates."
+  default     = "Magick Agency Slack"
 }

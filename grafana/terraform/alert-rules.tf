@@ -60,7 +60,7 @@ locals {
         # is one indexed read of the dnc_entries table (DncRegistry.check), and
         # it answers `unavailable` only when that read throws — Postgres, not
         # Redis. A halted campaign places no calls and looks idle, not broken,
-        # which is why this pages. sum BY campaign_id so the instance names the
+        # which is why this is critical. sum BY campaign_id so the instance names the
         # campaign; window 5m under the 10m `for`.
         expr          = "sum by (service_name, campaign_id) (rate(agency_predial_gate_total{gate=\"dnc_unavailable\",${local.agency}}[5m]))"
         op            = "gt"
@@ -88,7 +88,7 @@ locals {
         # that placed no call. A sparse counter under rate(), not increase(): the condition is
         # sustained, so missing the first increment costs nothing. The `and` keeps only campaigns
         # whose in-use gauge exists and reads 0 (max BY campaign); a campaign that stops being
-        # withheld resolves. Warns (Slack), never pages: the account still dials up to its limit
+        # withheld resolves. Warns, never critical: the account still dials up to its limit
         # through the others.
         expr          = "sum by (service_name, campaign_id) (rate(agency_pacing_share_withheld_total{${local.agency}}[5m])) and on (service_name, campaign_id) (max by (service_name, campaign_id) (agency_campaign_slots_in_use{${local.agency}}) == 0)"
         op            = "gt"
@@ -104,7 +104,7 @@ locals {
     # ── Insights: the rollup job and the pacing history ──────────────────
     #
     # Both are reporting, not dialling: a stale or holed Insights page costs no call, so these
-    # warn (Slack) and never page. The rollup job (apps/server/src/agency/insights-rollup-job.ts)
+    # only warn. The rollup job (apps/server/src/agency/insights-rollup-job.ts)
     # runs in the main process only, one pass every AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS (15s),
     # batches of AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE (200), batching for at most half an interval.
     # Its gauges exist only once a pass has finished (no series before the job starts), and the
@@ -208,8 +208,8 @@ locals {
 
     # ── Reports: assembly, the renderer and its signed callback (docs/reports.md) ──
     #
-    # Reporting, not dialling: a late or failed report costs no call, so these warn (Slack) and
-    # never page. The pipeline runs in the main process only: the assembler builds a run's
+    # Reporting, not dialling: a late or failed report costs no call, so these only warn
+    # (never critical). The pipeline runs in the main process only: the assembler builds a run's
     # dataset, the renderer (the report-renderer Lambda behind SQS, or in process) writes the
     # files and calls back, and the reports tick (every AGENCY_REPORTS_TICK_INTERVAL_MS, 60s)
     # sets the pending gauges, re-sends a run with no callback after
@@ -564,7 +564,7 @@ locals {
     # ── Analysis: post-call transcription and analysis ───────────────────
     #
     # Analysis is reporting, not dialling: a refused vendor costs no call, so this warns
-    # (Slack) and never pages. The worker's breaker (apps/server/src/core/
+    # (never critical). The worker's breaker (apps/server/src/core/
     # vendor-rate-limit-breaker.ts) pauses claims after a vendor refusal the AI layer reads as
     # a rate limit (any vendor's 429; Gemini's RESOURCE_EXHAUSTED at any status, so a 402
     # "prepayment credits are depleted" too) for 30 s, doubling to a 15-minute cap, and probes
@@ -603,7 +603,7 @@ locals {
         name = "A media or analysis worker process crashed"
         # Unexpected exits only (`expected="false"`): a clean exit 0 after the primary asked
         # for it is not a crash; a worker that dies of a signal or exits non-zero during the
-        # primary's own shutdown is, and is reaped like one. It warns (Slack), never pages: a
+        # primary's own shutdown is, and is reaped like one. It warns, never critical: a
         # stop was under way anyway, but the worker lost its graceful drain. The supervisor
         # records the series at zero when it starts (primeChildExits), so increase() sees the
         # first crash; the new-series guard (header) covers a crash before that zero's first

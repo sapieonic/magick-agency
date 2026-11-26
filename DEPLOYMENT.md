@@ -707,7 +707,7 @@ first credential gets inbound enabled:
   IB8). With media workers on, calls are still answered, but nobody is ever connected and every
   caller to an open route is told "we'll call you back". The server warns at boot, the super-admin
   credential page says "Calls can't be put through to agents", and `agy-inbound-connect-unavailable`
-  pages. Keep it at 0 for as long as any credential has inbound enabled.
+  fires as a critical. Keep it at 0 for as long as any credential has inbound enabled.
 - **Host the fallback answer XML off this deployment** and set
   `PLIVO_INBOUND_FALLBACK_ANSWER_URL` to it. Plivo fetches it (with GET) when our answer URL fails
   or this deployment is down; without it the fallback is our own route, which is down with us, so

@@ -1,11 +1,12 @@
 # Copy to terraform.tfvars and fill in. Do NOT commit terraform.tfvars.
 #
 # Auth is usually supplied via env vars instead of here:
-#   export GRAFANA_URL="https://sapieonic.grafana.net"
+#   export GRAFANA_URL="https://magickagency.grafana.net"
 #   export GRAFANA_AUTH="glsa_xxx_service_account_token"
+#   export TF_VAR_slack_webhook_url="https://hooks.slack.com/services/..."   # required: where every alert posts
 
 # Optional overrides (defaults shown).
-# stack_id                    = 1508287
+# stack_id                    = 1923468
 # folder_uid                  = "magick-agency-alerts"
 # folder_title                = "Magick Agency Alerts"
 # allow_ui_updates            = false   # true lets people save the dashboard from the UI (reverted on next apply)
@@ -13,4 +14,5 @@
 # prometheus_datasource_uid   = "grafanacloud-prom"
 # loki_datasource_uid         = "grafanacloud-logs"
 # alert_eval_interval_seconds = 60
-# grafana_public_url          = "https://sapieonic.grafana.net"
+# grafana_public_url          = "https://magickagency.grafana.net"
+# slack_contact_point_name    = "Magick Agency Slack"

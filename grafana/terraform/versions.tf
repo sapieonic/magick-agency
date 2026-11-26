@@ -23,7 +23,7 @@ terraform {
 }
 
 # Auth via env vars so no secrets land in version control:
-#   export GRAFANA_URL="https://sapieonic.grafana.net"
+#   export GRAFANA_URL="https://magickagency.grafana.net"
 #   export GRAFANA_AUTH="<service-account-token: dashboards + alerting writer>"
 provider "grafana" {
   # An empty string would override the provider's env-var fallback.
