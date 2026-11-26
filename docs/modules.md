@@ -1551,9 +1551,9 @@ the API suites), `unit/load/station-load-harness.ts`.
 
 ### `grafana/`
 
-Agency's alert rules and dashboard as a Terraform root module with its own state, under its own key in the S3 state bucket that `aws/state` makes (decision B6); routing comes from the stack's shared notification policy. See `grafana/README.md`.
+Agency's alert rules and dashboard as a Terraform root module with its own state, under its own key in the S3 state bucket that `aws/state` makes (decision B6); it also owns the stack's routing, a Slack contact point and the notification policy. See `grafana/README.md`.
 
-Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-declarations.mjs`, `terraform/alert-rules.tf`, `terraform/alerting.tf`, `terraform/dashboard.tf`, `terraform/terraform.tfvars.example`, `terraform/variables.tf`, `terraform/versions.tf`
+Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-declarations.mjs`, `terraform/alert-rules.tf`, `terraform/alerting.tf`, `terraform/dashboard.tf`, `terraform/routing.tf`, `terraform/terraform.tfvars.example`, `terraform/variables.tf`, `terraform/versions.tf`
 
 | Test file | Cases |
 |---|---|

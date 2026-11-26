@@ -19,8 +19,10 @@
  *     and the new-series guard beside every firing increase() (a series' first sample
  *     is invisible to increase(), header of alert-rules.tf);
  *  6. every rule selects agency's deployments and nothing else;
- *  7. the routing labels the stack's notification policy keys on are present
- *     and spelled as it expects (this module manages no routing of its own).
+ *  7. the routing labels are present and spelled as the notification policy
+ *     (routing.tf) expects, and the routing itself: one policy, grouped by
+ *     grafana_folder, alertname and deployment, to a Slack webhook that comes
+ *     from a sensitive variable, never a literal.
  *
  *   pnpm test:grafana
  */
@@ -59,8 +61,8 @@ const FORBIDDEN_METRICS = {
 const PER_PROCESS_LABELS = new Set(['instance', 'service_instance_id']);
 
 /**
- * The `deployment` label template the stack's notification policy expects (the
- * same text every service on the stack uses). The policy routes on the value
+ * The `deployment` label template the notification policy groups on (the same
+ * text the stack's other services used). The policy routes on the value
  * this renders, so a drift here silently re-routes agency's pages: change it
  * only together with the policy.
  */
@@ -69,8 +71,11 @@ const ROUTED_DEPLOYMENT_LABEL = '{{ if match "-Staging$" $labels.service_name }}
 /** The labels a rule may add of its own, and their allowed values (the policy's mute route). */
 const RULE_LABELS = { nightly_window: ['mute'] };
 
-/** Routing resources, managed outside this repo (one per stack, or routed to by name). */
+/** Routing resources: declared in routing.tf and nowhere else. */
+const ROUTING_FILE = 'routing.tf';
 const ROUTING_RESOURCES = ['grafana_notification_policy', 'grafana_contact_point', 'grafana_mute_timing', 'grafana_message_template'];
+/** What the policy, and its critical route, group by. */
+const POLICY_GROUP_BY = '["grafana_folder", "alertname", "deployment"]';
 
 /** Names agency's selector must, and must not, select. */
 const AGENCY_NAMES = ['magick-agency', 'magick-agency-Staging', 'magick-agency-Dedicated'];
@@ -441,9 +446,9 @@ describe('agency alert rules', () => {
     assert.deepEqual([...new Set(unbalanced)], [], 'unbalanced expressions');
   });
 
-  // The stack's one notification policy is managed outside this repo; these
-  // alerts reach Slack and PagerDuty only by carrying the labels it routes on.
-  test('every rule carries the policy\'s routing labels, and this module manages no routing', () => {
+  // The stack's one notification policy is in routing.tf; the alerts reach
+  // Slack by carrying the labels it groups and matches on.
+  test('every rule carries the policy\'s routing labels, and routing.tf routes them to Slack', () => {
     const alerting = readFileSync(tf('alerting.tf'), 'utf8');
     const problems = [];
     const labelsBlock = /\n\s+labels = merge\(\{([^}]*)\}, try\(rule\.value\.labels, \{\}\)\)/.exec(alerting)?.[1];
@@ -464,11 +469,26 @@ describe('agency alert rules', () => {
       }
     }
     for (const file of readdirSync(tf('')).filter((f) => f.endsWith('.tf'))) {
-      for (const res of ROUTING_RESOURCES) {
-        if (new RegExp(`resource "${res}"`).test(readFileSync(tf(file), 'utf8'))) problems.push(`${file}: ${res} is routing, managed outside this repo`);
+      const text = readFileSync(tf(file), 'utf8');
+      if (file !== ROUTING_FILE) {
+        for (const res of ROUTING_RESOURCES) {
+          if (new RegExp(`resource "${res}"`).test(text)) problems.push(`${file}: ${res} belongs in ${ROUTING_FILE}`);
+        }
       }
+      if (/hooks\.slack\.com\/services\/[A-Za-z0-9]/.test(text)) problems.push(`${file}: a literal Slack webhook URL — it is a secret, pass it as TF_VAR_slack_webhook_url`);
     }
-    assert.deepEqual(problems, [], `routing contract with the stack's notification policy broken:\n  ${problems.join('\n  ')}`);
+    const routing = readFileSync(tf(ROUTING_FILE), 'utf8');
+    const policies = routing.match(/resource "grafana_notification_policy"/g) ?? [];
+    if (policies.length !== 1) problems.push(`${ROUTING_FILE}: ${policies.length} grafana_notification_policy resources — the policy is a stack singleton, declare exactly one`);
+    const groupBys = [...routing.matchAll(/\n\s+group_by\s+= (\[[^\]]*\])/g)].map((m) => m[1]);
+    if (groupBys.length !== 2 || groupBys.some((g) => g !== POLICY_GROUP_BY)) {
+      problems.push(`${ROUTING_FILE}: the policy and its critical route must group by ${POLICY_GROUP_BY} (found ${groupBys.join(', ') || 'none'})`);
+    }
+    if (!/matcher \{\s*label = "severity"\s*match = "="\s*value = "critical"\s*\}/.test(routing)) problems.push(`${ROUTING_FILE}: no nested policy matching severity = critical`);
+    if (!/slack \{\s*url = var\.slack_webhook_url\s*\}/.test(routing)) problems.push(`${ROUTING_FILE}: the Slack contact point must post to var.slack_webhook_url`);
+    const webhookVar = /variable "slack_webhook_url" \{([^}]*)\}/.exec(readFileSync(tf('variables.tf'), 'utf8'))?.[1];
+    if (!webhookVar || !/\n\s+sensitive\s+= true\s*\n/.test(webhookVar)) problems.push('variables.tf: slack_webhook_url must be declared sensitive');
+    assert.deepEqual(problems, [], `routing contract broken:\n  ${problems.join('\n  ')}`);
   });
 
   // The analysis worker logs an ERROR from its PERSISTENT_RATE_LIMIT_PAUSES-th consecutive pause

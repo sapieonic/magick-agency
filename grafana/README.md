@@ -1,15 +1,16 @@
 # Grafana: agency's alert rules and dashboard
 
 Agency's alerting and dashboard, as a Terraform root module with its own state.
-It is applied on its own and shares no resources with any other Terraform that
-manages the same Grafana Cloud stack. The stack's routing is managed outside this
-repo; see [Routing](#routing-managed-outside-this-repo).
+It is applied on its own and shares no resources with any other Terraform. It
+also owns the stack's routing: every alert posts to one Slack channel; see
+[Routing](#routing).
 
 | Path | What it is |
 |---|---|
 | [`terraform/`](terraform/) | The root module: the folder **Magick Agency Alerts** (uid `magick-agency-alerts`), the alert rules, the dashboard |
 | [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 42 `agy-*` rules, as data (the newest, the `floor` group's `agy-station-drops-burst`, watches many working agents of one tenant losing their station at once; `agy-help-unanswered` before it watches the Need help requests left to expire unanswered; the `analysis` group's `agy-analysis-vendor-refusing` before it watches the post-call analysis worker's vendor rate limits; the `listen` group before it watches live call listening: the event loop's delay while listens are open, listener sockets closed for not reading, listens refused at the per-process limit and the listener tap's failures; the `inbound` group before it watches inbound calls on Plivo numbers: the answer webhook, failed and unanswered calls, the queue, connect availability, each tenant's Application and the rings to away phones; the `reports` group before it watches report runs, their pending age and the renderer's signed callback; the `carrier-credentials` group before it watches the tenant carrier credential keyring and sweep; `agy-pacing-share-starved` before it watches how the pacing round splits an account's slots between its running campaigns; the `insights` group before it watches the insights rollup job and the pacing history; runbooks in `docs/operations.md`, "Alert runbooks") |
 | [`terraform/alerting.tf`](terraform/alerting.tf) | The folder, `local.agency` (the selector), the routing labels, and the one `grafana_rule_group` resource |
+| [`terraform/routing.tf`](terraform/routing.tf) | The Slack contact point and the stack's notification policy |
 | [`terraform/dashboard.tf`](terraform/dashboard.tf) | The dashboard resource (app-platform `grafana_apps_dashboard_dashboard_v1beta1`) |
 | [`dashboards/magick-agency-overview.json`](dashboards/magick-agency-overview.json) | The dashboard (uid `magick-agency-overview`, classic model) |
 | [`scripts/`](scripts/) | The validators, `pnpm test:grafana` |
@@ -21,6 +22,7 @@ cd grafana/terraform
 export AWS_PROFILE=<profile>                     # or any AWS credentials: the state is in S3
 export GRAFANA_URL="https://magickagency.grafana.net"
 export GRAFANA_AUTH="<service-account-token>"   # dashboards + alerting writer
+export TF_VAR_slack_webhook_url="<slack-incoming-webhook-url>"   # where every alert posts
 terraform init && terraform plan && terraform apply
 ```
 
@@ -66,31 +68,44 @@ selects is routed as production.
 The dashboard's `service_name` variable lists only these names: its All value is
 the same regex, and the validators keep the two equal.
 
-## Routing (managed outside this repo)
+## Routing
 
-**This module manages no contact point, notification policy, mute timing or
-message template, and must not.** The stack has one notification policy (a
-Grafana singleton), managed outside this repo together with the AlertInSlack and
-AlertInPagerDuty contact points and the nightly mute timings. Applying a policy
-from here would replace the stack's whole routing tree.
+**This module owns the stack's routing** (`terraform/routing.tf`, decision B6
+amended 2026-11-26). magickagency.grafana.net carries only agency, so the module
+manages the Slack contact point **Magick Agency Slack** and the stack's
+notification policy. The policy is a Grafana singleton: applying replaces the
+stack's whole routing tree, so nothing else may manage routing on this stack.
 
-Agency's alerts reach Slack and PagerDuty only because they carry the labels
-that policy routes on. That makes the labels a contract with the stack's
-routing. If its routing labels change, this module must follow:
+Every alert, critical and warning, from every deployment, posts to one Slack
+channel through an incoming webhook. The webhook URL is a secret and is passed
+in, never committed:
 
-| Label | Value | Used by the notification policy for |
+```bash
+export TF_VAR_slack_webhook_url="https://hooks.slack.com/services/..."
+```
+
+To move the alerts to another channel, make a new incoming webhook for it in
+Slack, export its URL and apply.
+
+The policy groups by `grafana_folder`, `alertname` and `deployment`, waits 30s
+before the first message of a group and 5m between updates. Criticals are re-sent
+hourly while they fire, warnings every 4 hours. The labels it reads:
+
+| Label | Value | Used for |
 |---|---|---|
-| `severity` | `critical` / `warning` | `critical` pages (production, dedicated) and is reminded hourly; warnings go to Slack |
-| `deployment` | templated from `service_name`: `-Staging` → `staging`, `-Dedicated` → `dedicated`, else `production` | staging goes to Slack only; production and dedicated criticals page. The template text is pinned by the routing test |
-| `nightly_window` | `mute` (only on `agy-service-not-reporting` and `agy-error-log-volume`) | the staging and dedicated nightly mute timings |
-| `service` | `agency` | the PagerDuty incident's component |
-| `component` | the rule group | the PagerDuty incident's class |
+| `severity` | `critical` / `warning` | criticals have their own route, re-sent hourly |
+| `deployment` | templated from `service_name`: `-Staging` → `staging`, `-Dedicated` → `dedicated`, else `production` | grouping, so one rule's staging and production firings are separate messages. The template text is pinned by the routing test |
+| `nightly_window` | `mute` (only on `agy-service-not-reporting` and `agy-error-log-volume`) | marks firings that are the staging and dedicated nightly shutdown. No mute timing uses it yet, so those post to Slack too |
+| `service` | `agency` | shown in the message |
+| `component` | the rule group | shown in the message |
 
-The policy groups by `grafana_folder`, `alertname` and `deployment`. The routing
-test in `scripts/validate-alerts.test.mjs` pins all of this:
+The routing test in `scripts/validate-alerts.test.mjs` pins all of this:
 - the label set and the `deployment` template text;
 - that rules add no label but `nightly_window = "mute"`;
-- that no `.tf` file here declares a routing resource.
+- that routing resources are declared only in `routing.tf`, with one policy,
+  grouped as above, and a nested route on `severity = critical`;
+- that the Slack URL is `var.slack_webhook_url`, declared sensitive, and no
+  `.tf` file holds a literal webhook.
 
 ## Rules
 

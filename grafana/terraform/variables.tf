@@ -25,7 +25,7 @@ variable "folder_uid" {
 
 variable "folder_title" {
   type        = string
-  description = "Title of that folder. The stack's notification policy groups by grafana_folder, so this appears in alert notifications."
+  description = "Title of that folder. The notification policy (routing.tf) groups by grafana_folder, so this appears in alert notifications."
   default     = "Magick Agency Alerts"
 }
 
@@ -63,4 +63,16 @@ variable "grafana_public_url" {
   type        = string
   description = "Browser URL of the stack, used to build dashboard links in alert annotations."
   default     = "https://magickagency.grafana.net"
+}
+
+variable "slack_webhook_url" {
+  type        = string
+  sensitive   = true
+  description = "Slack incoming-webhook URL every agency alert posts to (routing.tf). A secret: set TF_VAR_slack_webhook_url, never commit it."
+}
+
+variable "slack_contact_point_name" {
+  type        = string
+  description = "Name of the Slack contact point routing.tf creates."
+  default     = "Magick Agency Slack"
 }
