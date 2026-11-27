@@ -849,7 +849,7 @@ Feature flags → `agency_team_performance_enabled` → On, at tenant scope or f
 turning it on for a busy tenant, read the measured cost (`team-performance.md` §4): All campaigns
 over a whole month sits at the budget there, an open decision with Manas.
 
-**What to watch** (no dashboard panels yet; query them in Explore):
+**What to watch** (the *Team performance* panels of the overview dashboard):
 
 - `agency_team_performance_read_seconds{result}`: reads that ran against the database (`ok`,
   `timed_out`, `aborted`, `failed`); cached and joined answers are not timed. A p95 near 8 s means
