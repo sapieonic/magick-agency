@@ -185,7 +185,9 @@ parallel worker), and the whole read under its 8 s budget, in Asia/Kolkata:
 | 31 days | one campaign | 2.8–3.1 s | 0.96 s | 2.83 s | 0.05 s, 0.06 s | 0.02 s, 0.02 s | 0.12 s |
 | 31 days | All campaigns | **7.7 s, or `503 team_timed_out` at 7.8 s** | 3.67 s | **5.68 s** | 0.05 s, 0.12 s | 0.01 s, 0.02 s | 0.23 s |
 
-(The scope's campaigns: under 0.02 s everywhere. "1 day" is a full busy day, as Today is at its end;
+(The scope's campaigns: under 0.02 s everywhere. The campaigns with promises in the window, added
+after the measurement by the review (TP8), was not timed here: it reads the promises statement's
+0050 indexes for the account (its plan held by the integration test), which take 0.02 s or less. "1 day" is a full busy day, as Today is at its end;
 its chart reads 14 days of rollup and promises.) The read is the roster's two statements: the whole
 cohort's occupancy (every state change of the window, its sort spilling to disk) and, across the
 account, the attempt aggregate without a campaign to narrow `idx_agency_attempts_billing` on. Every

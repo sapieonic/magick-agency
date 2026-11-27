@@ -49,7 +49,7 @@ import {
 } from '../load/load-harness.js';
 import { bulkInsert } from '../agency/insights-rollup-world.js';
 import { agencyInsightsRollupRepository } from '../../../src/db/repositories/agency.repository.js';
-import { teamPromisesSql } from '../../../src/db/repositories/agency/team-performance-reads.js';
+import { teamPromiseCampaignsSql, teamPromisesSql } from '../../../src/db/repositories/agency/team-performance-reads.js';
 import { localDateOf, localInstant } from '../../../src/agency/reports/schedule.js';
 
 let loaded: LoadApp;
@@ -703,6 +703,13 @@ describe('the plans', () => {
       for (const index of ['idx_agency_attempts_promise_written', 'idx_agency_manual_calls_promise_written', 'idx_agency_inbound_calls_promise_written']) {
         expect(p, `${scope.kind}: ${index}`).toContain(index);
       }
+    }
+  });
+
+  it('the campaigns with promises in the window (the main outcome\'s, TP8) read the same indexes', async () => {
+    const p = await plan(teamPromiseCampaignsSql({ kind: 'account' }), window().slice(0, 4));
+    for (const index of ['idx_agency_attempts_promise_written', 'idx_agency_manual_calls_promise_written', 'idx_agency_inbound_calls_promise_written']) {
+      expect(p, index).toContain(index);
     }
   });
 });
