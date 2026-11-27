@@ -15,7 +15,8 @@
  * | Event                    | What changed                                | Published by |
  * |--------------------------|---------------------------------------------|--------------|
  * | `campaign_changed`       | the campaign row (status, caller IDs, window) | `AgencyCampaignRepository` writes |
- * | `account_limit_changed`  | the account's concurrency allocation        | the `ConcurrencyControl` seam's limit invalidations (`withPacingInvalidation`) |
+ * | `account_limit_changed`  | the account's concurrency allocation (its total and its carrier shares, PL14) | the `ConcurrencyControl` seam's limit invalidations (`withPacingInvalidation`) |
+ * | `credential_limit_changed` | a tenant carrier account's own cap (CR13)  | the seam's `invalidateCredentialLimit` (`withPacingInvalidation`) |
  * | `account_capacity_freed` | a live call on the account ended            | the attempt and manual-call end writes |
  * | `agent_available`        | an agent entered `available`, or attached a station | `AgentStateMachine` (via the runtime), the station attach |
  * | `contacts_changed`       | contacts arrived on the campaign            | the CSV ingest's roster chunks |
@@ -54,6 +55,8 @@ const log = createChildLogger({ component: 'agency-pacing-bus' });
 export type PacingInvalidationEvent =
   | { type: 'campaign_changed'; campaignId: string }
   | { type: 'account_limit_changed'; tenantId: string; accountId: string }
+  /** A tenant carrier account's cap changed (CR13): its cached cap is stale, its campaigns may dial more. */
+  | { type: 'credential_limit_changed'; credentialId: string }
   | { type: 'account_capacity_freed'; tenantId: string; accountId: string }
   /** `campaignId` null when the publisher does not know it; consumers then resolve it or widen. */
   | { type: 'agent_available'; sessionId: string; campaignId: string | null }
@@ -157,6 +160,8 @@ export function parsePacingInvalidationEvent(raw: unknown): PacingInvalidationEv
       return isId(e['tenantId']) && isId(e['accountId'])
         ? { type: e['type'], tenantId: e['tenantId'], accountId: e['accountId'] }
         : null;
+    case 'credential_limit_changed':
+      return isId(e['credentialId']) ? { type: 'credential_limit_changed', credentialId: e['credentialId'] } : null;
     case 'agent_available': {
       const campaignId = e['campaignId'];
       if (!isId(e['sessionId'])) return null;

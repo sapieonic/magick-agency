@@ -146,6 +146,30 @@ describe('shared infrastructure repositories against the real baseline', () => {
       ]);
     });
 
+    it('insertBatch on a caller`s client joins its transaction: rolled back with it, committed with it', async () => {
+      const row = (reason: string) => ({
+        tenant_id: TENANT, actor_type: 'system' as const, action: 'agency_campaign.config_changed',
+        resource_type: 'agency_campaign', resource_id: CAMPAIGN, campaign_id: CAMPAIGN, details: { reason },
+      });
+      const reasons = async () => (await getTestPool().query<{ reason: string }>(
+        `SELECT details->>'reason' AS reason FROM platform_audit_log WHERE tenant_id = $1 ORDER BY 1`, [TENANT])).rows.map((r) => r.reason);
+      const client = await getTestPool().connect();
+      try {
+        await client.query('BEGIN');
+        await platformAuditRepository.insertBatch([row('rolled back')], client);
+        await client.query('ROLLBACK');
+        expect(await reasons()).toEqual([]);
+        await client.query('BEGIN');
+        await platformAuditRepository.insertBatch([row('committed')], client);
+        // Not visible outside the transaction until it commits: the row went over the client.
+        expect(await reasons()).toEqual([]);
+        await client.query('COMMIT');
+      } finally {
+        client.release();
+      }
+      expect(await reasons()).toEqual(['committed']);
+    });
+
     it('find filters, counts, pages by offset and walks a keyset without loss', async () => {
       const events = Array.from({ length: 5 }, (_, i) => ({
         tenant_id: TENANT, account_id: ACCOUNT, actor_type: 'human' as const, user_id: USER,

@@ -4,7 +4,11 @@
 // provider, pinned credential and tenant, so a BYOC recording is fetched on the
 // tenant's credential and on nothing else.
 //
-// Carriers are entries in `RECORDING_ACCESS`, not branches at the call sites (B18).
+// Carriers are entries in `RECORDING_ACCESS`, not branches at the call sites (B18): one
+// entry per account mode the carrier supports (docs/carriers.md §2.3). The wrapper decides
+// the mode from the call row (a null credential is the service's own account, CR1), refuses a
+// mode the carrier has no entry for, and opens the pinned credential before a tenant entry
+// runs, so no tenant entry can skip that check.
 //
 // Kept free of static config and database imports (`credential-service.ts` loads
 // neither): the unit tests build a resolver from fakes, and the process-wide resolver
@@ -50,9 +54,11 @@ export type RecordingAccessResolver = (call: RecordingCallRef) => Promise<Record
 /**
  * Why a recording cannot be fetched:
  *  - `unknown_provider`: no entry in `RECORDING_ACCESS` for the call's provider;
- *  - `credential_required`: a BYOC call with no pinned credential;
- *  - `credential_not_expected`: a call on the service's own account pinned to a tenant
- *    credential (an invariant breach; refused rather than guessed at);
+ *  - `credential_required`: a call with no pinned credential on a carrier with no service
+ *    account (a BYOC call);
+ *  - `credential_not_expected`: a call pinned to a tenant credential on a carrier with no
+ *    tenant accounts, i.e. one that can only be on the service's own account (an invariant
+ *    breach; refused rather than guessed at);
  *  - `credential_unavailable`: the credential cannot serve recordings (revoked,
  *    shredded, missing, no keyring, unopenable: `credentialKind` says which);
  *  - `credential_mismatch`: the credential belongs to another tenant or provider.
@@ -125,12 +131,19 @@ export interface RecordingAccessDeps {
  */
 export const PLIVO_RECORDING_HOSTS: readonly string[] = ['media.plivo.com'];
 
-type AccessEntry = (call: RecordingCallRef, deps: RecordingAccessDeps) => Promise<RecordingAccess>;
+/** A service-account entry: the call carries no credential. */
+type ServiceAccessEntry = (call: RecordingCallRef, deps: RecordingAccessDeps) => Promise<RecordingAccess>;
+/** A tenant-account entry: handed the call's pinned credential, already opened for `recording` and checked. */
+type TenantAccessEntry = (call: RecordingCallRef, credential: ResolvedCredential, deps: RecordingAccessDeps) => Promise<RecordingAccess>;
+
+/** A carrier's recording access, one entry per account mode it supports. */
+interface CarrierRecordingAccess {
+  service?: ServiceAccessEntry;
+  tenant?: TenantAccessEntry;
+}
 
 /** Open the call's pinned credential for `recording` and check it is this call's. */
-async function pinnedCredential(call: RecordingCallRef, deps: RecordingAccessDeps): Promise<ResolvedCredential> {
-  const id = call.telephony_credential_id;
-  if (!id) throw new RecordingAccessRefusedError('credential_required', call.provider, null);
+async function pinnedCredential(call: RecordingCallRef, id: string, deps: RecordingAccessDeps): Promise<ResolvedCredential> {
   let resolved: ResolvedCredential;
   try {
     resolved = await (await deps.credentials()).resolve(id, 'recording');
@@ -146,30 +159,35 @@ async function pinnedCredential(call: RecordingCallRef, deps: RecordingAccessDep
   return resolved;
 }
 
-const RECORDING_ACCESS: ReadonlyMap<string, AccessEntry> = new Map<string, AccessEntry>([
-  // The service's own account: public carrier-hosted MP3s, nothing attached, the
-  // configured allow-list (exact-or-subdomain, as before).
-  ['voicelink', async (call, deps) => {
-    if (call.telephony_credential_id) {
-      throw new RecordingAccessRefusedError('credential_not_expected', call.provider, call.telephony_credential_id);
-    }
-    return { allowedHosts: deps.voicelinkHosts, headers: {}, exactHosts: false };
+const RECORDING_ACCESS: ReadonlyMap<string, CarrierRecordingAccess> = new Map<string, CarrierRecordingAccess>([
+  ['voicelink', {
+    // The service's own account: public carrier-hosted MP3s, nothing attached, the
+    // configured allow-list (exact-or-subdomain, as before).
+    service: async (_call, deps) => ({ allowedHosts: deps.voicelinkHosts, headers: {}, exactHosts: false }),
+    // A tenant's own account (CR12): the same configured hosts and nothing attached, since
+    // VoiceLink serves recordings unauthenticated. The wrapper has already opened the pinned
+    // credential for `recording`, so revoking it ends access here as on every carrier (B21);
+    // the credential itself is never sent. Playback does not fetch with this: the proxy checks
+    // the URL against these hosts and redirects the viewer (`recordingRedirectsToCarrier`); the
+    // analysis worker does fetch, as for the service's account.
+    tenant: async (_call, _credential, deps) => ({ allowedHosts: deps.voicelinkHosts, headers: {}, exactHosts: false }),
   }],
-  // A tenant's own Plivo account: HTTP Basic auth_id:auth_token, to Plivo's media hosts
-  // only (`media.plivo.com` and its regional subdomains; never api.plivo.com).
-  ['plivo', async (call, deps) => {
-    const cred = await pinnedCredential(call, deps);
-    const token = cred.secret.reveal()['auth_token'];
-    if (!cred.accountRef || !token) {
-      throw new RecordingAccessRefusedError('credential_unavailable', call.provider, cred.id, 'no_current_secret');
-    }
-    const basic = Buffer.from(`${cred.accountRef}:${token}`).toString('base64');
-    return {
-      allowedHosts: PLIVO_RECORDING_HOSTS,
-      headers: { Authorization: `Basic ${basic}` },
-      exactHosts: false,
-      ...(deps.plivoRedirectHosts?.length ? { redirectHosts: deps.plivoRedirectHosts } : {}),
-    };
+  ['plivo', {
+    // A tenant's own Plivo account: HTTP Basic auth_id:auth_token, to Plivo's media hosts
+    // only (`media.plivo.com` and its regional subdomains; never api.plivo.com).
+    tenant: async (call, cred, deps) => {
+      const token = cred.secret.reveal()['auth_token'];
+      if (!cred.accountRef || !token) {
+        throw new RecordingAccessRefusedError('credential_unavailable', call.provider, cred.id, 'no_current_secret');
+      }
+      const basic = Buffer.from(`${cred.accountRef}:${token}`).toString('base64');
+      return {
+        allowedHosts: PLIVO_RECORDING_HOSTS,
+        headers: { Authorization: `Basic ${basic}` },
+        exactHosts: false,
+        ...(deps.plivoRedirectHosts?.length ? { redirectHosts: deps.plivoRedirectHosts } : {}),
+      };
+    },
   }],
 ]);
 
@@ -178,11 +196,26 @@ export function recordingAccessProviders(): string[] {
   return [...RECORDING_ACCESS.keys()];
 }
 
+/** The account modes a provider has a recording entry for (the conformance test reads it). */
+export function recordingAccessModes(provider: string): { service: boolean; tenant: boolean } {
+  const access = RECORDING_ACCESS.get(provider);
+  return { service: access?.service !== undefined, tenant: access?.tenant !== undefined };
+}
+
 export function createRecordingAccessResolver(deps: RecordingAccessDeps): RecordingAccessResolver {
   return async (call) => {
-    const entry = RECORDING_ACCESS.get(call.provider);
-    if (!entry) throw new RecordingAccessRefusedError('unknown_provider', call.provider, call.telephony_credential_id);
-    return entry(call, deps);
+    const access = RECORDING_ACCESS.get(call.provider);
+    if (!access) throw new RecordingAccessRefusedError('unknown_provider', call.provider, call.telephony_credential_id);
+    const credentialId = call.telephony_credential_id;
+    if (!credentialId) {
+      // The service's own account: refused on a carrier that has none (no fallback, B20).
+      if (!access.service) throw new RecordingAccessRefusedError('credential_required', call.provider, null);
+      return access.service(call, deps);
+    }
+    // Pinned to a credential on a carrier with no tenant accounts: an invariant breach,
+    // refused rather than guessed at.
+    if (!access.tenant) throw new RecordingAccessRefusedError('credential_not_expected', call.provider, credentialId);
+    return access.tenant(call, await pinnedCredential(call, credentialId, deps), deps);
   };
 }
 

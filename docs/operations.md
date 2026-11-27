@@ -181,7 +181,7 @@ production.
 | `TELEPHONY_ENABLED_PROVIDERS=voicelink` + `VOICELINK_BASE_URL`, `_USERNAME`, `_PASSWORD`, `_WEBHOOK_BASE_URL` | Real calls | Required whenever VoiceLink is enabled **or** `NODE_ENV=production`. Caller IDs are per campaign (`caller_ids`), not env. `VOICELINK_DEFAULT_COUNTRY_CODE` default `91` |
 | `TELEPHONY_CREDENTIAL_KEYS` + `TELEPHONY_CREDENTIAL_ACTIVE_KEY` | Tenant carrier credentials (BYOC, B19) | Master keyring that seals the credentials super-admins add (`v1:<base64 32 bytes>,…`). Unset, or no entries after trim (blank, spaces or commas only) = adding one is refused and BYOC calls fail closed. Rotate by adding a new id and making it active; keep old ids listed while secrets are sealed under them (boot logs an ERROR naming a missing one, and `telephony_credential_missing_key_ids` pages through `agy-credential-keyring-missing-keys`). Back it up separately from the database: losing it makes every stored credential unopenable |
 | `PLIVO_WEBHOOK_BASE_URL` (+ the keyring above) | Calls on tenants' own Plivo accounts (B18) | This server's public https origin plus `/api/v1/webhooks/plivo`: Plivo fetches the answer XML and posts status and recording callbacks under it, and opens the media socket on its host. Env only, never tenant data. Unset: every Plivo dial is refused before anything is sent. No Plivo account is configured in env; super-admins add each tenant's as a credential ("Enabling Plivo for a tenant") |
-| `S3_AUDIO_BUCKET` + `AWS_REGION` (default `ap-south-1`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Abandon clips, CSV uploads | Unset: every upload fails ("S3 client not initialized"). Bucket and IAM user per environment: `aws/README.md` |
+| `S3_AUDIO_BUCKET` + `AWS_REGION` (default `ap-south-1`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Abandon clips, customer file uploads (CSV and Excel) | Unset: every upload fails ("S3 client not initialized"). Bucket and IAM user per environment: `aws/README.md` |
 | `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, or Azure's) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; 8 analysis slots (`DIALER_ANALYSIS_CONCURRENCY`; sizing below), a 512 MiB recording memory budget, a sweep every 60 s. `POST_CALL_ANALYSIS_PROVIDER`: `openai_compatible` (default; `openai` also accepted; any Chat Completions endpoint via `POST_CALL_ANALYSIS_BASE_URL`, `_HEADERS`, `_STRUCTURED_OUTPUT`), `azure_openai` or `gemini`; model default `gpt-4o-mini`; `POST_CALL_ANALYSIS_TEMPERATURE` default 0.3, `none` sends none. `POST_CALL_ANALYSIS_INPUT`: `transcript` (default) or `audio` (the recording is sent with the transcript; `gemini` only, refused at boot otherwise; timeout default 180 s instead of 30 s). Per tenant it also needs the `agency_call_analysis` flag (default off; `FF_AGENCY_CALL_ANALYSIS` sets the default). Every key: `apps/server/.env.example` |
 | `RECORDING_URL_SIGNING_SECRET` (16+ chars) | Stable signed playback URLs | Unset: a random per-process key, so signed URLs break on restart |
 | `POSTHOG_ENABLED=true` + `POSTHOG_API_KEY` | Product analytics | Host default `https://us.i.posthog.com` |
@@ -359,8 +359,9 @@ One process saturates at 200 calls, and at 500 it cannot bridge more than about 
 - More processes than cores is allowed and logged once at boot (cores, media, analysis,
   primary); they then share cores, and a worker waiting for a core delays its calls' audio.
 - Size the RAM for the primary's heap (the entrypoint's 4 GB), plus
-  `MEDIA_WORKERS × MEDIA_WORKER_HEAP_MB`, plus the analysis children, plus Redis, nginx and the
-  OS.
+  `MEDIA_WORKERS × MEDIA_WORKER_HEAP_MB`, plus the analysis children, plus the Excel upload's
+  conversion child while one runs (one at a time: a 1 GiB heap, plus the workbook, up to 512 MiB;
+  IM8, `apps/server/src/agency/agency-xlsx-runner.ts`), plus Redis, nginx and the OS.
 
 **Postgres connections.** Every process opens its own pool, so the host can open the sum:
 
@@ -442,7 +443,7 @@ schema when it seeds) and refuses any other name or port. How to run it, its set
    IB8). With media workers on, inbound calls are answered but nobody is put through to an agent:
    every caller to an open route hears the call-back message. The server warns at boot, the
    super-admin credential page says so, `agency_inbound_connect_available` reads 0 and
-   `agy-inbound-connect-unavailable` pages. Mode B's rings are offers of the same connector
+   `agy-inbound-connect-unavailable` fires as a critical. Mode B's rings are offers of the same connector
    ([`inbound.md`](inbound.md) §6.1), so they need it too.
 
 ## Shutdown and grace period
@@ -472,6 +473,11 @@ Measured on the image with no calls in flight: `docker compose stop` took 0.7 s,
 outlives it is logged, and cannot dial, because every dial site re-checks the engine and the
 dialer asks once more immediately before the carrier (a default pending Manas, `decisions.md`
 rulings of 2026-10-16/17). 5 s plus 30 s stays inside the 45 s grace.
+
+An Excel upload still being received or converted when the server closes is stopped rather than
+waited for (IM8): the upload route's `preClose` hook kills the conversion child and the upload is
+answered 503 `server_restarting` with `Connection: close`, so closing HTTP does not wait out the
+conversion's 5 minute deadline. The supervisor uploads the file again.
 
 Agents are not returned to the pool on shutdown; after a restart they come back in `break` and must
 choose to go available.
@@ -683,9 +689,11 @@ carrier_account_unavailable` and pauses nothing. A revoke is refused while a cam
 finished (draft, running, paused or stopping) is pinned to the credential; the refusal names up to
 five of them (tenant / account, status).
 
-`carrier_dial_refusals_total{provider="plivo",kind}` counts create-calls that placed no known call
-(`auth_rejected`, `rate_limited`, `outcome_unknown`, `refused`, and `not_sent` for a dial refused
-before anything was sent: no webhook base, a malformed number or caller ID, the API unreachable).
+`carrier_dial_refusals_total{provider,kind}` counts dials on a tenant's carrier account (Plivo,
+VoiceLink) that placed no known call (`auth_rejected`, `rate_limited`, `outcome_unknown`, `refused`,
+`api_refused` for a VoiceLink account that took a fresh login and refused the dial itself with 401,
+CR4, and `not_sent` for a dial refused before anything was sent: no webhook base, a malformed
+number or caller ID, the API unreachable).
 A steady `rate_limited` means the dial rate is above `PLIVO_CALLS_PER_SECOND`; dials then wait and
 retry on the next pacing tick. A steady `not_sent` is configuration or network: read the
 `Plivo dial not sent` log lines.
@@ -703,7 +711,7 @@ the pilot starts, not measured values.
 | Caller p90 wait, before and after | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_wait_seconds_bucket{result="connected",$s}[7d])))`, the week before the flag against each pilot week; `agency_inbound_answered_wait_seconds{channel}` splits the pilot weeks by station and push | no worse than before; push p90 within the route's maximum wait |
 | Overflow share | `agency_inbound_overflows_total` over `agency_inbound_calls_total`, before and after | lower than before |
 | `ring_missed` ends per agent per day | `increase(agency_away_ring_ended_total{reason="ring_missed",$s}[1d])` divided by the agents opted in (the devices with ringing on); the audit trail (`Phone stopped ringing for inbound calls`, why: missed rings) names them | at most 1; an agent above it most days is asked whether ringing suits them |
-| Push failures | `agency_inbound_rings_total{result="push_failed"}` over all rings, and `agency_push_sends_total{result!="ok"}` by result; the `agy-inbound-ring-push-failed` alert pages above 0.2 | below 0.02 outside an incident; `invalid` and `unregistered` explained device by device |
+| Push failures | `agency_inbound_rings_total{result="push_failed"}` over all rings, and `agency_push_sends_total{result!="ok"}` by result; the `agy-inbound-ring-push-failed` alert warns above 0.2 | below 0.02 outside an incident; `invalid` and `unregistered` explained device by device |
 | Bind headroom | `histogram_quantile(0.9, sum by (le) (rate(agency_inbound_ring_bind_seconds_bucket{$s}[7d])))` against the 15 s accept grace; `accept_lapsed` in `agency_inbound_rings_total` | p90 below 8 s; `accept_lapsed` below 0.05 of answered rings |
 
 ## Enabling live call listening for a tenant
@@ -1149,7 +1157,7 @@ and a longer one only delays the retry of a genuinely lost message.
 
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
 the alert shows. The entries below are for the insights rules and the pacing share rule, which all
-warn (Slack) and never page, for the carrier credential rules, for the inbound rules, for the
+only warn, for the carrier credential rules, for the inbound rules, for the
 reports rules (warn only), for the live call listening rules (warn only), for the Live floor's
 Need help rule (warn only), and for the analysis rule (warn only, last). The insights rules first: a stale or holed Insights page costs no
 call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
@@ -1274,9 +1282,27 @@ can wait; nothing is broken. Otherwise file it with the campaign and account ids
 show. A burst of withheld slots with live calls on the campaign is the share rule working, not
 this alert.
 
+### `agy-carrier-api-refused`
+
+**Means:** 5+ dials in 15 minutes on a tenant's own VoiceLink account were refused with 401 right
+after a successful login (`carrier_dial_refusals_total{kind="api_refused"}`, `docs/carriers.md`
+CR4): the login works, but the account may not place calls through the API (access withdrawn, the
+API user disabled for dialling). The credential is not marked invalid, since the login is the only
+verdict on it. Each campaign on it is paused `carrier_refusing_calls` after 10 such refusals in a
+row; the audit row says `cause: carrier_api_refused`.
+
+**Check:** the `WebRTC outbound initiation failed` ERROR lines whose `err.name` is
+`CarrierApiRefusedError` (their `callId` leads to the call row, its credential and campaign), and the
+`agency_campaign.auto_paused` audit rows with `cause: carrier_api_refused`; whether the same
+account's login and dialling work in VoiceLink's own console.
+
+**Do:** the fix is at the carrier: the tenant (through support) restores the account's API access.
+Then supervisors resume the paused campaigns. A super-admin's Verify on the credential only checks
+the login, so it will still say the credential works.
+
 ### `agy-credential-keyring-missing-keys`
 
-This one pages. **Means:** `telephony_credential_missing_key_ids` is above 0: stored tenant
+This one is critical. **Means:** `telephony_credential_missing_key_ids` is above 0: stored tenant
 carrier credential secrets (B19) are sealed under master key ids that `TELEPHONY_CREDENTIAL_KEYS`
 does not hold, so they cannot be opened. Every call on an affected credential fails closed, and so
 do the hangups and webhook checks of its calls already in flight; a running campaign pinned to
@@ -1310,10 +1336,10 @@ Postgres or its pool; a lock wait on a credential row being revoked or rotated c
 
 The `inbound` group ([`inbound.md`](inbound.md)); its panels are the dashboard's *Inbound calls*
 row. Thresholds are for a pilot (tens of calls an hour); re-read them against the pilot's first
-weeks. Two page: a broken Application and the media-workers condition, both of which stop every
+weeks. Two are critical: a broken Application and the media-workers condition, both of which stop every
 caller of a tenant (or of the deployment) from reaching anyone.
 
-- **`agy-inbound-application-broken`** (pages). **Means:** the scheduled health check (every 15
+- **`agy-inbound-application-broken`** (critical). **Means:** the scheduled health check (every 15
   min, `telephony/credentials/inbound-monitor.ts`) found a credential's Application changed in
   Plivo's console (`url_mismatch`: its calls are refused with a hangup) or gone (`app_missing`: its
   calls never reach us). **Check:** the WARN "Inbound Application does not match what is stored"
@@ -1326,7 +1352,7 @@ caller of a tenant (or of the deployment) from reaching anyone.
   health check refused for a credential" (`code`). **Do:** `carrier_rejected`: the tenant rotated
   or closed their Plivo account; rotate the credential's secret. `secret_unavailable`: the keyring
   (`agy-credential-keyring-missing-keys`). `unreachable`: Plivo's status, our egress.
-- **`agy-inbound-connect-unavailable`** (pages). **Means:** the server runs with `MEDIA_WORKERS`
+- **`agy-inbound-connect-unavailable`** (critical). **Means:** the server runs with `MEDIA_WORKERS`
   above 0 while a credential has inbound enabled: nobody is put through, every open-route caller is
   told "we'll call you back" (IB8; deployment invariant 8). **Do:** `MEDIA_WORKERS=0` and redeploy;
   or disable inbound on every credential first if the workers must stay.
@@ -1854,3 +1880,24 @@ Set once in the repository settings, not in code:
   merge, tag that squash commit (where every `package.json` says 0.1.0) `<component>-v0.1.0` for
   each of the eight components and push the tags. release-please then reads history back to the
   tag instead of to `bootstrap-sha`.
+
+## CR9 caller-ID clean-up (one-off)
+
+Service-account campaigns saved before CR9 (`docs/carriers.md`), or written while a number was
+being moved onto a tenant's account (CR6), may hold a number pinned to a tenant's carrier account as
+a caller ID and dial it on the service's account. `scripts/cleanup-service-campaign-pinned-caller-ids.ts`
+takes those caller IDs off campaigns that are not finished, one campaign per transaction, audited
+`agency_campaign.config_changed` (`actor: system:cr9-cleanup`). A running server sees the change
+within 2 s.
+
+On a deployment, dry run first; it changes nothing and lists every campaign it would change:
+
+```bash
+docker compose -f docker/docker-compose.prod.yml exec server node dist/cleanup-service-campaign-pinned-caller-ids.js
+```
+
+Read each campaign listed, then run it again with `--apply`. A campaign it would leave with no caller
+ID is listed as SKIPPED: give it service numbers in its Settings, or re-run with
+`--apply --allow-empty` (never applied to a running campaign). A second `--apply` changes nothing.
+Exit 1 means a campaign failed (read its line); 2 is a usage error.
+

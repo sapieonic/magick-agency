@@ -10,6 +10,7 @@ import '../../app/theme/app_theme.dart';
 import '../../app/theme/tokens.dart';
 import '../../core/softphone/softphone_view.dart';
 import '../../core/station/station_view.dart';
+import '../../ui/keyboard.dart' show KeepTypingInView;
 import '../../ui/primitives.dart';
 import '../station/logic/facts.dart' show firstFactLine;
 import '../station/parts/banners.dart' show BusyLabel, ListenFirstNoticeCard, ListenInfoButton;
@@ -165,8 +166,8 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
     final callKey = callId ?? 'idle';
     final body = <Widget>[
       _Header(surface: widget.surface),
-      // Need help on the station's soft phone too (AS5): its notice or refusal under the header.
-      if (widget.surface == SoftphoneSurface.station) const NeedHelpCard(),
+      // Need help on both soft phones (AS5; the Phone tab, LF39): its notice or refusal under the header.
+      const NeedHelpCard(),
       const ListenFirstNoticeCard(),
       const _BootstrapError(),
       const _MicProblem(),
@@ -186,11 +187,15 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
-                  child: SingleChildScrollView(
-                    key: const Key('softphone-scroll'),
-                    controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: body),
+                  // A refusal or warning in the actions under it shortens the column: the note being
+                  // typed comes back into view with its label.
+                  child: KeepTypingInView(
+                    child: SingleChildScrollView(
+                      key: const Key('softphone-scroll'),
+                      controller: _scroll,
+                      padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: body),
+                    ),
                   ),
                 ),
                 _ActionArea(maxHeight: box.maxHeight / 2, child: bottom),
@@ -269,8 +274,9 @@ class _DialHead extends StatelessWidget {
 
 /// The title, what is disclosed (recording, muted, where the call is logged,
 /// that a supervisor may listen), and the way out: Close soft phone on the Phone tab, Return to campaign on
-/// the station, each disabled with its reason while a call is live or owed. On the station, Need help
-/// sits beside the way out (AS5), as on every working screen (the console's `StationSoftphone`).
+/// the station, each disabled with its reason while a call is live or owed. Need help sits beside the
+/// way out on both (AS5; the Phone tab's soft-phone session, LF39), as on every working screen (the
+/// console's `StationSoftphone`).
 class _Header extends ConsumerWidget {
   const _Header({required this.surface});
 
@@ -330,7 +336,10 @@ class _Header extends ConsumerWidget {
                 runSpacing: Space.xs,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  if (!phone) const NeedHelpButton(),
+                  if (phone)
+                    const NeedHelpButton.phoneTab()
+                  else
+                    const NeedHelpButton(),
                   // Merged, so the reason is the button's own hint, read with it.
                   MergeSemantics(
                     child: Semantics(

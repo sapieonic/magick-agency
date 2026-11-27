@@ -164,6 +164,17 @@ describe('MediaCluster: invalidations the primary sends every worker', () => {
         .toEqual([expect.objectContaining({ body: { tenantId: 't', accountId: 'a' } })]);
     }
   });
+
+  it('a carrier account\'s cap change reaches every worker as `concurrency.invalidate_credential` (CR13)', async () => {
+    const { c, forks } = cluster({ count: 2 });
+    running = c;
+    await c.start();
+    c.invalidateCredentialLimit('cred-1');
+    for (const f of forks) {
+      expect(f.sent.filter((m) => m.kind === 'event' && m.type === 'concurrency.invalidate_credential'))
+        .toEqual([expect.objectContaining({ body: { credentialId: 'cred-1' } })]);
+    }
+  });
 });
 
 describe('MediaCluster: what the workers tell the primary', () => {

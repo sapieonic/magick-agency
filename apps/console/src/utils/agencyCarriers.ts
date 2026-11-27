@@ -50,6 +50,9 @@ export function carrierOfCampaign(
 /**
  * What the operator reads for a carrier account: the carrier's alias, and for one of the
  * tenant's own accounts the label a platform administrator gave it ("Pravah (Acme main)").
+ * One carrier can be offered twice (docs/carriers.md CR10): its service account reads as the
+ * alias alone ("Swar") and a tenant's own account on it as alias and label ("Swar (Acme
+ * direct)"), so the two never read alike and neither names the vendor.
  */
 export function carrierName(carrier: CarrierChoice & { label?: string | null }): string {
   const alias = telephonyProviderAlias(carrier.telephony_provider);
@@ -198,7 +201,7 @@ export const CARRIER_PAUSE_COPY: Record<CarrierAccountPauseReason, CarrierPauseC
   carrier_refusing_calls: {
     by: 'The carrier',
     cause: 'the carrier refused several of this campaign’s calls in a row',
-    action: 'Contact support to have the carrier account’s destinations, balance and caller IDs checked, then resume.',
+    action: 'Contact support to have the carrier account’s destinations, balance, caller IDs and access checked, then resume.',
   },
 };
 

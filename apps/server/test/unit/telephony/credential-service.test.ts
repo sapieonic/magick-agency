@@ -18,8 +18,26 @@ import {
   TelephonyCredentialService, CredentialUnavailableError, type CredentialRepo,
 } from '../../../src/telephony/credentials/credential-service.js';
 import type { FetchLike } from '../../../src/telephony/credentials/credential-specs.js';
+import { voicelinkSpec } from '../../../src/telephony/voicelink/voicelink.credential-spec.js';
+import type { CredentialSpec } from '../../../src/telephony/credentials/credential-specs.js';
+import type { TelephonyConfig } from '../../../src/telephony/carrier-catalog.js';
 import { WEBHOOK_TOKEN_POST_END_GRACE_SECONDS } from '../../../src/telephony/webhook-grace.js';
 import { auditLogger } from '../../../src/audit/audit-logger.js';
+
+// A spec double for the account refs a spec reserves (CR3): while `reserve.fn` is set every
+// spec is served with it in place of its own; otherwise the real specs (VoiceLink's reserves the
+// service's own `VOICELINK_USERNAME`, exercised below with `reserve.fn` unset).
+const reserve = vi.hoisted(() => ({ fn: null as ((telephony: unknown) => readonly string[]) | null }));
+vi.mock('../../../src/telephony/credentials/credential-specs.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../src/telephony/credentials/credential-specs.js')>();
+  return {
+    ...real,
+    findCredentialSpec: (provider: string): CredentialSpec | undefined => {
+      const spec = real.findCredentialSpec(provider);
+      return spec && reserve.fn ? { ...spec, reservedAccountRefs: reserve.fn } : spec;
+    },
+  };
+});
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const ADMIN = '99999999-9999-4999-8999-999999999999';
@@ -48,6 +66,7 @@ class FakeRepo implements CredentialRepo {
       id: i.id, tenant_id: i.tenant_id, provider: i.provider, label: i.label, status: 'active',
       account_ref: i.account_ref, public_config: i.public_config, secret_version: 1,
       secret_hint: i.sealed.secret_hint, verified_at: i.verified_at, last_error: null,
+      max_concurrent_calls: i.max_concurrent_calls ?? null,
       created_by: i.created_by, updated_by: i.created_by, created_at: now, updated_at: now,
       revoked_at: null, shredded_at: null,
     };
@@ -72,6 +91,10 @@ class FakeRepo implements CredentialRepo {
   async list() { return [...this.rows.values()]; }
   async updateLabel(id: string, label: string) {
     const r = this.rows.get(id); if (!r || r.status === 'revoked') return null; r.label = label; return { ...r };
+  }
+  async setConcurrencyCap(id: string, cap: number | null, updatedBy: string) {
+    const r = this.rows.get(id); if (!r || r.status === 'revoked') return null;
+    r.max_concurrent_calls = cap; r.updated_by = updatedBy; return { ...r };
   }
   async rotateSecret(id: string, expected: number, s: SealedSecretInput, o: { verifiedAt: Date | null }) {
     const r = this.rows.get(id);
@@ -145,10 +168,11 @@ const fetchImpl: FetchLike = async (url, init) => {
   return { status: carrier.status };
 };
 
-function service(opts: { sealer?: CredentialSealer | null } = {}) {
+function service(opts: { sealer?: CredentialSealer | null; telephony?: TelephonyConfig } = {}) {
   return new TelephonyCredentialService({
     repo, sealer: opts.sealer === undefined ? sealer : opts.sealer, fetchImpl,
     tenants: { findById: async (id) => (id === TENANT ? { id } : null) },
+    ...(opts.telephony ? { telephony: opts.telephony } : {}),
   });
 }
 
@@ -159,6 +183,7 @@ async function createOk(token = CANARY) {
 }
 
 beforeEach(() => {
+  reserve.fn = null;
   repo = new FakeRepo();
   sealer = new CredentialSealer(new EnvKeyringWrapper(keyring, 'v1'));
   carrier = { status: 200, calls: [] };
@@ -193,8 +218,8 @@ describe('create', () => {
     expect(repo.rows.size).toBe(0);
   });
 
-  it('refuses a provider with no tenant credentials (the service’s own VoiceLink account)', async () => {
-    const r = await svc.create({ tenantId: TENANT, provider: 'voicelink', label: 'x', fields: {}, adminId: ADMIN });
+  it('refuses a provider with no tenant credentials', async () => {
+    const r = await svc.create({ tenantId: TENANT, provider: 'carrier_pigeon', label: 'x', fields: {}, adminId: ADMIN });
     expect(!r.ok && r.code).toBe('unknown_provider');
   });
 
@@ -230,6 +255,32 @@ describe('create', () => {
     const r = await noStore.create({ tenantId: TENANT, provider: 'plivo', label: 'x', fields: { auth_id: AUTH_ID, auth_token: CANARY }, adminId: ADMIN });
     expect(!r.ok && r.code).toBe('credential_store_unavailable');
     await expect(noStore.resolve(row.id, 'call_control')).rejects.toBeInstanceOf(CredentialUnavailableError);
+  });
+});
+
+describe('a carrier account\'s own concurrency cap (CR13)', () => {
+  it('create stores the cap when given, and none when not', async () => {
+    const none = await createOk();
+    expect(none.max_concurrent_calls).toBeNull();
+    const r = await svc.create({
+      tenantId: TENANT, provider: 'plivo', label: 'Capped', fields: { auth_id: 'MAZDQ1ZJIYMDZKMTIZBL', auth_token: CANARY2 },
+      adminId: ADMIN, maxConcurrentCalls: 2,
+    });
+    expect(r.ok && r.value.max_concurrent_calls).toBe(2);
+  });
+
+  it('setConcurrencyCap sets and clears it, and refuses a revoked or unknown credential', async () => {
+    const row = await createOk();
+    const set = await svc.setConcurrencyCap(row.id, 3, ADMIN);
+    expect(set.ok && set.value.max_concurrent_calls).toBe(3);
+    const cleared = await svc.setConcurrencyCap(row.id, null, ADMIN);
+    expect(cleared.ok && cleared.value.max_concurrent_calls).toBeNull();
+
+    const unknown = await svc.setConcurrencyCap(crypto.randomUUID(), 3, ADMIN);
+    expect(!unknown.ok && unknown.code).toBe('not_found');
+    repo.rows.get(row.id)!.status = 'revoked';
+    const revoked = await svc.setConcurrencyCap(row.id, 3, ADMIN);
+    expect(!revoked.ok && revoked.code).toBe('invalid_transition');
   });
 });
 
@@ -382,6 +433,159 @@ describe('rotate', () => {
     const r = await svc.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
     expect(!r.ok && r.code).toBe('carrier_rejected');
     expect((await svc.resolve(row.id, 'dial')).secret.reveal()).toEqual({ auth_token: CANARY });
+  });
+});
+
+describe('reserved account refs (CR3: the service’s own account is never a tenant credential)', () => {
+  const TELEPHONY = { voicelink: { username: 'service-user' } } as unknown as TelephonyConfig;
+  const createWith = (s: TelephonyCredentialService) =>
+    s.create({ tenantId: TENANT, provider: 'plivo', label: 'Main', fields: { auth_id: AUTH_ID, auth_token: CANARY }, adminId: ADMIN });
+
+  it('refuses a create naming a reserved ref, case-insensitively, before the carrier is asked, without echoing it', async () => {
+    const seen: unknown[] = [];
+    reserve.fn = (telephony) => { seen.push(telephony); return [` ${AUTH_ID.toLowerCase()} `]; };
+    const r = await createWith(service({ telephony: TELEPHONY }));
+    expect(!r.ok && r.code).toBe('account_ref_reserved');
+    expect(!r.ok && r.message).not.toContain(AUTH_ID);
+    expect(JSON.stringify(r)).not.toContain(CANARY);
+    expect(seen).toEqual([TELEPHONY]);
+    expect(carrier.calls).toHaveLength(0);
+    expect(repo.rows.size).toBe(0);
+  });
+
+  it('lets a create through when the ref is not reserved, or no carrier env is given', async () => {
+    reserve.fn = () => ['MAZZZZZZZZZZZZZZZZZZ', ''];
+    expect((await createWith(service({ telephony: TELEPHONY }))).ok).toBe(true);
+    repo = new FakeRepo();
+    reserve.fn = () => [AUTH_ID];
+    expect((await createWith(service())).ok).toBe(true);
+  });
+
+  it('refuses a rotate of a credential whose ref the env has since reserved, keeping the old secret', async () => {
+    const s = service({ telephony: TELEPHONY });
+    const row = await createOk();
+    const callsBefore = carrier.calls.length;
+    reserve.fn = () => [AUTH_ID];
+    const r = await s.rotate(row.id, { fields: { auth_token: CANARY2 }, expectedVersion: 1, adminId: ADMIN });
+    expect(!r.ok && r.code).toBe('account_ref_reserved');
+    expect(carrier.calls).toHaveLength(callsBefore);
+    expect((await s.resolve(row.id, 'dial')).secret.reveal()).toEqual({ auth_token: CANARY });
+  });
+});
+
+describe('a VoiceLink credential (CR2, CR3: the tenant\'s own VoiceLink login)', () => {
+  const VL_BASE = 'https://vl-api.test/api';
+  const VL_PASSWORD = ' pass word with spaces ';
+  const TELEPHONY = { voicelink: { baseUrl: VL_BASE, username: 'Service-User', password: 'service-secret' } } as unknown as TelephonyConfig;
+  let vl: { status: number; body: unknown; calls: Array<{ url: string; init: RequestInit }> };
+  const vlFetch: FetchLike = async (url, init) => {
+    vl.calls.push({ url, init });
+    return { status: vl.status, json: async () => vl.body };
+  };
+  const vlService = (telephony: TelephonyConfig | null = TELEPHONY) => new TelephonyCredentialService({
+    repo, sealer, fetchImpl: vlFetch,
+    tenants: { findById: async (id) => (id === TENANT ? { id } : null) },
+    ...(telephony ? { telephony } : {}),
+  });
+  const createVl = (s: TelephonyCredentialService, fields: Record<string, unknown> = { username: ' tenant-user ', password: VL_PASSWORD }) =>
+    s.create({ tenantId: TENANT, provider: 'voicelink', label: 'Tenant VoiceLink', fields, adminId: ADMIN });
+
+  beforeEach(() => {
+    vl = { status: 200, body: { data: { access_token: '7|tenantToken' } }, calls: [] };
+  });
+
+  it('validates, logs in on this deployment`s host, seals the password untrimmed, and stores the username as the account ref', async () => {
+    const s = vlService();
+    const r = await createVl(s);
+    expect(r.ok).toBe(true);
+    const row = r.ok ? r.value : null;
+    expect(row).toMatchObject({ provider: 'voicelink', account_ref: 'tenant-user', public_config: { username: 'tenant-user' }, status: 'active' });
+    expect(vl.calls).toHaveLength(1);
+    expect(vl.calls[0]!.url).toBe(`${VL_BASE}/v1/auth/login`);
+    expect(vl.calls[0]!.init).toMatchObject({ method: 'POST', redirect: 'error' });
+    expect(JSON.parse(vl.calls[0]!.init.body as string)).toEqual({ username: 'tenant-user', password: VL_PASSWORD });
+    // Sealed: the stored bytes never carry the password, the row never echoes it.
+    expect(repo.secrets[0]!.secret_ciphertext.toString('latin1')).not.toContain(VL_PASSWORD);
+    expect(JSON.stringify(row)).not.toContain(VL_PASSWORD.trim());
+    expect((await s.resolve(row!.id, 'dial')).secret.reveal()).toEqual({ password: VL_PASSWORD });
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['a blank password', { username: 'tenant-user', password: '   ' }],
+    ['an empty username', { username: '  ', password: VL_PASSWORD }],
+    ['a username with a control character', { username: 'tenant\u0000user', password: VL_PASSWORD }],
+    ['a username over 100 characters (the account_ref column)', { username: 'u'.repeat(101), password: VL_PASSWORD }],
+    ['a password over 255 characters', { username: 'tenant-user', password: 'p'.repeat(256) }],
+    ['an unknown field (a host of the tenant`s)', { username: 'tenant-user', password: VL_PASSWORD, base_url: 'https://evil.test' }],
+  ])('refuses %s without logging in or echoing a value', async (_l, fields) => {
+    const r = await createVl(vlService(), fields);
+    expect(!r.ok && r.code).toBe('invalid_input');
+    expect(JSON.stringify(r)).not.toContain(VL_PASSWORD.trim());
+    expect(JSON.stringify(r)).not.toContain('evil.test');
+    expect(vl.calls).toHaveLength(0);
+  });
+
+  it('stores the account ref lower-cased and the username as typed, and logs in (create and rotate) with the username as typed', async () => {
+    const s = vlService();
+    const r = await createVl(s, { username: ' Tenant-User ', password: VL_PASSWORD });
+    if (!r.ok) throw new Error(r.code);
+    expect(r.value).toMatchObject({ account_ref: 'tenant-user', public_config: { username: 'Tenant-User' } });
+    expect(JSON.parse(vl.calls[0]!.init.body as string).username).toBe('Tenant-User');
+    expect((await s.resolve(r.value.id, 'dial')).publicConfig).toEqual({ username: 'Tenant-User' });
+    await s.rotate(r.value.id, { fields: { password: 'new password' }, expectedVersion: 1, adminId: ADMIN });
+    expect(JSON.parse(vl.calls[1]!.init.body as string).username).toBe('Tenant-User');
+  });
+
+  it('refuses an account ref wider than the column as a field error, whatever the spec let through', async () => {
+    const spy = vi.spyOn(voicelinkSpec, 'accountRef').mockReturnValue('u'.repeat(101));
+    try {
+      const r = await createVl(vlService());
+      expect(!r.ok && r.code).toBe('invalid_input');
+      expect(!r.ok && r.details).toEqual([{ path: 'fields', message: 'The account name is longer than 100 characters' }]);
+      expect(vl.calls).toHaveLength(0);
+      expect(repo.rows.size).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('refuses the service`s own VoiceLink username (case-insensitively) before logging in, without echoing it', async () => {
+    const r = await createVl(vlService(), { username: ' service-user ', password: VL_PASSWORD });
+    expect(!r.ok && r.code).toBe('account_ref_reserved');
+    expect(JSON.stringify(r)).not.toMatch(/service-user/i);
+    expect(vl.calls).toHaveLength(0);
+    expect(repo.rows.size).toBe(0);
+  });
+
+  it.each<[number, unknown, string]>([
+    [401, {}, 'carrier_rejected'], [403, {}, 'carrier_rejected'], [422, {}, 'carrier_rejected'],
+    [500, {}, 'carrier_unreachable'], [200, { data: {} }, 'carrier_unreachable'],
+  ])('a login answered HTTP %i (%j) is %s, and nothing is stored', async (status, body, code) => {
+    vl.status = status;
+    vl.body = body;
+    const r = await createVl(vlService());
+    expect(!r.ok && r.code).toBe(code);
+    expect(repo.rows.size).toBe(0);
+  });
+
+  it('with no VOICELINK_BASE_URL on this server, the check is unreachable and nothing is sent', async () => {
+    const r = await createVl(vlService({ voicelink: { baseUrl: '', username: '' } } as unknown as TelephonyConfig));
+    expect(!r.ok && r.code).toBe('carrier_unreachable');
+    expect(vl.calls).toHaveLength(0);
+    const none = await createVl(vlService(null));
+    expect(!none.ok && none.code).toBe('carrier_unreachable');
+    expect(vl.calls).toHaveLength(0);
+  });
+
+  it('a rotation logs in with the new password on the same username, then seals it as the next version', async () => {
+    const s = vlService();
+    const created = await createVl(s);
+    if (!created.ok) throw new Error(created.code);
+    const r = await s.rotate(created.value.id, { fields: { password: 'new password' }, expectedVersion: 1, adminId: ADMIN });
+    expect(r.ok && r.value.secret_version).toBe(2);
+    expect(JSON.parse(vl.calls[1]!.init.body as string)).toEqual({ username: 'tenant-user', password: 'new password' });
+    const stray = await s.rotate(created.value.id, { fields: { username: 'someone-else' }, expectedVersion: 2, adminId: ADMIN });
+    expect(!stray.ok && stray.code).toBe('invalid_input');
   });
 });
 

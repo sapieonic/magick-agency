@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
-import { Phone, Plus, Trash2, Pencil, Search, RotateCcw } from 'lucide-react';
+import { Phone, Plus, Trash2, Pencil, Search, RotateCcw, KeyRound } from 'lucide-react';
 import {
   listPhoneNumbers,
   listTelephonyProviders,
@@ -7,9 +7,11 @@ import {
   retirePhoneNumber,
   reactivatePhoneNumber,
   deletePhoneNumber,
+  listTelephonyCredentials,
 } from '../../api/super-admin';
 import type { TelephonyProvider } from '../../api/super-admin';
 import type { PhoneNumber } from '@magick-agency/contracts/api/platform/super-admin';
+import type { TelephonyCredential } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
@@ -20,10 +22,13 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { StatCard } from '../../components/common';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { operatorCarrierName } from '../../utils/carrierName';
+import { carrierModes, takesTenantNumbersByHand } from '../../utils/carrierModes';
+import { useSuperAdminTenants } from '../../hooks/useSuperAdminTenants';
 import { PhoneNumberCreateModal } from './phone-numbers/PhoneNumberCreateModal';
 import { PhoneNumberEditModal } from './phone-numbers/PhoneNumberEditModal';
 import { usePhoneNumberBulk } from './phone-numbers/usePhoneNumberBulk';
 import { PhoneNumberInboundPanel } from './phone-numbers/PhoneNumberInboundPanel';
+import { PhoneNumberPinDialog } from './phone-numbers/PhoneNumberPinDialog';
 import styles from './SAPhoneNumbersPage.module.css';
 
 interface PhoneNumberAssignment {
@@ -66,6 +71,13 @@ export default function SAPhoneNumbersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  // Tenants' own carrier accounts, revoked ones included: they name the account a pinned
+  // number is on, and the Add number form offers the active ones. Best effort: null when
+  // unreadable (rows then say only that the number is on a tenant's own account).
+  const [credentials, setCredentials] = useState<TelephonyCredential[] | null>(null);
+  const { tenants } = useSuperAdminTenants();
+  const tenantName = useMemo(() => new Map(tenants.map(t => [t.id, t.name])), [tenants]);
+  const credentialById = useMemo(() => new Map((credentials ?? []).map(c => [c.id, c])), [credentials]);
 
   // Filters
   const [filterProvider, setFilterProvider] = useState('');
@@ -75,6 +87,8 @@ export default function SAPhoneNumbersPage() {
   // Create / edit modals
   const [showCreate, setShowCreate] = useState(false);
   const [editPhone, setEditPhone] = useState<PhoneNumber | null>(null);
+  // "Move to a tenant's account" (CR6 amended): the number it is open for.
+  const [pinPhone, setPinPhone] = useState<PhoneNumber | null>(null);
 
   // Detail expansion
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -157,8 +171,55 @@ export default function SAPhoneNumbersPage() {
     }
   }, []);
 
+  const loadCredentials = useCallback(async () => {
+    try {
+      setCredentials(await listTelephonyCredentials({ include_revoked: true }));
+    } catch {
+      setCredentials(null);
+    }
+  }, []);
+
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
+  useEffect(() => { void loadCredentials(); }, [loadCredentials]);
+
+  const providerOf = (pn: PhoneNumber) => providers.find(p => p.id === pn.provider_id);
+
+  /** Whether the number's carrier takes inbound calls on a tenant's account (CR11); false until the catalogue is in. */
+  const supportsInbound = (pn: PhoneNumber) => {
+    const provider = providerOf(pn);
+    return provider !== undefined && carrierModes(provider).inbound;
+  };
+
+  /**
+   * Whether the number can be moved onto a tenant's own account (CR6 amended): active, on the
+   * service's own account, on a carrier that takes tenant numbers by hand.
+   */
+  const canPin = (pn: PhoneNumber) => {
+    const provider = providerOf(pn);
+    return pn.status === 'active' && !pn.telephony_credential_id && provider !== undefined && takesTenantNumbersByHand(provider);
+  };
+
+  /** After a move: the rows again and the open row's assignments (now the credential's tenant). */
+  const afterPin = async (id: string) => {
+    setPinPhone(null);
+    await refreshRows();
+    if (expandedId !== id) return;
+    try {
+      setAssignments((await getPhoneNumberDetail(id)).assignments);
+    } catch {
+      // The rows are fresh; the assignments show again on the next expand.
+    }
+  };
+
+  /** Which carrier account the number is on: the service's own, or a tenant's, by its label (CR6, CR7). */
+  const accountOf = (pn: PhoneNumber): string => {
+    if (!pn.telephony_credential_id) return 'Service account';
+    const credential = credentialById.get(pn.telephony_credential_id);
+    if (!credential) return 'A tenant’s own account';
+    const tenant = tenantName.get(credential.tenant_id);
+    return `${credential.label}${tenant ? ` (${tenant})` : ''}${credential.status === 'active' ? '' : `, ${saStatusLabel(credential.status).toLowerCase()}`}`;
+  };
 
   useEffect(() => {
     if (filterStatus !== 'deleted') return;
@@ -242,7 +303,7 @@ export default function SAPhoneNumbersPage() {
         subtitle="Number inventory — provider, capabilities, concurrency and tenant assignments"
         badge={phoneNumbers.length}
         actions={
-          <button className="btn-primary" onClick={() => setShowCreate(true)}>
+          <button className="btn-primary" onClick={() => { setShowCreate(true); void loadCredentials(); }}>
             <Plus size={16} /> Add number
           </button>
         }
@@ -377,6 +438,9 @@ export default function SAPhoneNumbersPage() {
                     <span className={styles.providerBadge}>
                       {operatorCarrierName(pn.provider_name, pn.provider_display_name)}
                     </span>
+                    {pn.telephony_credential_id && (
+                      <div className={styles.regionText} data-testid="number-account">{accountOf(pn)}</div>
+                    )}
                   </td>
                   <td>
                     {pn.capabilities.map(c => (
@@ -408,6 +472,10 @@ export default function SAPhoneNumbersPage() {
                           <dd className={styles.mono}>{pn.id}</dd>
                         </div>
                         <div className={styles.detailItem}>
+                          <dt>Carrier account</dt>
+                          <dd data-testid="number-account-detail">{accountOf(pn)}</dd>
+                        </div>
+                        <div className={styles.detailItem}>
                           <dt>Notes</dt>
                           <dd>{pn.notes || 'None'}</dd>
                         </div>
@@ -436,7 +504,7 @@ export default function SAPhoneNumbersPage() {
                         )}
                       </div>
 
-                      {pn.telephony_credential_id && pn.status !== 'deleted' && (
+                      {pn.telephony_credential_id && pn.status !== 'deleted' && supportsInbound(pn) && (
                         <PhoneNumberInboundPanel phoneNumberId={pn.id} provider={pn.provider_name} onChanged={() => { void refreshRows(); }} />
                       )}
 
@@ -447,6 +515,14 @@ export default function SAPhoneNumbersPage() {
                             onClick={e => { e.stopPropagation(); setEditPhone(pn); }}
                           >
                             <Pencil size={14} /> Edit
+                          </button>
+                        )}
+                        {canPin(pn) && (
+                          <button
+                            className="btn-secondary"
+                            onClick={e => { e.stopPropagation(); setPinPhone(pn); void loadCredentials(); }}
+                          >
+                            <KeyRound size={14} /> Move to a tenant’s account
                           </button>
                         )}
                         {pn.status === 'active' && (
@@ -500,8 +576,22 @@ export default function SAPhoneNumbersPage() {
       <PhoneNumberCreateModal
         open={showCreate}
         providers={providers}
+        credentials={credentials}
+        tenantName={tenantName}
         onClose={() => setShowCreate(false)}
         onCreated={() => { setShowCreate(false); load(); }}
+        onAccountsStale={() => { void loadCredentials(); }}
+      />
+
+      <PhoneNumberPinDialog
+        key={pinPhone?.id ?? 'closed'}
+        phone={pinPhone}
+        provider={pinPhone ? providerOf(pinPhone) : undefined}
+        credentials={credentials}
+        tenantName={tenantName}
+        onClose={() => setPinPhone(null)}
+        onPinned={() => { if (pinPhone) void afterPin(pinPhone.id); }}
+        onAccountsStale={() => { void loadCredentials(); }}
       />
 
       <PhoneNumberEditModal

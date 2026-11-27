@@ -1,6 +1,6 @@
 {
   "name": "@magick-agency/server",
-  "version": "0.35.0",
+  "version": "0.37.0",
   "private": true,
   "description": "The one Magick Agency process: identity, tenancy, super-admin, API, station WS, voice engine, pacing, analysis worker.",
   "scripts": {
@@ -47,6 +47,7 @@
     "pino": "^9.9.0",
     "pino-pretty": "^13.0.0",
     "posthog-node": "^5.55.0",
+    "saxes": "5.0.1",
     "uuid": "^11.0.0",
     "ws": "^8.22.0",
     "zod": "^3.24.2"
@@ -61,6 +62,7 @@
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.2",
     "esbuild": "^0.27.3",
+    "exceljs": "4.4.0",
     "tsx": "^4.20.0",
     "typescript": "~5.7.3",
     "vitest": "^4.1.8"

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.0](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.7.3...super-admin-v0.8.0) (2026-11-26)
+
+
+### Features
+
+* **server,console,super-admin,contracts,db,observability,web-ui:** VoiceLink on tenants' own carrier accounts, with carrier account modes (CR1–CR15) ([#130](https://github.com/sapieonic/magick-agency/issues/130)) ([eebb67a](https://github.com/sapieonic/magick-agency/commit/eebb67ac8af7cb1418239fafce9cc3c73e248d9e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.32.0
+    * @magick-agency/web-ui bumped to 0.5.0
+
 ## [0.7.3](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.7.2...super-admin-v0.7.3) (2026-11-24)
 
 

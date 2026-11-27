@@ -69,6 +69,7 @@ vi.mock('../../utils/agency/liveFloor', async (importOriginal) => {
   return { ...actual, attentionFor: mocks.attentionFor };
 });
 
+import * as posthog from '../../analytics/posthog';
 import HomePage from '../../pages/agency/HomePage';
 import { resetHomeAcksForTests } from '../../hooks/useHomeAcks';
 import { resetHelpChimeChoiceForTests } from '../../utils/agency/floorAssist';
@@ -117,8 +118,13 @@ const PRIYA = () => floorRow('priya', {
 const ARJUN = () => floorRow('arjun', { agent_name: 'Arjun T' });
 const DIVYA = () => floorRow('divya', { agent_name: 'Divya S' });
 
+/** `agency_supervisor_message_sent` (LF39), its properties in order: the kind, never the agent or the text. */
+let capture: ReturnType<typeof vi.spyOn>;
+const sent = () => capture.mock.calls.filter((call: unknown[]) => call[0] === 'agency_supervisor_message_sent').map((call: unknown[]) => call[1]);
+
 beforeEach(() => {
   vi.clearAllMocks();
+  capture = vi.spyOn(posthog, 'captureEvent').mockImplementation(() => {});
   window.localStorage.clear();
   resetHelpChimeChoiceForTests();
   resetHeardAlertsForTests();
@@ -228,6 +234,7 @@ describe('Need help raised with no call (BE-9)', () => {
     const card = screen.getByTestId('home-agent-arjun');
     fireEvent.click(within(card).getByRole('button', { name: 'Tell Arjun T you are coming to their desk' }));
     await waitFor(() => expect(mocks.sendSupervisorMessage).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(sent()).toEqual([{ kind: 'coming_to_desk' }, { kind: 'coming_to_desk' }]));
     // Not offered to an agent who is not asking.
     expect(within(screen.getByTestId('home-agent-divya')).queryByRole('button', { name: /coming to their desk/ })).toBeNull();
   });
@@ -239,6 +246,7 @@ describe('Need help raised with no call (BE-9)', () => {
     const row = await screen.findByTestId('home-attention-help:arjun');
     fireEvent.click(within(row).getByRole('button', { name: 'Tell Arjun T you are coming to their desk' }));
     await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('Arjun T isn’t on a station that can receive messages right now.', 'error'));
+    expect(sent()).toEqual([]);
   });
 
   it('is not offered while floor assist is off', async () => {
@@ -423,6 +431,7 @@ describe('Talk to agent (LF5, LF29)', () => {
     await waitFor(() => expect(mocks.sendSupervisorMessage).toHaveBeenCalledWith('s-arjun', 'Offer the 3-month plan', 't-1', 'a-1'));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(mocks.showToast).toHaveBeenCalledWith('Sent to Arjun T.', 'success');
+    expect(sent()).toEqual([{ kind: 'talk' }]);
   });
 
   it('holds Send past 500 characters', async () => {
@@ -444,6 +453,7 @@ describe('Talk to agent (LF5, LF29)', () => {
     expect((await within(dialog).findByTestId('message-error')).textContent).toBe(words);
     expect((within(dialog).getByTestId('message-text') as HTMLTextAreaElement).value).toBe('Are you there?');
     expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(sent()).toEqual([]);
   });
 
   it('closes on Escape and gives focus back to the card’s button', async () => {
@@ -477,6 +487,8 @@ describe('Send reminder (LF5, LF6, LF29)', () => {
     fireEvent.click(within(dialog).getByTestId('message-send'));
     await waitFor(() => expect(mocks.sendSupervisorMessage).toHaveBeenCalledWith('s-priya', 'Priya, Tea is over, please come back.', 't-1', 'a-1'));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Edited or not, it was sent from Send reminder.
+    expect(sent()).toEqual([{ kind: 'reminder' }]);
 
     fireEvent.click(within(screen.getByTestId('home-agent-priya')).getByRole('button', { name: 'Send Priya M a reminder' }));
     expect((within(screen.getByRole('dialog')).getByTestId('message-text') as HTMLTextAreaElement).value).toMatch(/^Hi, your Tea break \(15 minutes\)/);
@@ -489,6 +501,7 @@ describe('Send reminder (LF5, LF6, LF29)', () => {
     fireEvent.click(within(row).getByRole('button', { name: 'Send Priya M a reminder' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByTestId('message-send'));
     expect((await screen.findByTestId('message-error')).textContent).toBe('Priya M isn’t on a station that can receive messages right now.');
+    expect(sent()).toEqual([]);
   });
 });
 

@@ -2,11 +2,12 @@
  * The super-admin console's wire shapes.
  *
  * A separate login (its own JWT and `super_admins` table, never Firebase), and a
- * deliberately narrow surface: tenants, users, phone numbers for agency's one
- * VoiceLink account, per-account concurrency limits, per-account settings
+ * deliberately narrow surface: tenants, users, phone numbers (on the service's own
+ * carrier accounts and on tenants' own, docs/carriers.md), the telephony providers' read with
+ * their capabilities, per-account concurrency limits, per-account settings
  * (`./settings`), feature-flag overrides, the super-admin list and login, the
  * super-admin audit trail, and read-only usage counts (`./super-admin-usage`).
- * Left out: credits, telephony providers, SIP, bulk dispatch, dispatch lanes.
+ * Left out: credits, telephony provider writes, SIP, bulk dispatch, dispatch lanes.
  *
  * Shapes marked **NEW** are specific to Magick Agency.
  */
@@ -14,6 +15,8 @@
 import type { Membership, Tenant } from './auth';
 import type { InviteEmailResult } from './team';
 import type { Role } from '../../rbac';
+import type { TelephonyNumberSource } from './super-admin-telephony-credentials';
+import type { AllListed } from '../../primitives';
 
 // ─── Super-admins and login ─────────────────────────────────────────────────
 
@@ -234,15 +237,50 @@ export interface SuperAdminAuditListResponse {
   actions: string[];
 }
 
-// ─── Phone numbers (agency's one VoiceLink account) ─────────────────────────
+// ─── Telephony providers (read-only) ────────────────────────────────────────
+
+/**
+ * A carrier row (`GET /super-admin/telephony-providers`), with what its catalogue entry
+ * declares (docs/carriers.md CR1, CR6, CR11). The rows are seeded by migrations; there are no
+ * provider writes.
+ */
+export interface TelephonyProvider {
+  id: string;
+  /** The provider name, as rows and campaigns carry it. UI copy names it by its alias, never raw. */
+  name: string;
+  display_name: string;
+  status: 'active' | 'inactive';
+  /** Takes tenants' own carrier accounts (credentials). The same as `tenant_accounts`; kept for older consoles. */
+  takes_tenant_credentials: boolean;
+  /** Has the service's own account: a number added with no credential is on it. */
+  service_account: boolean;
+  /** Takes tenants' own carrier accounts: a number may be pinned to one of its credentials. */
+  tenant_accounts: boolean;
+  /**
+   * Where its tenant-account numbers come from: `sync` (a credential's "Sync numbers"; never
+   * added by hand), `manual` (added by hand, pinned to a credential), or null when it takes
+   * no tenant accounts.
+   */
+  number_source: TelephonyNumberSource | null;
+  /** Whether a tenant account on it takes inbound calls (CR11). */
+  supports_inbound: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** `GET /super-admin/telephony-providers?status=`. */
+export interface TelephonyProvidersResponse {
+  providers: TelephonyProvider[];
+}
+
+// ─── Phone numbers ──────────────────────────────────────────────────────────
 //
 // Campaign `caller_ids` are validated against this inventory when a campaign is
 // saved.
 
 /**
  * There is no `pool_eligible` flag: Magick Agency has no signup pool and no
- * pooled number. `provider_*` is kept
- * (it is how the row names its carrier) although only VoiceLink can appear.
+ * pooled number. `provider_*` names the row's carrier.
  */
 export interface PhoneNumber {
   id: string;
@@ -257,8 +295,9 @@ export interface PhoneNumber {
   status: 'active' | 'retired' | 'deleted';
   notes: string | null;
   /**
-   * The tenant carrier credential the number was synced from (BYOC, B18), or null for
-   * a number on the service's own account. Optional: older servers do not send it.
+   * The tenant carrier credential the number is pinned to (BYOC, B18): synced from it, or
+   * added by hand onto it (CR6); null for a number on the service's own account. Never
+   * changes after the number is created. Optional: older servers do not send it.
    */
   telephony_credential_id?: string | null;
   /**
@@ -290,8 +329,8 @@ export interface TenantPhoneAssignment {
   provider_name: string;
   provider_display_name: string;
   /**
-   * The tenant carrier credential the number was synced from, or null for the
-   * service's own account: a call from this number dials on that account. Optional:
+   * The tenant carrier credential the number is pinned to (synced or added by hand), or null
+   * for the service's own account: a call from this number dials on that account. Optional:
    * older servers do not send it.
    */
   telephony_credential_id?: string | null;
@@ -319,7 +358,11 @@ export interface PhoneNumberDetailResponse {
 }
 
 /**
- * `POST /super-admin/phone-numbers`.
+ * `POST /super-admin/phone-numbers`. Refusals (docs/carriers.md CR6): 400 when the carrier
+ * does not take the account mode asked for (no credential on a carrier without a service
+ * account; a credential on a carrier without tenant accounts, or whose numbers are synced,
+ * `number_source: 'sync'`), 404 `telephony_credential_not_found` (no such credential, or one
+ * on another carrier), 409 `telephony_credential_not_active`, 409 when the number exists.
  */
 export interface CreatePhoneNumberBody {
   phone_number: string;
@@ -328,6 +371,12 @@ export interface CreatePhoneNumberBody {
   region?: string;
   max_concurrent_calls: number;
   capabilities?: string[];
+  /**
+   * Pin the number to this tenant credential (a carrier with `number_source: 'manual'`): it is
+   * created on that tenant's own carrier account and assigned, untagged, to the credential's
+   * tenant in the same write. Omitted or null: the service's own account.
+   */
+  telephony_credential_id?: string | null;
 }
 
 /**
@@ -337,6 +386,90 @@ export interface UpdatePhoneNumberBody {
   label?: string;
   notes?: string;
   max_concurrent_calls?: number;
+}
+
+/**
+ * `POST /super-admin/phone-numbers/:id/pin` (docs/carriers.md CR6): move a number on the
+ * service's own carrier account onto a tenant's own account of the same carrier, pinning it to
+ * that tenant's credential and assigning it, untagged, to the credential's tenant. One way:
+ * nothing unpins a number. Only on a carrier whose tenant-account numbers are added by hand
+ * (`number_source: 'manual'`, VoiceLink): a synced carrier's numbers come from the sync.
+ */
+export interface PinPhoneNumberBody {
+  telephony_credential_id: string;
+}
+
+/** `POST /super-admin/phone-numbers/:id/pin`, 200. */
+export interface PinPhoneNumberResponse {
+  phone_number: PhoneNumber;
+  /** The credential's tenant, which the number is now assigned to. */
+  tenant_id: string;
+}
+
+/**
+ * Why `POST /super-admin/phone-numbers/:id/pin` refused (`code` on the error body; nothing was
+ * changed). A malformed id or body is a plain 400 with no code.
+ * - `phone_number_not_found` (404): no such number.
+ * - `phone_number_not_active` (409): the number is retired or deleted.
+ * - `phone_number_already_pinned` (409): it is on a tenant's carrier account already; a pin
+ *   never changes.
+ * - `carrier_numbers_not_pinned_by_hand` (409): its carrier takes no numbers by hand on tenant
+ *   accounts (no tenant accounts, or numbers that come from a sync).
+ * - `telephony_credential_not_found` (404): no such credential, or one on another carrier.
+ * - `telephony_credential_not_active` (409): the credential is disabled, invalid or revoked.
+ * - `phone_number_assigned_elsewhere` (409): assigned to tenants other than the credential's
+ *   (`tenant_count`); unassign it from them first.
+ * - `phone_number_in_use` (409): campaigns on the service's own account that are not finished
+ *   use it as a caller ID (`campaigns_total`, the first five in `campaigns`); remove it from them
+ *   or stop them first.
+ */
+export type PinPhoneNumberErrorCode =
+  | 'phone_number_not_found'
+  | 'phone_number_not_active'
+  | 'phone_number_already_pinned'
+  | 'carrier_numbers_not_pinned_by_hand'
+  | 'telephony_credential_not_found'
+  | 'telephony_credential_not_active'
+  | 'phone_number_assigned_elsewhere'
+  | 'phone_number_in_use';
+
+/** Runtime list of {@link PinPhoneNumberErrorCode}, in declaration order. */
+export const PIN_PHONE_NUMBER_ERROR_CODES = [
+  'phone_number_not_found',
+  'phone_number_not_active',
+  'phone_number_already_pinned',
+  'carrier_numbers_not_pinned_by_hand',
+  'telephony_credential_not_found',
+  'telephony_credential_not_active',
+  'phone_number_assigned_elsewhere',
+  'phone_number_in_use',
+] as const satisfies readonly PinPhoneNumberErrorCode[];
+
+const _allPinPhoneNumberErrorCodesListed: AllListed<PinPhoneNumberErrorCode, typeof PIN_PHONE_NUMBER_ERROR_CODES> = true;
+void _allPinPhoneNumberErrorCodesListed;
+
+/** A service-account campaign that holds the number (`phone_number_in_use`). */
+export interface PinPhoneNumberCampaign {
+  campaign_id: string;
+  campaign_name: string;
+  status: 'draft' | 'running' | 'paused' | 'stopping';
+  tenant_name: string;
+  /** Null when the account was removed. */
+  account_name: string | null;
+}
+
+/** The error body of `POST /super-admin/phone-numbers/:id/pin`. `message` is ready to show. */
+export interface PinPhoneNumberError {
+  error: string;
+  code: PinPhoneNumberErrorCode;
+  message: string;
+  /** `phone_number_not_active`, `telephony_credential_not_active`: the status it has. */
+  status?: string;
+  /** `phone_number_assigned_elsewhere`: how many other tenants it is assigned to. */
+  tenant_count?: number;
+  /** `phone_number_in_use`: how many campaigns hold it, and the first five. */
+  campaigns_total?: number;
+  campaigns?: PinPhoneNumberCampaign[];
 }
 
 /** `POST /super-admin/phone-numbers/:id/assign`. */

@@ -11,7 +11,7 @@ const STEPS: Array<{ title: string; text: string; icon: LucideIcon }> = [
   },
   {
     title: 'Add contacts',
-    text: 'Upload a CSV roster and map its columns to the contact fields.',
+    text: 'Upload an Excel or CSV file of customers and map its columns to the contact fields.',
     icon: Upload,
   },
   {

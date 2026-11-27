@@ -146,6 +146,37 @@ export class CarrierDialRefusedError extends Error {
 }
 
 /**
+ * The carrier accepted our login moments before, then refused the dial request itself with
+ * HTTP 401 (VoiceLink on a tenant's account: an `add_lead` still 401 after a successful fresh
+ * re-login, CR4). Nothing was placed. It is NOT a verdict on the credential: the login is the
+ * only one (a refused login is {@link CarrierAuthRejectedError}), since another process's login
+ * may have retired the token between our login and its retry. But an account whose login works
+ * while its API refuses every dial (API access withdrawn at the carrier) fails each dial this
+ * way, so it has its own identity: the bridge ends the call `CARRIER_API_REFUSED`, the
+ * campaign's refusal breaker counts it in a streak of its own with a higher threshold
+ * (`agency/carrier-refusal-breaker.ts`), and `carrier_dial_refusals_total` counts it
+ * (`api_refused`). Deliberately not a {@link CarrierDialRefusedError}: PL11's streak, which
+ * counts that class's 4xx, must not count it as well.
+ */
+export class CarrierApiRefusedError extends Error {
+  readonly carrierApiRefused = true;
+  constructor(
+    /** The provider name, e.g. `voicelink`. */
+    readonly provider: string,
+    readonly httpStatus: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CarrierApiRefusedError';
+  }
+}
+
+/** Whether `err`, or an error in its `cause` chain, is a {@link CarrierApiRefusedError}. */
+export function isCarrierApiRefused(err: unknown): boolean {
+  return causeChainHas(err, 'carrierApiRefused');
+}
+
+/**
  * The HTTP status of the {@link CarrierDialRefusedError} in `err`'s `cause` chain, or null
  * when there is none (or it carries no status). Bounded walk.
  */

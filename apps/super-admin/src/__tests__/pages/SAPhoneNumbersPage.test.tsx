@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   getPhoneNumberInbound: vi.fn(),
   linkPhoneNumberInbound: vi.fn(),
   unlinkPhoneNumberInbound: vi.fn(),
+  listTelephonyCredentials: vi.fn(),
+  listTenants: vi.fn(),
+  pinPhoneNumber: vi.fn(),
 }));
 
 vi.mock('../../api/super-admin', () => ({
@@ -28,9 +31,13 @@ vi.mock('../../api/super-admin', () => ({
   getPhoneNumberInbound: mocks.getPhoneNumberInbound,
   linkPhoneNumberInbound: mocks.linkPhoneNumberInbound,
   unlinkPhoneNumberInbound: mocks.unlinkPhoneNumberInbound,
+  listTelephonyCredentials: mocks.listTelephonyCredentials,
+  listTenants: mocks.listTenants,
+  pinPhoneNumber: mocks.pinPhoneNumber,
 }));
 
 import SAPhoneNumbersPage from '../../pages/super-admin/SAPhoneNumbersPage';
+import type { TelephonyCredential } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
 
 function makePhone(overrides: Partial<PhoneNumber>): PhoneNumber {
   return {
@@ -55,14 +62,40 @@ function makePhone(overrides: Partial<PhoneNumber>): PhoneNumber {
 const first = makePhone({ id: 'pn-first', phone_number: '+918046733449' });
 const second = makePhone({ id: 'pn-second', phone_number: '+910000000002' });
 
+const AT = { created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
+/** Every capability as `GET /super-admin/telephony-providers` sends it (docs/carriers.md CR1, CR6, CR11). */
+const PROVIDERS = [
+  // The service's own account, and tenants' own with numbers added by hand; no inbound.
+  { id: 'prov-1', name: 'voicelink', display_name: 'VoiceLink', status: 'active', takes_tenant_credentials: true, service_account: true, tenant_accounts: true, number_source: 'manual', supports_inbound: false, ...AT },
+  { id: 'prov-old', name: 'retired-carrier', display_name: 'Retired', status: 'inactive', takes_tenant_credentials: false, service_account: true, tenant_accounts: false, number_source: null, supports_inbound: false, ...AT },
+  // Tenants' own accounts only, numbers synced, inbound taken.
+  { id: 'prov-byoc', name: 'plivo', display_name: 'Plivo', status: 'active', takes_tenant_credentials: true, service_account: false, tenant_accounts: true, number_source: 'sync', supports_inbound: true, ...AT },
+  // Tenants' own accounts only, numbers added by hand (no such carrier yet: the rule, not a name).
+  { id: 'prov-z99', name: 'z99', display_name: 'Z99', status: 'active', takes_tenant_credentials: true, service_account: false, tenant_accounts: true, number_source: 'manual', supports_inbound: false, ...AT },
+];
+
+function makeCredential(over: Partial<TelephonyCredential>): TelephonyCredential {
+  return {
+    id: 'cred-vl', tenant_id: 'tenant-acme', provider: 'voicelink', label: 'Acme direct', status: 'active',
+    account_ref: 'acme-direct', public_config: { username: 'acme-direct' }, secret_version: 1, secret_hint: 'ab12',
+    verified_at: null, last_error: null, max_concurrent_calls: null, created_by: null, updated_by: null, created_at: AT.created_at, updated_at: AT.updated_at,
+    revoked_at: null, shredded_at: null, ...over,
+  };
+}
+
+const CREDENTIALS: TelephonyCredential[] = [
+  makeCredential({}),
+  makeCredential({ id: 'cred-vl-zen', tenant_id: 'tenant-zen', label: 'Zen line' }),
+  makeCredential({ id: 'cred-vl-off', label: 'Acme old', status: 'disabled' }),
+  makeCredential({ id: 'cred-plivo', provider: 'plivo', label: 'Acme main', account_ref: 'MAXXXX' }),
+];
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.listPhoneNumbers.mockResolvedValue([first, second]);
-  mocks.listTelephonyProviders.mockResolvedValue([
-    { id: 'prov-1', name: 'voicelink', display_name: 'VoiceLink', status: 'active', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
-    { id: 'prov-old', name: 'retired-carrier', display_name: 'Retired', status: 'inactive', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
-    { id: 'prov-byoc', name: 'plivo', display_name: 'Plivo', status: 'active', takes_tenant_credentials: true, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
-  ]);
+  mocks.listTelephonyProviders.mockResolvedValue(PROVIDERS);
+  mocks.listTelephonyCredentials.mockResolvedValue(CREDENTIALS);
+  mocks.listTenants.mockResolvedValue({ tenants: [{ id: 'tenant-acme', name: 'Acme' }, { id: 'tenant-zen', name: 'Zen' }] });
   mocks.createPhoneNumber.mockResolvedValue(makePhone({}));
   mocks.updatePhoneNumber.mockResolvedValue(makePhone({}));
   mocks.getPhoneNumberDetail.mockResolvedValue({ phone_number: second, assignments: [] });
@@ -134,6 +167,171 @@ describe('SAPhoneNumbersPage — provider picker', () => {
 
     await waitFor(() => expect(mocks.updatePhoneNumber).toHaveBeenCalledTimes(1));
     expect(mocks.updatePhoneNumber.mock.calls[0]![1]).not.toHaveProperty('pool_eligible');
+  });
+});
+
+describe('SAPhoneNumbersPage — Add number by account mode (docs/carriers.md CR6)', () => {
+  async function openAdd() {
+    render(<SAPhoneNumbersPage />);
+    await waitFor(() => screen.getByText('+918046733449'));
+    fireEvent.click(screen.getByRole('button', { name: /add number/i }));
+    const scope = within(screen.getByRole('dialog'));
+    await waitFor(() => expect(mocks.listTenants).toHaveBeenCalled());
+    return scope;
+  }
+  const fillNumber = (scope: ReturnType<typeof within>) =>
+    fireEvent.change(scope.getByPlaceholderText('+919876543210'), { target: { value: '+910000000009' } });
+  const accountOptions = (scope: ReturnType<typeof within>) =>
+    Array.from((scope.getByLabelText('Account') as HTMLSelectElement).options).map(o => [o.value, o.textContent]);
+
+  it('offers a carrier with a service account or by-hand tenant numbers, never one whose numbers sync', async () => {
+    const scope = await openAdd();
+    const offered = Array.from((scope.getByLabelText('Provider') as HTMLSelectElement).options).map(o => o.value);
+    expect(offered).toEqual(['', 'prov-1', 'prov-z99']);
+    // The synced carrier keeps today's note.
+    expect(scope.getByTestId('synced-carriers-hint').textContent)
+      .toBe('Numbers on Pravah (Plivo) come from a tenant’s own carrier account: use Sync numbers on its credential under Telephony credentials.');
+  });
+
+  it('on a carrier with both: the service’s own account first, then each ACTIVE account of that carrier, named tenant · label', async () => {
+    const scope = await openAdd();
+    expect(scope.queryByLabelText('Account')).toBeNull();
+    fireEvent.change(scope.getByLabelText('Provider'), { target: { value: 'prov-1' } });
+    await waitFor(() => expect(accountOptions(scope)).toEqual([
+      ['service', 'The service’s own account'],
+      ['cred-vl', 'Acme · Acme direct'],
+      ['cred-vl-zen', 'Zen · Zen line'],
+    ]));
+    expect(scope.getByTestId('account-hint').textContent)
+      .toBe('A number on a tenant’s own account is assigned to that tenant automatically.');
+    expect(scope.queryByTestId('accounts-none')).toBeNull();
+  });
+
+  it('sends a null credential for the service’s own account', async () => {
+    const scope = await openAdd();
+    fillNumber(scope);
+    fireEvent.change(scope.getByLabelText('Provider'), { target: { value: 'prov-1' } });
+    fireEvent.click(scope.getByRole('button', { name: /add number/i }));
+    await waitFor(() => expect(mocks.createPhoneNumber).toHaveBeenCalledTimes(1));
+    expect(mocks.createPhoneNumber.mock.calls[0]![0]).toEqual(expect.objectContaining({
+      phone_number: '+910000000009', provider_id: 'prov-1', telephony_credential_id: null,
+    }));
+  });
+
+  it('sends the chosen tenant account’s credential', async () => {
+    const scope = await openAdd();
+    fillNumber(scope);
+    fireEvent.change(scope.getByLabelText('Provider'), { target: { value: 'prov-1' } });
+    await waitFor(() => expect(accountOptions(scope)).toHaveLength(3));
+    fireEvent.change(scope.getByLabelText('Account'), { target: { value: 'cred-vl-zen' } });
+    fireEvent.click(scope.getByRole('button', { name: /add number/i }));
+    await waitFor(() => expect(mocks.createPhoneNumber).toHaveBeenCalledTimes(1));
+    expect(mocks.createPhoneNumber.mock.calls[0]![0]).toEqual(expect.objectContaining({
+      provider_id: 'prov-1', telephony_credential_id: 'cred-vl-zen',
+    }));
+  });
+
+  it('on a tenant-only carrier the account is required: no service option, nothing sent until one is picked', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([...CREDENTIALS, makeCredential({ id: 'cred-z99', provider: 'z99', label: 'Acme z' })]);
+    const scope = await openAdd();
+    fillNumber(scope);
+    fireEvent.change(scope.getByLabelText('Provider'), { target: { value: 'prov-z99' } });
+    await waitFor(() => expect(accountOptions(scope)).toEqual([
+      ['', 'Select a tenant’s account…'],
+      ['cred-z99', 'Acme · Acme z'],
+    ]));
+    expect((scope.getByLabelText('Account') as HTMLSelectElement).value).toBe('');
+    expect((scope.getByLabelText('Account') as HTMLSelectElement).required).toBe(true);
+    fireEvent.click(scope.getByRole('button', { name: /add number/i }));
+    expect(mocks.createPhoneNumber).not.toHaveBeenCalled();
+
+    fireEvent.change(scope.getByLabelText('Account'), { target: { value: 'cred-z99' } });
+    fireEvent.click(scope.getByRole('button', { name: /add number/i }));
+    await waitFor(() => expect(mocks.createPhoneNumber).toHaveBeenCalledTimes(1));
+    expect(mocks.createPhoneNumber.mock.calls[0]![0]).toEqual(expect.objectContaining({
+      provider_id: 'prov-z99', telephony_credential_id: 'cred-z99',
+    }));
+  });
+
+  it('says so when a tenant-only carrier has no active account to add a number to', async () => {
+    const scope = await openAdd();
+    fireEvent.change(scope.getByLabelText('Provider'), { target: { value: 'prov-z99' } });
+    expect((await scope.findByTestId('accounts-none')).textContent)
+      .toBe('No tenant has an active Navtara (Z99) account. Add one under Telephony credentials first.');
+  });
+
+  it.each([
+    ['telephony_credential_not_active', 409, 'That carrier account is not active, so a number cannot be added to it. Enable or verify it under Telephony credentials, then try again.'],
+    ['telephony_credential_not_found', 404, 'That carrier account no longer exists on this carrier. Pick another account.'],
+  ])('says %s in words and reloads the accounts', async (code, status, copy) => {
+    mocks.createPhoneNumber.mockRejectedValue(Object.assign(new Error('server words'), {
+      statusCode: status, details: { error: status === 404 ? 'Not Found' : 'Conflict', code, message: 'server words' },
+    }));
+    const scope = await openAdd();
+    fillNumber(scope);
+    fireEvent.change(scope.getByLabelText('Provider'), { target: { value: 'prov-1' } });
+    await waitFor(() => expect(accountOptions(scope)).toHaveLength(3));
+    fireEvent.change(scope.getByLabelText('Account'), { target: { value: 'cred-vl' } });
+    const loads = mocks.listTelephonyCredentials.mock.calls.length;
+    fireEvent.click(scope.getByRole('button', { name: /add number/i }));
+    expect(await scope.findByText(copy)).toBeTruthy();
+    expect(scope.queryByText('server words')).toBeNull();
+    expect(mocks.listTelephonyCredentials.mock.calls.length).toBe(loads + 1);
+  });
+
+  it('shows the server’s sentence for a refusal without a code (a carrier that does not take the mode)', async () => {
+    mocks.createPhoneNumber.mockRejectedValue(Object.assign(new Error('This carrier’s numbers come from a credential’s Sync numbers.'), {
+      statusCode: 400, details: { error: 'Bad Request', message: 'This carrier’s numbers come from a credential’s Sync numbers.' },
+    }));
+    const scope = await openAdd();
+    fillNumber(scope);
+    fireEvent.change(scope.getByLabelText('Provider'), { target: { value: 'prov-1' } });
+    fireEvent.click(scope.getByRole('button', { name: /add number/i }));
+    expect(await scope.findByText('This carrier’s numbers come from a credential’s Sync numbers.')).toBeTruthy();
+  });
+
+  it('reads an older server (no capability fields) as before: tenant-account carriers out, no Account picker', async () => {
+    mocks.listTelephonyProviders.mockResolvedValue([
+      { id: 'prov-1', name: 'voicelink', display_name: 'VoiceLink', status: 'active', ...AT },
+      { id: 'prov-byoc', name: 'plivo', display_name: 'Plivo', status: 'active', takes_tenant_credentials: true, ...AT },
+    ]);
+    const scope = await openAdd();
+    const offered = Array.from((scope.getByLabelText('Provider') as HTMLSelectElement).options).map(o => o.value);
+    expect(offered).toEqual(['', 'prov-1']);
+    fireEvent.change(scope.getByLabelText('Provider'), { target: { value: 'prov-1' } });
+    expect(scope.queryByLabelText('Account')).toBeNull();
+  });
+});
+
+describe('SAPhoneNumbersPage — the carrier account a number is on (CR6, CR7)', () => {
+  const pinned = makePhone({ id: 'pn-vl', phone_number: '+912200000006', telephony_credential_id: 'cred-vl' });
+
+  it('names a pinned number’s tenant account by its label and tenant; the service’s own as Service account', async () => {
+    mocks.listPhoneNumbers.mockResolvedValue([pinned, first]);
+    mocks.getPhoneNumberDetail.mockResolvedValue({ phone_number: pinned, assignments: [] });
+    render(<SAPhoneNumbersPage />);
+    const row = (await screen.findByText('+912200000006')).closest('tr')!;
+    await waitFor(() => expect(within(row).getByTestId('number-account').textContent).toBe('Acme direct (Acme)'));
+    // A number on the service's own account carries no extra line in the list.
+    expect(within(screen.getByText('+918046733449').closest('tr')!).queryByTestId('number-account')).toBeNull();
+
+    fireEvent.click(row);
+    expect((await screen.findByTestId('number-account-detail')).textContent).toBe('Acme direct (Acme)');
+    fireEvent.click(screen.getByText('+918046733449').closest('tr')!);
+    await waitFor(() => expect(screen.getByTestId('number-account-detail').textContent).toBe('Service account'));
+  });
+
+  it('says a tenant account it cannot name is a tenant’s own, and marks one not active', async () => {
+    mocks.listPhoneNumbers.mockResolvedValue([
+      { ...pinned, telephony_credential_id: 'cred-unknown' },
+      { ...pinned, id: 'pn-off', phone_number: '+912200000007', telephony_credential_id: 'cred-vl-off' },
+    ]);
+    render(<SAPhoneNumbersPage />);
+    const unknown = (await screen.findByText('+912200000006')).closest('tr')!;
+    await waitFor(() => expect(mocks.listTelephonyCredentials).toHaveBeenCalled());
+    await waitFor(() => expect(within(unknown).getByTestId('number-account').textContent).toBe('A tenant’s own account'));
+    const off = screen.getByText('+912200000007').closest('tr')!;
+    expect(within(off).getByTestId('number-account').textContent).toBe('Acme old (Acme), disabled');
   });
 });
 
@@ -451,6 +649,19 @@ describe('SAPhoneNumbersPage — inbound calls (docs/inbound.md §8.1)', () => {
     expect(mocks.getPhoneNumberInbound).toHaveBeenCalledTimes(1);
   });
 
+  it('shows no inbound panel for a pinned number on a carrier without inbound, and never asks for its state (CR11)', async () => {
+    const voicelinkPinned = makePhone({ id: 'pn-vl', phone_number: '+912200000006', telephony_credential_id: 'cred-vl' });
+    mocks.listPhoneNumbers.mockResolvedValue([voicelinkPinned]);
+    mocks.getPhoneNumberDetail.mockResolvedValue({ phone_number: voicelinkPinned, assignments: [] });
+    render(<SAPhoneNumbersPage />);
+    await waitFor(() => expect(mocks.listTelephonyProviders).toHaveBeenCalled());
+    fireEvent.click((await screen.findByText('+912200000006')).closest('tr')!);
+    await waitFor(() => expect(mocks.getPhoneNumberDetail).toHaveBeenCalledWith('pn-vl'));
+    expect(await screen.findByText('No tenants assigned.')).toBeTruthy();
+    expect(screen.queryByTestId('number-inbound')).toBeNull();
+    expect(mocks.getPhoneNumberInbound).not.toHaveBeenCalled();
+  });
+
   it('flags a linked number no account route answers (its callers hear the closed message); a routed one is a plain badge', async () => {
     mocks.listPhoneNumbers.mockResolvedValue([
       { ...synced, inbound_route_name: null },
@@ -463,5 +674,140 @@ describe('SAPhoneNumbersPage — inbound calls (docs/inbound.md §8.1)', () => {
     const routed = screen.getByText('+14155550102').closest('tr')!;
     expect(within(routed).getByText('Inbound').getAttribute('title')).toBe('Linked to inbound calls, answered by Main line');
     expect(within(routed).queryByTestId('inbound-no-route')).toBeNull();
+  });
+});
+
+describe('SAPhoneNumbersPage — Move to a tenant’s account (docs/carriers.md CR6 amended)', () => {
+  const service = makePhone({ id: 'pn-svc', phone_number: '+912200000001' });
+  const moveButton = () => screen.queryByRole('button', { name: 'Move to a tenant’s account' });
+
+  async function openRow(phone: PhoneNumber) {
+    mocks.getPhoneNumberDetail.mockResolvedValue({ phone_number: phone, assignments: [] });
+    render(<SAPhoneNumbersPage />);
+    await waitFor(() => expect(mocks.listTelephonyProviders).toHaveBeenCalled());
+    fireEvent.click((await screen.findByText(phone.phone_number)).closest('tr')!);
+    await waitFor(() => expect(mocks.getPhoneNumberDetail).toHaveBeenCalledWith(phone.id));
+  }
+
+  async function openDialog() {
+    mocks.listPhoneNumbers.mockResolvedValue([service]);
+    await openRow(service);
+    fireEvent.click(await screen.findByRole('button', { name: 'Move to a tenant’s account' }));
+    const scope = within(await screen.findByRole('dialog'));
+    await waitFor(() => expect(mocks.listTenants).toHaveBeenCalled());
+    return scope;
+  }
+
+  it.each([
+    ['a number already on a tenant’s account', makePhone({ id: 'pn-x', phone_number: '+912200000009', telephony_credential_id: 'cred-vl' })],
+    ['a retired number', makePhone({ id: 'pn-x', phone_number: '+912200000009', status: 'retired' })],
+    ['a number on a carrier whose tenant numbers sync', makePhone({ id: 'pn-x', phone_number: '+912200000009', provider_id: 'prov-byoc', provider_name: 'plivo' })],
+  ])('is not offered on %s', async (_what, phone) => {
+    mocks.listPhoneNumbers.mockResolvedValue([phone]);
+    await openRow(phone);
+    expect(await screen.findByText('No tenants assigned.')).toBeTruthy();
+    expect(moveButton()).toBeNull();
+  });
+
+  it('offers the carrier’s active accounts, says it is one way, and moves only once one is picked', async () => {
+    const scope = await openDialog();
+    await waitFor(() => expect(Array.from((scope.getByLabelText('Account') as HTMLSelectElement).options).map(o => [o.value, o.textContent])).toEqual([
+      ['', 'Select a tenant’s account…'],
+      ['cred-vl', 'Acme · Acme direct'],
+      ['cred-vl-zen', 'Zen · Zen line'],
+    ]));
+    expect(scope.getByTestId('pin-one-way').textContent)
+      .toBe('This cannot be undone: the number moves to that tenant’s own carrier account for good, and is assigned to that tenant.');
+    const move = scope.getByRole('button', { name: 'Move number' }) as HTMLButtonElement;
+    expect(move.disabled).toBe(true);
+
+    const pinned = { ...service, telephony_credential_id: 'cred-vl' };
+    mocks.pinPhoneNumber.mockResolvedValue({ phone_number: pinned, tenant_id: 'tenant-acme' });
+    mocks.listPhoneNumbers.mockResolvedValue([pinned]);
+    mocks.getPhoneNumberDetail.mockResolvedValue({
+      phone_number: pinned, assignments: [{ tenant_id: 'tenant-acme', tenant_name: 'Acme', is_default: false, assigned_at: '2026-11-25T00:00:00Z' }],
+    });
+    fireEvent.change(scope.getByLabelText('Account'), { target: { value: 'cred-vl' } });
+    fireEvent.click(move);
+    await waitFor(() => expect(mocks.pinPhoneNumber).toHaveBeenCalledWith('pn-svc', { telephony_credential_id: 'cred-vl' }));
+    // The dialog closes, the row says its new account, and the open row shows the new tenant.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(screen.getByTestId('number-account-detail').textContent).toBe('Acme direct (Acme)'));
+    expect(await screen.findByText('Acme', { selector: 'span' })).toBeTruthy();
+    expect(moveButton()).toBeNull();
+  });
+
+  /** Shaped like the `SuperAdminApiError` `saFetch` throws for a pin refusal. */
+  const refusal = (status: number, body: Record<string, unknown>) =>
+    Object.assign(new Error(String(body['message'] ?? 'server words')), { statusCode: status, details: { error: 'Conflict', message: 'server words', ...body } });
+
+  async function refusedWith(err: unknown) {
+    mocks.pinPhoneNumber.mockRejectedValue(err);
+    const scope = await openDialog();
+    await waitFor(() => expect((scope.getByLabelText('Account') as HTMLSelectElement).options).toHaveLength(3));
+    fireEvent.change(scope.getByLabelText('Account'), { target: { value: 'cred-vl' } });
+    fireEvent.click(scope.getByRole('button', { name: 'Move number' }));
+    return within(await scope.findByTestId('pin-error'));
+  }
+
+  it('names the campaigns in the way as “name (tenant / account, status)”, and how many more', async () => {
+    const error = await refusedWith(refusal(409, {
+      code: 'phone_number_in_use', campaigns_total: 7,
+      campaigns: [
+        { campaign_id: 'c1', campaign_name: 'Collections', status: 'running', tenant_name: 'Acme', account_name: 'North' },
+        { campaign_id: 'c2', campaign_name: 'Renewals', status: 'paused', tenant_name: 'Zen', account_name: null },
+      ],
+    }));
+    expect(error.getByText('Campaigns on the service’s own account still use this number as a caller ID. Remove it from them, or stop them, then move it.')).toBeTruthy();
+    expect(error.getAllByRole('listitem').map(li => li.textContent)).toEqual([
+      'Collections (Acme / North, running)',
+      'Renewals (Zen / account removed, paused)',
+      'and 5 more',
+    ]);
+    expect(error.queryByText('server words')).toBeNull();
+  });
+
+  it.each([
+    [1, 'This number is assigned to another tenant. Unassign it from that tenant first, then move it.'],
+    [3, 'This number is assigned to 3 other tenants. Unassign it from them first, then move it.'],
+  ])('says to unassign it from the other tenant(s) first (%i)', async (tenantCount, copy) => {
+    const error = await refusedWith(refusal(409, { code: 'phone_number_assigned_elsewhere', tenant_count: tenantCount }));
+    expect(error.getByText(copy)).toBeTruthy();
+  });
+
+  it.each([
+    ['phone_number_not_found', 404, 'This number no longer exists. Refresh the list.'],
+    ['phone_number_not_active', 409, 'Only an active number can be moved. Reactivate it first.'],
+    ['phone_number_already_pinned', 409, 'This number is already on a tenant’s own carrier account, and that never changes.'],
+    ['carrier_numbers_not_pinned_by_hand', 409, 'Numbers on this carrier cannot be moved by hand: a tenant’s numbers on it come from Sync numbers on its credential.'],
+  ])('says %s in words', async (code, status, copy) => {
+    const error = await refusedWith(refusal(status, { code }));
+    expect(error.getByText(copy)).toBeTruthy();
+  });
+
+  it.each([
+    ['telephony_credential_not_found', 404, 'That carrier account no longer exists on this carrier. Pick another account.'],
+    ['telephony_credential_not_active', 409, 'That carrier account is not active, so a number cannot be moved onto it. Enable or verify it under Telephony credentials, then try again.'],
+  ])('says %s in words and reloads the accounts', async (code, status, copy) => {
+    mocks.pinPhoneNumber.mockRejectedValue(refusal(status, { code }));
+    const scope = await openDialog();
+    await waitFor(() => expect((scope.getByLabelText('Account') as HTMLSelectElement).options).toHaveLength(3));
+    fireEvent.change(scope.getByLabelText('Account'), { target: { value: 'cred-vl' } });
+    const loads = mocks.listTelephonyCredentials.mock.calls.length;
+    fireEvent.click(scope.getByRole('button', { name: 'Move number' }));
+    expect(within(await scope.findByTestId('pin-error')).getByText(copy)).toBeTruthy();
+    expect(mocks.listTelephonyCredentials.mock.calls.length).toBe(loads + 1);
+  });
+
+  it('shows the server’s sentence for a refusal without a known code', async () => {
+    const error = await refusedWith(Object.assign(new Error('telephony_credential_id must be a UUID'), { statusCode: 400, details: { error: 'Bad Request', message: 'telephony_credential_id must be a UUID' } }));
+    expect(error.getByText('telephony_credential_id must be a UUID')).toBeTruthy();
+  });
+
+  it('says so when no tenant has an active account on the carrier', async () => {
+    mocks.listTelephonyCredentials.mockResolvedValue([]);
+    const scope = await openDialog();
+    expect((await scope.findByTestId('pin-accounts-none')).textContent)
+      .toBe('No tenant has an active Swar (VoiceLink) account. Add one under Telephony credentials first.');
   });
 });

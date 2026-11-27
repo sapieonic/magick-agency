@@ -157,7 +157,7 @@ export function ColumnMapper({
       <table className={styles.table}>
         <thead>
           <tr>
-            <th scope="col">CSV column</th>
+            <th scope="col">Column</th>
             <th scope="col">Sample</th>
             <th scope="col">Use as</th>
           </tr>

@@ -30,11 +30,16 @@ import { sendRefusal } from '../helpers/refusal.js';
 // How many ids one `GET /summaries` may name; the staffing `my-*` routes split
 // longer lists into reads of at most this many.
 import { CAMPAIGN_SUMMARIES_MAX_IDS } from '../helpers/core-campaign.js';
-import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierRejected, configRejected, gate, ownedCampaign } from './guards.js';
+import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, carrierFieldsChanged, carrierRejected, configRejected, gate, ownedCampaign, replyCarrierRefusal } from './guards.js';
 import { contextColumnsRejected } from './guards.js';
 import { normalizeAgentScript } from '../../../agency/agent-script.js';
 import { trimCallerIds } from '../../../agency/campaign-stored-values.js';
-import { DEFAULT_CAMPAIGN_PROVIDER } from '../../../agency/campaign-carrier.js';
+import {
+  DEFAULT_CAMPAIGN_PROVIDER,
+  serviceCallerIdsJudged,
+  servicePinnedRefusalLocked,
+  type CampaignCarrierRefusal,
+} from '../../../agency/campaign-carrier.js';
 import {
   patchNamesSectionField,
   templateApplyRefsOf,
@@ -146,6 +151,12 @@ export function replyCallerIdDedicated(reply: FastifyReply, dropped: readonly st
  * or waits and then sees the new `caller_ids`. So a number cannot be dedicated as it is
  * dropped, and never silently reactivates when it is added back.
  *
+ * `lockedCallerIds` (CR9, `serviceCallerIdsJudged`): the numbers a write leaving the campaign on
+ * the service's own account adds. They are re-checked in that same transaction with their rows
+ * held `FOR SHARE` (`servicePinnedRefusalLocked`), after the campaign row's lock, so a move of
+ * one onto a tenant's account (CR6) either committed first and is refused (`{ carrierRefused }`)
+ * or waits for this write and then sees the campaign holding it.
+ *
  * A campaign made from a template (`template_source`, CT9) has its record recomputed from the row
  * as written, in the same transaction (`templateSourceRecompute`), when the body names a section
  * field: a section changed away from the template reads `campaign`, one changed back reads the
@@ -161,18 +172,28 @@ export async function writeCampaignPatch(
   campaign: AgencyCampaignRecord,
   body: Record<string, unknown>,
   applied: TemplateSourceRefs | null = null,
-): Promise<{ row: AgencyCampaignRecord | null } | { refused: string[] }> {
+  lockedCallerIds: readonly string[] = [],
+): Promise<{ row: AgencyCampaignRecord | null } | { refused: string[] } | { carrierRefused: CampaignCarrierRefusal }> {
   const recordAfter = applied
     ? await templateSourceApplied(campaign, applied)
     : patchNamesSectionField(body) ? await templateSourceRecompute(campaign) : null;
-  if (!('caller_ids' in body) && !recordAfter) return { row: await agencyCampaignRepository.update(campaign.id, body) };
+  if (!('caller_ids' in body) && !recordAfter && lockedCallerIds.length === 0) {
+    return { row: await agencyCampaignRepository.update(campaign.id, body) };
+  }
   const next = 'caller_ids' in body ? body.caller_ids as string[] : null;
-  return agencyCampaignRepository.updateLocked(campaign.id, body, async (row, client) => {
+  type Refused = { dedicated: string[] } | { carrier: CampaignCarrierRefusal };
+  const written = await agencyCampaignRepository.updateLocked<Refused>(campaign.id, body, async (row, client) => {
+    // CR9 under the numbers' `FOR SHARE` (after the campaign row's lock, the order every
+    // campaign write takes them in): a move onto a tenant's account cannot commit beside it.
+    const carrier = await servicePinnedRefusalLocked(client, lockedCallerIds);
+    if (carrier) return { carrier };
     if (next === null) return null;
     const dedicated = await agencyAgentCallerIdRepository.mapForCampaign(row.id, client);
     const dropped = droppedDedicatedCallerIds(row, dedicated.values(), next);
-    return dropped.length > 0 ? dropped : null;
+    return dropped.length > 0 ? { dedicated: dropped } : null;
   }, ...(recordAfter ? [recordAfter] : []));
+  if (!('refused' in written)) return written;
+  return 'carrier' in written.refused ? { carrierRefused: written.refused.carrier } : { refused: written.refused.dedicated };
 }
 
 /** Registered by `agencyCampaignRoutes` on its own instance, after its `authMiddleware`. */
@@ -218,11 +239,15 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // carrier (the column DEFAULT) with no credential; named, it is judged in full.
     const telephonyProvider = body?.telephony_provider ?? DEFAULT_CAMPAIGN_PROVIDER;
     const telephonyCredentialId = body?.telephony_credential_id ?? null;
-    if (await carrierRejected(request, reply, { ...body, caller_ids: callerIds }, {
+    const carrierEffective = {
       telephony_provider: telephonyProvider, telephony_credential_id: telephonyCredentialId, caller_ids: callerIds,
-    })) return reply;
+    };
+    if (await carrierRejected(request, reply, { ...body, caller_ids: callerIds }, carrierEffective)) return reply;
+    // CR9 again, in the INSERT's transaction, with the numbers' rows held `FOR SHARE`: a move of
+    // one onto a tenant's account cannot commit beside the create (`servicePinnedRefusalLocked`).
+    const lockedCallerIds = serviceCallerIdsJudged(carrierEffective, carrierFieldsChanged({ ...body, caller_ids: callerIds }));
 
-    const campaign = await agencyCampaignRepository.create({
+    const input: Parameters<typeof agencyCampaignRepository.create>[0] = {
       tenant_id: getTenantId(request),
       account_id: getAccountId(request),
       name,
@@ -276,7 +301,12 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       // The originator: the signed-in creator's user id when the public layer
       // creates it (IN8), any other caller's label verbatim, NULL with none.
       created_by: getOriginator(request) ?? null,
-    });
+    };
+    const created = lockedCallerIds.length === 0
+      ? { row: await agencyCampaignRepository.create(input) }
+      : await agencyCampaignRepository.createLocked(input, (client) => servicePinnedRefusalLocked(client, lockedCallerIds));
+    if ('refused' in created) return replyCarrierRefusal(reply, created.refused);
+    const campaign = created.row;
 
     auditLogger.log({
       tenantId: campaign.tenant_id, accountId: campaign.account_id,
@@ -415,11 +445,14 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // The carrier account, judged on the campaign as it will be after this PATCH: moving
     // to the service's carrier must clear the credential (`telephony_credential_id: null`),
     // moving to a tenant's carrier must name an active one and that account's numbers.
-    if (await carrierRejected(request, reply, body, {
+    const carrierEffective = {
       telephony_provider: 'telephony_provider' in body ? body.telephony_provider : campaign.telephony_provider,
       telephony_credential_id: 'telephony_credential_id' in body ? body.telephony_credential_id : campaign.telephony_credential_id,
       caller_ids: (body.caller_ids as string[] | undefined) ?? campaign.caller_ids,
-    }, campaign)) return reply;
+    };
+    if (await carrierRejected(request, reply, body, carrierEffective, campaign)) return reply;
+    // What CR9 judged, re-checked in the write's transaction under lock (`writeCampaignPatch`).
+    const lockedCallerIds = serviceCallerIdsJudged(carrierEffective, carrierFieldsChanged(body), campaign);
 
     if ('abandon_announcement_id' in body
       && await abandonAnnouncementRejected(request, reply, body.abandon_announcement_id)) return reply;
@@ -429,7 +462,8 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       && await analysisProfileRejected(request, reply, body.analysis_profile_id)) return reply;
     // DN6: never drop a dedicated caller ID. Checked at the write, under the campaign row's
     // lock (`writeCampaignPatch`), so after every other refusal.
-    const written = await writeCampaignPatch(campaign, body, applied);
+    const written = await writeCampaignPatch(campaign, body, applied, lockedCallerIds);
+    if ('carrierRefused' in written) return replyCarrierRefusal(reply, written.carrierRefused);
     if ('refused' in written) return replyCallerIdDedicated(reply, written.refused);
     const updated = written.row;
     // `update` can only return null if the row vanished between the ownership

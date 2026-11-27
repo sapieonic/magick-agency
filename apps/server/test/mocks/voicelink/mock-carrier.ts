@@ -16,7 +16,13 @@
  *  - Serves the REST API the adapter (`voicelink.adapter.ts`) and token manager
  *    (`voicelink-token-manager.ts`) call, with the response shapes in `voicelink.types.ts`.
  *    Bearer tokens are issued by `login` and checked on every other route;
- *    {@link MockVoicelinkCarrier.revokeTokens} expires them all (Sanctum expiry).
+ *    {@link MockVoicelinkCarrier.revokeTokens} expires them all (Sanctum expiry), or one
+ *    account's.
+ *  - Holds several accounts (the service's own login and tenants' own, docs/carriers.md CR2):
+ *    {@link MockVoicelinkCarrier.addAccount}. A token is bound to the account that logged in for
+ *    it, and every recorded request names the account it was made as (`account`), so a test can
+ *    tell which login a dial went out on. {@link MockVoicelinkCarrier.refuseLogins} scripts an
+ *    account's login refusals (401, 403, 422 …).
  *  - Records every request (route, body, auth header, the status it was answered with).
  *  - Takes injectable faults per route: latency, any status (5xx, 429, 4xx), a request
  *    that never answers, a 200 with a non-JSON body, a reset TCP connection, a login with
@@ -68,6 +74,12 @@ export interface RecordedRequest {
   path: string;
   query: Record<string, string>;
   authorization: string | null;
+  /**
+   * The account the request was made as: for a login, the username it named (whether or not it
+   * was accepted); for any other route, the account its bearer token was issued to (null for no
+   * token, or one the carrier does not know or has expired).
+   */
+  account: string | null;
   body: unknown;
   rawBody: string;
   receivedAt: number;
@@ -125,7 +137,16 @@ export class MockVoicelinkCarrier {
   private readonly httpSockets = new Set<Socket>();
   private readonly mediaSockets = new Set<WebSocket>();
   private readonly faults: FaultRule[] = [];
-  private readonly validTokens = new Set<string>();
+  /** Live bearer token → the account (username) it was issued to. */
+  private readonly validTokens = new Map<string, string>();
+  /** username → password, the default account first. */
+  private readonly accounts = new Map<string, string>();
+  /** username → the status its next logins are refused with, and how many remain. */
+  private readonly loginRefusals = new Map<string, { status: number; remaining: number }>();
+  /** Accounts whose logins succeed while every authenticated route answers 401 ({@link withdrawApiAccess}). */
+  private readonly apiWithdrawn = new Set<string>();
+  /** Whether a login retires the account's earlier tokens ({@link retireTokensOnLogin}). */
+  private retireOnLogin = false;
   private tokenSeq = 0;
   private reqSeq = 0;
   private queueSeq = 1000;
@@ -138,7 +159,37 @@ export class MockVoicelinkCarrier {
     this.opts = opts;
     this.username = opts.username ?? 'mock-vl-user';
     this.password = opts.password ?? 'mock-vl-password';
+    this.accounts.set(this.username, this.password);
     this.scriptFor = opts.scriptFor;
+  }
+
+  /** Open another account on the carrier (a tenant's own VoiceLink login). */
+  addAccount(username: string, password: string): void {
+    this.accounts.set(username, password);
+  }
+
+  /**
+   * Refuse `username`'s next `times` logins with `status` (Infinity = until cleared), even with
+   * the right password. `status` null clears it.
+   */
+  refuseLogins(username: string, status: number | null, times = Infinity): void {
+    if (status === null) this.loginRefusals.delete(username);
+    else this.loginRefusals.set(username, { status, remaining: times });
+  }
+
+  /**
+   * Withdraw `username`'s API access (`on`), or give it back: its logins still succeed and issue
+   * tokens, but every authenticated request (`add_lead`, `cdr`) made with one answers 401, fresh
+   * token or not. An account that logs in but cannot dial (docs/carriers.md CR4).
+   */
+  withdrawApiAccess(username: string, on: boolean): void {
+    if (on) this.apiWithdrawn.add(username);
+    else this.apiWithdrawn.delete(username);
+  }
+
+  /** The requests on `route` made as `account`. */
+  requestsAs(account: string, route?: CarrierRoute): RecordedRequest[] {
+    return this.requests.filter((r) => r.account === account && (route === undefined || r.route === route));
   }
 
   async start(): Promise<void> {
@@ -183,9 +234,22 @@ export class MockVoicelinkCarrier {
     this.faults.length = 0;
   }
 
-  /** Expire every issued bearer token: the next authenticated call gets a 401. */
-  revokeTokens(): void {
-    this.validTokens.clear();
+  /** Expire every issued bearer token, or only `account`'s: the next authenticated call gets a 401. */
+  revokeTokens(account?: string): void {
+    if (account === undefined) {
+      this.validTokens.clear();
+      return;
+    }
+    for (const [token, owner] of [...this.validTokens]) if (owner === account) this.validTokens.delete(token);
+  }
+
+  /**
+   * Whether a successful login retires every earlier token of its account (off by default).
+   * Whether the real VoiceLink does is not known (docs/carriers.md §6, CR4); this models the
+   * worst case, where two logins of one account log each other out.
+   */
+  retireTokensOnLogin(on: boolean): void {
+    this.retireOnLogin = on;
   }
 
   requestsTo(route: CarrierRoute): RecordedRequest[] {
@@ -265,6 +329,8 @@ export class MockVoicelinkCarrier {
     let body: unknown = null;
     try { body = rawBody ? JSON.parse(rawBody) : null; } catch { body = rawBody; }
     const auth = req.headers['authorization'];
+    const bearer = /^Bearer (.+)$/.exec(typeof auth === 'string' ? auth : '');
+    const loginName = (body as { username?: unknown } | null)?.username;
     const record: RecordedRequest = {
       seq: ++this.reqSeq,
       route,
@@ -272,6 +338,9 @@ export class MockVoicelinkCarrier {
       path: url.pathname,
       query: Object.fromEntries(url.searchParams),
       authorization: typeof auth === 'string' ? auth : null,
+      account: route === 'login'
+        ? (typeof loginName === 'string' ? loginName : null)
+        : (bearer ? this.validTokens.get(bearer[1]!) ?? null : null),
       body,
       rawBody,
       receivedAt: Date.now(),
@@ -331,22 +400,32 @@ export class MockVoicelinkCarrier {
 
   private bearerOk(record: RecordedRequest): boolean {
     const m = /^Bearer (.+)$/.exec(record.authorization ?? '');
-    return Boolean(m && this.validTokens.has(m[1]!));
+    const owner = m ? this.validTokens.get(m[1]!) : undefined;
+    return owner !== undefined && !this.apiWithdrawn.has(owner);
   }
 
   private handleLogin(body: unknown, noToken: boolean, send: (s: number, p: unknown) => void): void {
     const b = (body ?? {}) as { username?: unknown; password?: unknown };
-    if (b.username !== this.username || b.password !== this.password) {
+    const username = typeof b.username === 'string' ? b.username : '';
+    if (!this.accounts.has(username) || b.password !== this.accounts.get(username)) {
       send(401, { status: false, message: 'Invalid credentials' });
+      return;
+    }
+    const refusal = this.loginRefusals.get(username);
+    if (refusal && refusal.remaining > 0) {
+      refusal.remaining -= 1;
+      if (refusal.remaining <= 0) this.loginRefusals.delete(username);
+      send(refusal.status, { status: false, message: `injected login refusal ${refusal.status}` });
       return;
     }
     if (noToken) {
       send(200, { status: true, message: 'Login successful', data: { token_type: 'Bearer' } });
       return;
     }
+    if (this.retireOnLogin) this.revokeTokens(username);
     const n = ++this.tokenSeq;
     const token = `${n}|mockSanctumToken${randomUUID().replace(/-/g, '')}`;
-    this.validTokens.add(token);
+    this.validTokens.set(token, username);
     send(200, {
       status: true,
       message: 'Login successful',

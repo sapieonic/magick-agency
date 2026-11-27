@@ -70,7 +70,7 @@ export interface FetchedRecording {
  * EGRESS: unlike the streaming proxy, this fetch has no client to fall back on —
  * it runs server-side, so the recording host must be reachable from this
  * service's own egress. That is NOT implied by the recording being playable in a browser:
- * `DIRECT_RECORDING_PROVIDERS` (see recording-url-resolver.ts) exists precisely
+ * the direct-recording rule (`recordingsArePublic`, see recording-url-resolver.ts) exists precisely
  * because a VoiceLink/Elision recording is reachable by an Indian end user and
  * historically was not reachable from our cloud. A blocked route surfaces here as
  * a TimeoutError or a network error, both of which default to **retryable**, so

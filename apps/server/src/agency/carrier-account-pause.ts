@@ -38,7 +38,10 @@ const PAUSES: Record<CarrierAccountPauseReason, { logLine: string; actor: string
  * A third, `carrier_refusing_calls`, is the refusal breaker's (`carrier-refusal-breaker.ts`,
  * PL11): the carrier refused several dials in a row with no call placed in between (a
  * destination the account is not enabled for, no credit, a caller ID it rejects), which no
- * single refusal says. A supervisor resumes it once the account is fixed at the carrier.
+ * single refusal says. Its API streak trips it too (CR4: the carrier takes the account's
+ * login and refuses every dial request, API access withdrawn), with `cause:
+ * 'carrier_api_refused'` on the audit row so an operator can tell which. A supervisor resumes
+ * it once the account is fixed at the carrier.
  *
  * Written like the abandonment guardrail's pause (`abandonment-guardrail.ts`): the row
  * (`pauseForCarrierAccount`, running campaigns only, so a second refusal racing the first
@@ -54,6 +57,8 @@ const PAUSES: Record<CarrierAccountPauseReason, { logLine: string; actor: string
 export async function pauseCampaignForCarrierAccount(
   campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id' | 'account_id' | 'telephony_provider' | 'telephony_credential_id'>,
   reason: CarrierAccountPauseReason,
+  /** `cause`: which refusals tripped a breaker pause, when it is not PL11's own (logged and audited). */
+  opts: { cause?: 'carrier_api_refused' } = {},
 ): Promise<boolean> {
   try {
     const paused = await agencyCampaignRepository.pauseForCarrierAccount(campaign.id, reason);
@@ -65,6 +70,7 @@ export async function pauseCampaignForCarrierAccount(
         provider: campaign.telephony_provider,
         telephonyCredentialId: campaign.telephony_credential_id,
         reason,
+        ...(opts.cause ? { cause: opts.cause } : {}),
       },
       PAUSES[reason].logLine,
     );
@@ -80,6 +86,7 @@ export async function pauseCampaignForCarrierAccount(
         reason,
         telephony_provider: campaign.telephony_provider,
         telephony_credential_id: campaign.telephony_credential_id,
+        ...(opts.cause ? { cause: opts.cause } : {}),
       },
     });
     return true;

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/theme/tokens.dart';
 import '../../../core/station/station_view.dart';
+import '../../../ui/keyboard.dart';
 import '../station_copy.dart';
 
 /// The call's notes and their save status.
@@ -65,81 +66,86 @@ class _StationNotesFieldState extends ConsumerState<StationNotesField> {
       _ => (t.textMuted, FontWeight.w400),
     };
 
-    // Rebuilt on each keystroke only for the "needed" border and line.
-    return ListenableBuilder(
-      listenable: widget.controller,
-      builder: (context, _) {
-        final missing = widget.required && widget.controller.text.trim().isEmpty;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: Space.sm,
-              children: [
-                Text(widget.required ? StationCopy.notesRequired : StationCopy.notes, style: text.labelMedium),
-                Semantics(
-                  liveRegion: notes.status == NotesStatus.failed || notes.status == NotesStatus.retrying,
-                  child: Text(
-                    StationCopy.notesStatus(notes.status),
-                    key: const Key('notes-status'),
-                    style: text.labelSmall!.copyWith(color: color, fontWeight: weight),
+    // Rebuilt on each keystroke only for the "needed" border and line. While the agent types, the
+    // label and the status line stay in view with the field, not only the line being typed.
+    return RevealWhileTyping(
+      focusNode: _focus,
+      child: ListenableBuilder(
+        listenable: widget.controller,
+        builder: (context, _) {
+          final missing = widget.required && widget.controller.text.trim().isEmpty;
+          return Column(
+            key: const Key('notes-block'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: Space.sm,
+                children: [
+                  Text(widget.required ? StationCopy.notesRequired : StationCopy.notes, style: text.labelMedium),
+                  Semantics(
+                    liveRegion: notes.status == NotesStatus.failed || notes.status == NotesStatus.retrying,
+                    child: Text(
+                      StationCopy.notesStatus(notes.status),
+                      key: const Key('notes-status'),
+                      style: text.labelSmall!.copyWith(color: color, fontWeight: weight),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: Space.xs),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Semantics(
-                    label: widget.required ? StationCopy.notesRequired : StationCopy.notes,
-                    child: TextField(
-                      key: const Key('notes-field'),
-                      controller: widget.controller,
-                      focusNode: _focus,
-                      enabled: !closed,
-                      minLines: 2,
-                      maxLines: 6,
-                      keyboardType: TextInputType.multiline,
-                      textCapitalization: TextCapitalization.sentences,
-                      onChanged: (value) => ref.read(stationActionsProvider).updateNotes(value),
-                      decoration: InputDecoration(
-                        hintText: StationCopy.noteHint,
-                        enabledBorder: missing
-                            ? OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(Radii.sm),
-                                borderSide: BorderSide(color: t.danger, width: 2),
-                              )
-                            : null,
+                ],
+              ),
+              const SizedBox(height: Space.xs),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Semantics(
+                      label: widget.required ? StationCopy.notesRequired : StationCopy.notes,
+                      child: TextField(
+                        key: const Key('notes-field'),
+                        controller: widget.controller,
+                        focusNode: _focus,
+                        enabled: !closed,
+                        minLines: 2,
+                        maxLines: 6,
+                        keyboardType: TextInputType.multiline,
+                        textCapitalization: TextCapitalization.sentences,
+                        onChanged: (value) => ref.read(stationActionsProvider).updateNotes(value),
+                        decoration: InputDecoration(
+                          hintText: StationCopy.noteHint,
+                          enabledBorder: missing
+                              ? OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(Radii.sm),
+                                  borderSide: BorderSide(color: t.danger, width: 2),
+                                )
+                              : null,
+                        ),
                       ),
                     ),
                   ),
+                  if (widget.trailing != null) ...[const SizedBox(width: Space.sm), widget.trailing!],
+                ],
+              ),
+              if (missing) ...[
+                const SizedBox(height: Space.xs),
+                Text(
+                  StationCopy.writeANote,
+                  key: const Key('note-needed'),
+                  style: text.labelMedium!.copyWith(color: t.danger),
                 ),
-                if (widget.trailing != null) ...[const SizedBox(width: Space.sm), widget.trailing!],
               ],
-            ),
-            if (missing) ...[
-              const SizedBox(height: Space.xs),
-              Text(
-                StationCopy.writeANote,
-                key: const Key('note-needed'),
-                style: text.labelMedium!.copyWith(color: t.danger),
-              ),
+              if (notes.changedElsewhere) ...[
+                const SizedBox(height: Space.xs),
+                Text(
+                  StationCopy.notesChangedElsewhere,
+                  key: const Key('notes-elsewhere'),
+                  style: text.labelSmall!.copyWith(color: t.warning),
+                ),
+              ],
             ],
-            if (notes.changedElsewhere) ...[
-              const SizedBox(height: Space.xs),
-              Text(
-                StationCopy.notesChangedElsewhere,
-                key: const Key('notes-elsewhere'),
-                style: text.labelSmall!.copyWith(color: t.warning),
-              ),
-            ],
-          ],
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

@@ -26,8 +26,8 @@ runtime, voice engine, analysis), `docs/seams.md` (where files go, the seams), `
   `src/agency/listen/` (`docs/listening.md`, rulings LS1–LS22); its tap is the voice area's
   (`src/core/bridge/listen-tap.ts`, the seam member `openListenTap`).
 - **voice** (`src/core/`, `src/telephony/`): the WebRTC bridge (`src/core/webrtc-bridge-manager.ts`,
-  `src/core/bridge/`), carrier modules (VoiceLink; Plivo on tenants' own accounts, B18–B22) and
-  the credential store, concurrency guards, audio.
+  `src/core/bridge/`), carrier modules (VoiceLink on the service's account or a tenant's own; Plivo on tenants' own
+  accounts; B18–B22, `docs/carriers.md`) and the credential store, concurrency guards, audio.
 - **analysis**: post-call transcription and analysis worker, retention. Every AI request goes
   through the client factory in `src/ai/` (`openai_compatible`, `azure_openai`, `gemini`).
 
@@ -76,6 +76,11 @@ on the live socket (`StationRegistry`'s `caps`), never the session row (IQ46,
 - A new feature flag is declared in `packages/contracts/src/flags.ts` and registered in
   `src/feature-flags/registry.ts`.
 - Redis holds leases, station and call tokens; it must not evict (`.env.example`).
+- `scripts/build.mjs` bundles `dist/index.js`, `dist/migrate.js`, `dist/create-super-admin.js`, the
+  one-off CR9 clean-up `dist/cleanup-service-campaign-pinned-caller-ids.js` (`docs/operations.md`) and
+  `dist/xlsx-worker.js`, the child process an Excel upload is converted in (IM8,
+  `agency-xlsx-runner.ts`). The worker is forked with only `PATH` and its own heap cap; keep its
+  imports to the converter (no config, no pool, no logger setup).
 
 ## Tests
 

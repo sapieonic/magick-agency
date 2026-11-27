@@ -17,7 +17,7 @@ import { CredentialInboundSection } from '../../pages/super-admin/telephony-cred
 const CRED: TelephonyCredential = {
   id: 'cred-1', tenant_id: 't-1', provider: 'plivo', label: 'Acme main', status: 'active',
   account_ref: 'MAXXXXXXXXXXXXXXXXXX', public_config: {}, secret_version: 1, secret_hint: 'ab12', verified_at: null,
-  last_error: null, created_by: null, updated_by: null, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
+  last_error: null, max_concurrent_calls: null, created_by: null, updated_by: null, created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
   revoked_at: null, shredded_at: null,
 };
 
@@ -129,6 +129,8 @@ describe('CredentialInboundSection', () => {
   it.each([
     ['inbound_unconfigured', /no public callback address/],
     ['carrier_unreachable', /could not be reached\. Nothing was changed/],
+    // docs/carriers.md CR11: a carrier without inbound (a stale page can still ask).
+    ['inbound_not_supported', /^This carrier does not take inbound calls here, so inbound cannot be set up on it\. Nothing was changed\.$/],
     ['something_else', /server says no/],
   ])('a refusal %s is said in words an operator can act on', async (code, text) => {
     mocks.enableCredentialInbound.mockRejectedValue(refusal(code));

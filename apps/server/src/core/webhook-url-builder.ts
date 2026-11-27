@@ -1,7 +1,9 @@
 // Each carrier's webhook namespace comes from env (`config.telephony.<provider>`), never
-// from tenant data. A provider with no namespace here throws: a carrier handed another
-// carrier's callback base would post its callbacks to routes that cannot read them.
+// from tenant data: its catalogue entry says where (`CarrierDescriptor.webhookBaseUrl`,
+// `telephony/carrier-catalog.ts`). A provider not in the catalogue throws: a carrier handed
+// another carrier's callback base would post its callbacks to routes that cannot read them.
 import { config } from '../config/index.js';
+import { findCarrier } from '../telephony/carrier-catalog.js';
 import { normalizeWebhookBase } from '../utils/webhook-base.js';
 
 export { normalizeWebhookBase };
@@ -35,13 +37,8 @@ export class WebhookUrlBuilder {
   }
 
   private rawBaseUrl(providerName: string): string {
-    switch (providerName) {
-      case 'voicelink':
-        return config.telephony.voicelink.webhookBaseUrl;
-      case 'plivo':
-        return config.telephony.plivo.webhookBaseUrl;
-      default:
-        throw new Error(`No webhook base URL for telephony provider: ${providerName}`);
-    }
+    const carrier = findCarrier(providerName);
+    if (!carrier) throw new Error(`No webhook base URL for telephony provider: ${providerName}`);
+    return carrier.webhookBaseUrl(config.telephony);
   }
 }

@@ -309,6 +309,15 @@ each `invalidateAccountLimit` / `invalidateProviderLimits` also publishes `accou
 the pacing invalidation bus, so the pacing engine's cached limit is dropped at the same point as the
 guards'. The interface does not change; the agency stop unwraps it.
 
+The super-admin credential routes use the same seam for a credential's own cap (`docs/carriers.md`
+CR13): `PATCH /super-admin/telephony-credentials/:id/concurrency` writes the cap, then calls
+`invalidateCredentialLimit` (the guard's 5 s cap cache, and media workers through the IPC event
+`concurrency.invalidate_credential`); the credential list's `concurrent_calls_in_use` is read with
+`getCredentialCounts`. Pacing reads the live counts the dial will be admitted against through the same seam
+(`getProviderCount` for an account's carrier share, `getCredentialCounts` for a carrier account's cap;
+CR15), and `withPacingInvalidation` also publishes `credential_limit_changed` on the pacing bus when a
+cap changes.
+
 ### 3.4 Super-admin credential routes → carrier credential service
 
 The super-admin telephony-credential routes (`api/routes/super-admin-telephony-credentials.routes.ts`,
@@ -331,11 +340,13 @@ retire or delete, the same way.
 The other readers of the credential store outside the voice area import it directly too, for the
 same reason (no bootstrap state), and none of them opens a secret except through the service:
 
-- campaign management (`agency/campaign-carrier.ts`) reads the voice area's credential specs
-  (`findCredentialSpec`: does a carrier take tenant credentials) and the shared credential
-  repository, to check a campaign's carrier, credential and caller IDs;
-- the super-admin phone routes read the same two to refuse hand-added numbers on a
-  tenant-credential carrier and a synced number assigned to another tenant;
+- campaign management (`agency/campaign-carrier.ts`) reads the voice area's carrier catalogue
+  (`telephony/carrier-catalog.ts`: which account modes a carrier supports, docs/carriers.md CR1)
+  and the shared credential repository, to check a campaign's carrier, credential and caller IDs;
+- the super-admin phone routes read the catalogue and the credential specs
+  (`telephony/carrier-number-source.ts`: are a carrier's tenant numbers synced or added by hand)
+  to accept a number by hand on the service's account or pinned to a credential (CR6) and to
+  refuse a pinned number assigned to another tenant (CR7);
 - every recording fetch (the attempt and soft-phone recording proxies, signed playback, the
   analysis runner) asks `telephony/recording-access.ts` for the call's hosts and headers, which
   resolves the pinned credential through the service lazily (`getRecordingAccessResolver`).

@@ -126,6 +126,20 @@ export type RecordingOutcome =
   /** We could not reach the carrier that stores it — a 5xx from either tier. */
   | { status: 'unreachable' };
 
+/**
+ * A recording route's answer in place of the audio, for a call on a tenant's own account on a
+ * carrier whose recordings are public (docs/carriers.md CR12): every recording proxy route
+ * (attempt, soft phone, inbound, the signed `webrtc-recordings` URL) sends it, `200`,
+ * `Cache-Control: no-store`, only when the request's `Accept` names `application/json`. Without
+ * that it answers `302 Location: <redirect_url>`, which an `<audio src>` follows; a script
+ * fetching the audio cannot follow a cross-origin redirect to a host with no CORS headers, so it
+ * asks for this and plays `redirect_url` directly. The URL is the carrier's own, reached by the
+ * viewer's browser, never fetched by this service.
+ */
+export interface RecordingRedirectBody {
+  redirect_url: string;
+}
+
 /** Provenance of the transcription pass that produced `conversation_log`. */
 export interface TranscriptMeta {
   provider: 'gemini' | 'sarvam';

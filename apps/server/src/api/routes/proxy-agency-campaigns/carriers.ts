@@ -5,12 +5,14 @@
  * Answered here, not by an internal handler: it is tenant data (a credential serves every
  * account of its tenant, B20) and holds no campaign, so there is nothing for the dialer
  * runtime to own. The list is what the campaign write accepts (`agency/campaign-carrier.ts`):
- *  - each active carrier dialled on the service's own account, with no credential;
+ *  - each active carrier with a service account (`carrierHasServiceAccount`), with no
+ *    credential;
  *  - each `active` credential of the tenant on an active carrier that takes tenant
- *    credentials and can dial from this server (`carrierDialReady`, PL12: not while its
- *    webhook base is unset): its id, carrier and label. Never `account_ref`, config or any
- *    secret.
- * Which kind a carrier is comes from whether it takes tenant credentials, not its name.
+ *    accounts (`carrierTakesTenantAccounts`) and can dial from this server
+ *    (`carrierDialReady`, PL12: not while its webhook base is unset): its id, carrier and
+ *    label. Never `account_ref`, config or any secret.
+ * Which accounts a carrier offers comes from its catalogue entry's account modes (CR1), not
+ * its name.
  *
  * Floor `agency.campaigns.read`: an editor fills the campaign create and edit from it, and a
  * read-only viewer of a campaign's settings is told which carrier account it dials on. It
@@ -20,7 +22,7 @@ import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { telephonyCredentialRepository } from '@magick-agency/db/repositories/telephony-credential.repository';
 import { telephonyProviderRepository } from '../../../db/repositories/telephony-provider.repository.js';
-import { carrierTakesTenantCredential } from '../../../agency/campaign-carrier.js';
+import { carrierHasServiceAccount, carrierTakesTenantAccounts } from '../../../telephony/carrier-catalog.js';
 import { carrierDialReady } from '../../../telephony/carrier-dial-readiness.js';
 import type { AgencyCarrier, AgencyCarriersResponse } from '@magick-agency/contracts/api/agency/agency-campaign';
 
@@ -37,11 +39,11 @@ export async function registerCarrierRoutes(app: FastifyInstance): Promise<void>
     const active = new Set(providers.map((p) => p.name));
     const carriers: AgencyCarrier[] = [
       ...providers
-        .filter((p) => !carrierTakesTenantCredential(p.name))
+        .filter((p) => carrierHasServiceAccount(p.name))
         .map((p): AgencyCarrier => ({ telephony_provider: p.name, telephony_credential_id: null, label: null, status: 'active' })),
       ...credentials
-        .filter((c) => c.status === 'active' && active.has(c.provider) && carrierTakesTenantCredential(c.provider)
-          && carrierDialReady(c.provider))
+        .filter((c) => c.status === 'active' && active.has(c.provider) && carrierTakesTenantAccounts(c.provider)
+          && carrierDialReady(c.provider, 'tenant'))
         .map((c): AgencyCarrier => ({ telephony_provider: c.provider, telephony_credential_id: c.id, label: c.label, status: 'active' })),
     ];
     const body: AgencyCarriersResponse = { carriers };

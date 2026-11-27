@@ -42,8 +42,10 @@
 #     webhook_signature_rejected_total, no media_stream_connect_timeouts_total
 #     and no DNC registry metric, so no 5xx-ratio, latency, dial-failure,
 #     carrier-signature, media-timeout or DNC-write rule.
-#   * Carrier dial refusals: carrier_dial_refusals_total (Plivo's adapter only)
-#     has a dashboard panel and no rule until it has a production baseline.
+#   * Carrier dial refusals: carrier_dial_refusals_total has a dashboard panel and
+#     no rule until it has a production baseline, except its kind="api_refused"
+#     (agy-carrier-api-refused): a tenant account that takes its login and refuses
+#     every dial, which nothing else reports to an operator.
 ###############################################################################
 
 locals {
@@ -58,7 +60,7 @@ locals {
         # is one indexed read of the dnc_entries table (DncRegistry.check), and
         # it answers `unavailable` only when that read throws — Postgres, not
         # Redis. A halted campaign places no calls and looks idle, not broken,
-        # which is why this pages. sum BY campaign_id so the instance names the
+        # which is why this is critical. sum BY campaign_id so the instance names the
         # campaign; window 5m under the 10m `for`.
         expr          = "sum by (service_name, campaign_id) (rate(agency_predial_gate_total{gate=\"dnc_unavailable\",${local.agency}}[5m]))"
         op            = "gt"
@@ -86,7 +88,7 @@ locals {
         # that placed no call. A sparse counter under rate(), not increase(): the condition is
         # sustained, so missing the first increment costs nothing. The `and` keeps only campaigns
         # whose in-use gauge exists and reads 0 (max BY campaign); a campaign that stops being
-        # withheld resolves. Warns (Slack), never pages: the account still dials up to its limit
+        # withheld resolves. Warns, never critical: the account still dials up to its limit
         # through the others.
         expr          = "sum by (service_name, campaign_id) (rate(agency_pacing_share_withheld_total{${local.agency}}[5m])) and on (service_name, campaign_id) (max by (service_name, campaign_id) (agency_campaign_slots_in_use{${local.agency}}) == 0)"
         op            = "gt"
@@ -102,7 +104,7 @@ locals {
     # ── Insights: the rollup job and the pacing history ──────────────────
     #
     # Both are reporting, not dialling: a stale or holed Insights page costs no call, so these
-    # warn (Slack) and never page. The rollup job (apps/server/src/agency/insights-rollup-job.ts)
+    # only warn. The rollup job (apps/server/src/agency/insights-rollup-job.ts)
     # runs in the main process only, one pass every AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS (15s),
     # batches of AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE (200), batching for at most half an interval.
     # Its gauges exist only once a pass has finished (no series before the job starts), and the
@@ -206,8 +208,8 @@ locals {
 
     # ── Reports: assembly, the renderer and its signed callback (docs/reports.md) ──
     #
-    # Reporting, not dialling: a late or failed report costs no call, so these warn (Slack) and
-    # never page. The pipeline runs in the main process only: the assembler builds a run's
+    # Reporting, not dialling: a late or failed report costs no call, so these only warn
+    # (never critical). The pipeline runs in the main process only: the assembler builds a run's
     # dataset, the renderer (the report-renderer Lambda behind SQS, or in process) writes the
     # files and calls back, and the reports tick (every AGENCY_REPORTS_TICK_INTERVAL_MS, 60s)
     # sets the pending gauges, re-sends a run with no callback after
@@ -562,7 +564,7 @@ locals {
     # ── Analysis: post-call transcription and analysis ───────────────────
     #
     # Analysis is reporting, not dialling: a refused vendor costs no call, so this warns
-    # (Slack) and never pages. The worker's breaker (apps/server/src/core/
+    # (never critical). The worker's breaker (apps/server/src/core/
     # vendor-rate-limit-breaker.ts) pauses claims after a vendor refusal the AI layer reads as
     # a rate limit (any vendor's 429; Gemini's RESOURCE_EXHAUSTED at any status, so a 402
     # "prepayment credits are depleted" too) for 30 s, doubling to a 15-minute cap, and probes
@@ -601,7 +603,7 @@ locals {
         name = "A media or analysis worker process crashed"
         # Unexpected exits only (`expected="false"`): a clean exit 0 after the primary asked
         # for it is not a crash; a worker that dies of a signal or exits non-zero during the
-        # primary's own shutdown is, and is reaped like one. It warns (Slack), never pages: a
+        # primary's own shutdown is, and is reaped like one. It warns, never critical: a
         # stop was under way anyway, but the worker lost its graceful drain. The supervisor
         # records the series at zero when it starts (primeChildExits), so increase() sees the
         # first crash; the new-series guard (header) covers a crash before that zero's first
@@ -692,6 +694,29 @@ locals {
         no_data_state = "OK"
         summary       = "The carrier credential sweep keeps failing"
         description   = "telephony_credential_sweeps_total{result=\"failed\"} advanced by 2+ in 3h on {{ $labels.service_name }}: the hourly sweep that shreds revoked carrier credentials once their calls have ended (2 h after the last one) and drops secret versions past the 24 h rotation grace is failing. Nothing dials on a revoked credential either way, but its sealed secrets stay in telephony_credential_secrets past the retention B20 promises until a sweep succeeds. Read the main-process WARN 'Telephony credential sweep failed' for the error: it is almost always agency's Postgres or its pool (the sweep is a few reads and row-locked updates on telephony_credentials, telephony_credential_secrets and the calls pinned to them). A lock wait on a credential row being revoked or rotated clears on its own. The sweep is idempotent and the next hourly pass catches up once it succeeds; a restart also runs one at boot. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+      {
+        uid  = "agy-carrier-api-refused"
+        name = "A tenant carrier account takes its login but refuses its dials"
+        # kind="api_refused" (docs/carriers.md CR4): the carrier accepted a fresh login, then
+        # refused the dial request itself with 401 (VoiceLink's add_lead on a tenant's account;
+        # counted once per dial in its adapter). One is a token another process's login retired;
+        # an account whose API access was withdrawn refuses every dial. The breaker pauses each
+        # campaign after 10 in a row (carrier_refusing_calls), but a resumed campaign, the
+        # account's other campaigns and soft-phone calls go on failing, and nothing marks the
+        # credential. 5+ in 15m by provider (threshold 4.5, N-0.5) is past any token race, and a
+        # campaign that trips the breaker reaches it on its own. A count, not a rate held for
+        # 10m: the breaker stops a campaign's dials within its 10 refusals, so a sustained rate
+        # would miss the case it is for. Sparse: the new-series guard. Warns (Slack): a tenant's
+        # own account, fixed at the carrier, not here.
+        expr          = "sum by (service_name, provider) (((carrier_dial_refusals_total{kind=\"api_refused\",${local.agency}} unless carrier_dial_refusals_total{kind=\"api_refused\",${local.agency}} offset 15m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 15m)) or increase(carrier_dial_refusals_total{kind=\"api_refused\",${local.agency}}[15m]))"
+        op            = "gt"
+        threshold     = 4.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "A tenant's carrier account accepts its login but refuses every dial"
+        description   = "carrier_dial_refusals_total{kind=\"api_refused\"} advanced by 5+ in 15m on {{ $labels.service_name }} (provider={{ $labels.provider }}): the carrier accepted a tenant credential's login, then refused the dial request itself with 401 on the fresh token. Its API access is withdrawn or restricted at the carrier while the login still works (docs/carriers.md CR4), so every dial on that account fails, and the credential is not marked (the login is the only verdict on it). Each campaign on it is paused carrier_refusing_calls after 10 such refusals in a row (its agency_campaign.auto_paused audit row carries cause carrier_api_refused); soft-phone calls on it keep failing with CARRIER_API_REFUSED. Find the account: agency_calls with error_code 'CARRIER_API_REFUSED' in the last 15m (telephony_credential_id, tenant_id), or the auto_paused audit rows with that cause. Ask the tenant to have API access restored on their carrier account, then have a supervisor resume the paused campaigns; to dial meanwhile, move the campaigns to another carrier account. Runbook: docs/operations.md, 'Alert runbooks'."
       },
     ]
 

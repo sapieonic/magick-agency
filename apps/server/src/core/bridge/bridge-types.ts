@@ -13,6 +13,9 @@ export type WebRtcRejectReason =
   | 'account_concurrency_limit'
   | 'provider_concurrency_limit'
   | 'provider_concurrency_unavailable'
+  // The tenant carrier account the dial names has as many live calls as its own cap allows,
+  // across every account of the tenant (CR13). Back-pressure, as `provider_concurrency_limit`.
+  | 'carrier_account_concurrency_limit'
   | 'telephony_init_failed'
   // Bridged (borrowed-socket) calls only: the caller's socket was not open at
   // dial time. Deliberately absent from the PostHog `WebrtcCallRejectionReason`

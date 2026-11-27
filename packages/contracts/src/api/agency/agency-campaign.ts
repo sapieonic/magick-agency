@@ -102,7 +102,7 @@ export type AgencyIngestDncScope = 'tenant' | 'account' | 'campaign' | 'unknown'
 
 /** One rejected row as the review screen shows it (`AgencyIngestJob.rejected_sample`). */
 export interface AgencyIngestRowSample {
-  /** The line in the uploaded file. */
+  /** The row number the supervisor sees: the spreadsheet row of an Excel upload, the line a spreadsheet app shows for a CSV (IM8). */
   row_number: number;
   /** The column the reason is about, or null for a whole-row problem. */
   column: string | null;
@@ -135,11 +135,69 @@ export interface AgencyIngestLimits {
   max_file_bytes: number;
 }
 
-/** `POST /proxy/agency/ingest/upload`. */
+/**
+ * The sheet an Excel upload was read from (IM8). Only the first sheet is read;
+ * the screen names the others so a supervisor whose customers are on another
+ * sheet sees that before checking.
+ */
+export interface AgencyUploadSheet {
+  /** The name of the sheet that was read: the workbook's first visible worksheet, in tab order. */
+  name: string;
+  /**
+   * The workbook's other visible worksheets, in tab order (hidden and chart sheets are not
+   * named). None of them was read. At most the first 255, each cut to 31 characters (Excel's
+   * own limit on a sheet name).
+   */
+  other_sheet_names: string[];
+  /** How many other visible worksheets there are: `other_sheet_names.length` unless the list was cut at 255. */
+  other_sheet_count: number;
+}
+
+/**
+ * The `code` of an upload refusal (`POST /proxy/agency/ingest/upload`, IM8). The body is
+ * `{ error, code, message }`, `message` in plain words for the supervisor.
+ * - 400 `workbook_unsupported` (an old `.xls` or a password-protected workbook),
+ *   `not_a_workbook`, `workbook_unreadable`, `workbook_no_sheet` (no visible worksheet),
+ *   `cell_too_long`; and for any file, `no_file` (the form carried none), `upload_malformed`
+ *   (the body was cut off or is not a multipart form), `upload_stopped` (the client went
+ *   away before the upload finished).
+ * - 413 `file_too_large`: the file, or the CSV an Excel file becomes, is over the size limit.
+ * - 422 `too_many_rows`, `too_many_columns` (the ingest's own limits, checked at upload for an
+ *   Excel file), `workbook_too_slow`, `workbook_too_complex` (the reader's heap cap, or one of
+ *   its caps on work: shared strings, cells, a part that expands too far).
+ * - 429 `workbook_busy` and `upload_rate_limited`, with `retry_after_seconds` and `Retry-After`.
+ * - 503 `server_restarting`, `upload_storage_slow`, with `retry_after_seconds` and `Retry-After`.
+ */
+export type AgencyUploadRefusalCode =
+  | 'workbook_unsupported'
+  | 'not_a_workbook'
+  | 'workbook_unreadable'
+  | 'workbook_no_sheet'
+  | 'cell_too_long'
+  | 'no_file'
+  | 'upload_malformed'
+  | 'upload_stopped'
+  | 'file_too_large'
+  | 'too_many_rows'
+  | 'too_many_columns'
+  | 'workbook_too_slow'
+  | 'workbook_too_complex'
+  | 'workbook_busy'
+  | 'upload_rate_limited'
+  | 'server_restarting'
+  | 'upload_storage_slow';
+
+/** `POST /proxy/agency/ingest/upload`. Refusals: `AgencyUploadRefusalCode`. */
 export interface AgencyUploadResponse {
   s3_key: string;
+  /** The name the supervisor's file had, `.xlsx` included for an Excel upload. */
   file_name: string;
+  /** Size of the file as uploaded (the workbook, for an Excel upload). */
   file_size_bytes: number;
+  /** What was uploaded. An Excel upload is stored as CSV, so every later step reads it the same way. */
+  format: 'csv' | 'xlsx';
+  /** Present for an Excel upload only. */
+  sheet?: AgencyUploadSheet;
 }
 
 /** One column's profile from `POST /proxy/agency/ingest/analyze`. */
@@ -568,12 +626,15 @@ export interface AgencyCampaign {
   telephony_provider?: string;
   /**
    * The tenant's own carrier account the campaign dials on (decisions B18–B22), or
-   * `null` for the service's own account. Required, and must be `active`, for a carrier
-   * dialled on the tenant's account (`AgencyCarrier.telephony_credential_id` non-null);
-   * must be `null` otherwise. With one, every `caller_ids` entry a write ADDS must be an
-   * active number synced from that account (on the same account, numbers already stored
-   * may stay: the dial skips one no longer active, PL13). Refusals: 400 (shape, pairing,
-   * caller IDs), 404 `telephony_credential_not_found`, 409 `telephony_credential_not_active`;
+   * `null` for the service's own account, as `GET /proxy/agency/carriers` lists the pair. A
+   * carrier may offer either or both (docs/carriers.md CR1, CR8): `null` needs a carrier with
+   * a service account; a credential needs one that takes tenant accounts, and must be
+   * `active`. Moving between the two on one carrier is a change of carrier account. With a
+   * credential, every `caller_ids` entry a write ADDS must be an active number pinned to that
+   * account (on the same account, numbers already stored may stay: the dial skips one no
+   * longer active, PL13); with `null`, none it adds may be a number pinned to any credential
+   * (CR9). Refusals: 400 (shape, pairing, caller IDs), 404 `telephony_credential_not_found`,
+   * 409 `telephony_credential_not_active`;
    * start and resume answer that 409 too once the account stops being active, and 409
    * `campaign_caller_ids_unavailable` when none of the caller IDs is dialable, or
    * `carrier_capacity_unallocated` when the account's per-carrier concurrency gives the

@@ -15,6 +15,7 @@ import 'package:magick_agency_agent/features/missed/missed_calls_copy.dart';
 import 'package:magick_agency_agent/features/missed/missed_on_duty.dart';
 
 import '../core/auth/support/harness.dart';
+import '../features/softphone/softphone_harness.dart' show setPhoneInsets;
 import 'shell_harness.dart';
 
 const available = StationSignals(onDuty: true, campaignId: 'c1');
@@ -237,6 +238,50 @@ void main() {
       await pumpAt(tester, 800, textScale: 2);
       expect(tabLabels(tester), ['Station', 'Phone', 'Stats', 'My calls', 'Me']);
       expectOneLineEach(tester, 1.3);
+    });
+  });
+
+  group('a tab and the on-screen keyboard', () {
+    // The shell's Scaffold ends its body at the keyboard's top and takes the keyboard (and the
+    // bottom inset its tab bar covers) out of its body's MediaQuery; the tab must get that
+    // MediaQuery, or every Scaffold in a tab makes room for the keyboard a second time.
+    Future<Finder> pumpOn(WidgetTester tester, {StationSignals signals = available}) async {
+      tester.view.devicePixelRatio = 3;
+      tester.view.physicalSize = const Size(411, 917) * 3;
+      setPhoneInsets(tester, statusBar: 24, navBar: 24);
+      addTearDown(tester.view.reset);
+      c.read(testSignalsProvider.notifier).set(signals);
+      await pumpShell(tester, c, initial: Routes.station('c1'));
+      return find.ancestor(of: find.text('at /home/station/c1'), matching: find.byKey(tabPage));
+    }
+
+    testWidgets('the tab ends at the keyboard\'s top, however far up it has slid, and no lower', (tester) async {
+      final page = await pumpOn(tester);
+      final bar = tester.getRect(find.byType(NavigationBar));
+      expect(tester.getRect(page).bottom, bar.top, reason: 'keyboard down: the tab ends at the tab bar');
+      expect(MediaQuery.paddingOf(tester.element(page)).bottom, 0,
+          reason: 'the gesture bar is under the tab bar: a SafeArea in the tab adds nothing above it');
+      for (final keyboard in [110.0, 220.0, 330.0]) {
+        setPhoneInsets(tester, statusBar: 24, keyboard: keyboard, navBar: 24);
+        await tester.pump();
+        expect(tester.getRect(page).bottom, moreOrLessEquals(917 - keyboard, epsilon: 0.5),
+            reason: 'a $keyboard dp keyboard: the tab ends at its top, not a keyboard\'s height above it');
+        expect(MediaQuery.viewInsetsOf(tester.element(page)).bottom, 0);
+      }
+      setPhoneInsets(tester, statusBar: 24, navBar: 24);
+      await tester.pump();
+      expect(tester.getRect(page).bottom, bar.top, reason: 'keyboard down again: back on the tab bar');
+    });
+
+    testWidgets('with the tab bar hidden (a call on screen) the tab keeps the gesture bar\'s inset for its SafeArea', (tester) async {
+      final page = await pumpOn(tester, signals: const StationSignals(onDuty: true, callActive: true, campaignId: 'c1'));
+      expect(find.byType(NavigationBar), findsNothing);
+      expect(tester.getRect(page).bottom, 917);
+      expect(MediaQuery.paddingOf(tester.element(page)).bottom, 24);
+      setPhoneInsets(tester, statusBar: 24, keyboard: 330, navBar: 24);
+      await tester.pump();
+      expect(tester.getRect(page).bottom, moreOrLessEquals(917 - 330, epsilon: 0.5));
+      expect(MediaQuery.paddingOf(tester.element(page)).bottom, 0, reason: 'the keyboard covers the gesture bar');
     });
   });
 

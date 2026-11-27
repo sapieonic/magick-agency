@@ -4,7 +4,7 @@ import 'package:meta/meta.dart';
 
 import '../softphone/softphone_host.dart';
 import 'station_signals.dart';
-import 'station_view.dart' show SupervisorMessageView;
+import 'station_view.dart' show HelpView, SupervisorMessageView;
 
 /// The one session the station core hosts: a campaign station (from the
 /// join's [SessionBootstrap]) or a soft-phone session (from
@@ -148,7 +148,13 @@ bool urlCarriesToken(String url) => RegExp(r'[?&]token=[^&]+').hasMatch(url);
 /// campaign view's contract is unchanged.
 @immutable
 final class StationHost {
-  const StationHost({this.signals = const StationSignals(), this.softphone, this.messages = const []});
+  const StationHost({
+    this.signals = const StationSignals(),
+    this.softphone,
+    this.messages = const [],
+    this.help = const HelpView(),
+    this.callArrival,
+  });
 
   static const none = StationHost();
 
@@ -159,12 +165,25 @@ final class StationHost {
   /// the same list instance until one arrives or is dismissed.
   final List<SupervisorMessageView> messages;
 
-  @override
-  bool operator ==(Object other) =>
-      other is StationHost && other.signals == signals && other.softphone == softphone && identical(other.messages, messages);
+  /// The agent's Need help (floor assist) on either kind of session: the Phone tab has no campaign
+  /// view to read it from (LF39).
+  final HelpView help;
+
+  /// A call arriving on either kind of session, as a key that changes with each one
+  /// (`callArrivalProvider`): the shell's message banner closes its open list on it.
+  final String? callArrival;
 
   @override
-  int get hashCode => Object.hash(signals, softphone, identityHashCode(messages));
+  bool operator ==(Object other) =>
+      other is StationHost &&
+      other.signals == signals &&
+      other.softphone == softphone &&
+      identical(other.messages, messages) &&
+      other.help == help &&
+      other.callArrival == callArrival;
+
+  @override
+  int get hashCode => Object.hash(signals, softphone, identityHashCode(messages), help, callArrival);
 }
 
 /// The slot [StationHost] is written to. Only the station controller sets it.

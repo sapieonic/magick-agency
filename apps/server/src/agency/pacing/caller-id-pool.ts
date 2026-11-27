@@ -12,8 +12,9 @@
  * a campaign's numbers itself.
  *
  * **The `usable` a dial path hands {@link resolveCallerId} is the campaign's DIALABLE caller IDs**
- * (`dialableCallerIds`, `campaign-dialability.ts`, PL13): {@link usableCallerIds} on the service's
- * own carrier account, and on a tenant's own account only those still active on its credential.
+ * (`dialableCallerIds`, `campaign-dialability.ts`): on the service's own carrier account
+ * {@link usableCallerIds} less every number pinned to a credential (CR9), and on a tenant's own
+ * account only those still active on its credential (PL13).
  * So the one rule covers both: a dedicated number is used only while it is dialable (a retired or
  * revoked one falls back to the rotation), and the rotation is the dialable pool minus the
  * dedicated numbers. Pacing passes the tick's dialable pool; `callerIdForContact` reads it

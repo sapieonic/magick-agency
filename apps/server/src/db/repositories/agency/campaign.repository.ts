@@ -181,7 +181,7 @@ export class AgencyCampaignRepository {
     agent_script?: unknown;
     /** Campaign templates (0067, CT9): the template it was made from. Omitted or null ⇒ NULL, made without one. */
     template_source?: AgencyCampaignTemplateSource | null;
-  }): Promise<AgencyCampaignRecord> {
+  }, opts: { client?: PoolClient } = {}): Promise<AgencyCampaignRecord> {
     // ── Every placeholder carries its column's type ──────────────────────────────
     //
     // A `$n` inside `COALESCE(...)` gets no type from the target column: COALESCE
@@ -201,7 +201,8 @@ export class AgencyCampaignRepository {
     // and `campaign-template-repository.test.ts` pins each one to the column DEFAULT.
     // Each placeholder still carries its column's type. Only the JSONB columns'
     // empty values (`'{}'`, `'[]'`) stay COALESCEd in SQL: they are "nothing", not a choice.
-    const { rows } = await getPool().query<AgencyCampaignRecord>(
+    // With `client`, on the caller's transaction ({@link createLocked}).
+    const { rows } = await (opts.client ?? getPool()).query<AgencyCampaignRecord>(
       `INSERT INTO agency_campaigns
          (${CAMPAIGN_INSERT_COLUMNS_SQL}, daily_target_calls, phone_display, agent_script, template_source)
        VALUES ($1,$2,$3,$4,$5::varchar,
@@ -265,6 +266,24 @@ export class AgencyCampaignRepository {
       ],
     );
     return rows[0]!;
+  }
+
+  /**
+   * {@link create} in one transaction that first asks `refuse(client)`: a non-null answer is
+   * returned as `{ refused }` and nothing is written; otherwise the INSERT runs on that client
+   * (`{ row }`). For a check that must hold at the write against rows `refuse` locks: the
+   * service account's pinned caller IDs (CR9, `servicePinnedRefusalLocked`), which a number's
+   * move onto a tenant's account either committed before, and is seen, or waits for.
+   */
+  async createLocked<R>(
+    input: Parameters<AgencyCampaignRepository['create']>[0],
+    refuse: (client: PoolClient) => Promise<R | null>,
+  ): Promise<{ row: AgencyCampaignRecord } | { refused: R }> {
+    return withTransaction(async (client): Promise<{ row: AgencyCampaignRecord } | { refused: R }> => {
+      const refused = await refuse(client);
+      if (refused !== null) return { refused };
+      return { row: await this.create(input, { client }) };
+    }, { pool: getPool() });
   }
 
   /** What a retry selector would seed, without seeding it; see {@link previewRetry}. */

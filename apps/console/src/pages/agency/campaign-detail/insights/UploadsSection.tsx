@@ -7,6 +7,7 @@ import { dedupeKeyName } from '../../../../types/agency-campaign';
 import { actorName, formatZoned, rejectReasonLabel } from '../../../../utils/agency/insights/copy';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import { outcomeReportFilename } from '../../../../api/exportCsv';
+import { uploadBaseName } from '../../../../utils/agencyCustomerFile';
 import { CsvButton, InsightsTable, Panel, tableCsv, type InsightsColumn } from './InsightsParts';
 import styles from './Insights.module.css';
 
@@ -49,7 +50,8 @@ export function UploadsSection({
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `rejected-${outcomeReportFilename(upload.file_name, upload.job_id)}`;
+      // A CSV whatever was uploaded: `Customers.xlsx` → `rejected-Customers.csv`.
+      link.download = `rejected-${outcomeReportFilename(upload.file_name ? uploadBaseName(upload.file_name) : null, upload.job_id)}`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (err: unknown) {

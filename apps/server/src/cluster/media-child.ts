@@ -12,7 +12,7 @@
  * Its IPC surface (`ipc-protocol.ts`): it serves `dial.execute`, `core.inject`,
  * `carrier.webhook`, `carrier.plivo_callback`, `agent.return_reserved`, `reaper.snapshot`,
  * `softphone.closed_by_sweep`, `health.ping` and `shutdown`, applies `pacing.revoke`, `station.broadcast`, `station.send`,
- * `concurrency.invalidate`, `dialable.invalidate`, `reaper.forget_unrecorded` and `listen.revoke`, and tells the primary
+ * `concurrency.invalidate`, `concurrency.invalidate_credential`, `dialable.invalidate`, `reaper.forget_unrecorded` and `listen.revoke`, and tells the primary
  * `ready`, `station.attached` / `.detached` / `.ended` / `.snapshot`, `pacing.invalidate`,
  * `cache.invalidate`, `voice.wake_self_heal`, `analysis.wake` and `listen.revoke` (a supersede).
  */
@@ -180,6 +180,9 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   channel.onEvent('concurrency.invalidate', ({ tenantId, accountId }) => {
     void guardHost.accountConcurrencyGuard.invalidateLimit(tenantId, accountId).catch(() => {});
     void guardHost.providerConcurrencyGuard.invalidateLimits(tenantId, accountId).catch(() => {});
+  });
+  channel.onEvent('concurrency.invalidate_credential', ({ credentialId }) => {
+    guardHost.credentialConcurrencyGuard.invalidateCap(credentialId);
   });
   // ── Live call listening (docs/listening.md, LS10, LS5) ──────────────────────
   // A supervisor's membership changed: re-check their sessions here against the database, failing

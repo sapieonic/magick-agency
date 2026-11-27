@@ -152,6 +152,8 @@ const CALL = {
   destination_phone: '+14155550199',
   provider: 'vobiz',
   provider_call_id: 'p-1',
+  // On every row (`SELECT *`): null is the service's own account.
+  telephony_credential_id: null,
   status: 'completed',
   outcome: 'answered',
   error_code: null,
@@ -508,6 +510,20 @@ describe('agency call read — signed recording URL', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ url: VOICELINK_URL, expires_at: null });
     expect(signSpy).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('mints a token for a VoiceLink call pinned to a credential: never the raw URL (CR12)', async () => {
+    webrtc.findByIdScoped.mockResolvedValue({
+      ...CALL, provider: 'voicelink', telephony_credential_id: 'cred-1', recording_url: VOICELINK_URL,
+    });
+    const app = await makeApp();
+    const res = await app.inject({ method: 'GET', url: `${BASE}/recording-url`, headers: HEADERS });
+
+    expect(res.statusCode).toBe(200);
+    expect(signSpy).toHaveBeenCalled();
+    expect(res.json().url).toContain('/api/v1/webrtc-recordings/');
+    expect(res.json().url).not.toContain('elisiontec');
     await app.close();
   });
 

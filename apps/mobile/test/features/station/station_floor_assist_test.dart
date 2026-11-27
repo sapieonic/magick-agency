@@ -177,6 +177,24 @@ void main() {
       semantics.dispose();
     });
 
+    testWidgets('answered with a message, on a break: Need help is back and pressing it asks again', (tester) async {
+      final h = await pumpStation(
+        tester,
+        station(
+          phase: AgentPhase.onBreak,
+          onBreak: BreakInfo(code: 'tea', label: 'Tea break', since: t0),
+          help: const HelpView(notice: 'Reshma Mohammad answered with a message.', noticeTone: HelpNoticeTone.success),
+        ),
+        needHelp: true,
+      );
+      expect(find.text('Reshma Mohammad answered with a message.'), findsOneWidget);
+      expect(find.byKey(const Key('cancel-help')), findsNothing);
+      expect(tester.widget<OutlinedButton>(find.byKey(const Key('need-help'))).onPressed, isNotNull);
+      await tester.tap(find.byKey(const Key('need-help')));
+      await tester.pump();
+      expect(h.actions.count('raiseHelp'), 1);
+    });
+
     testWidgets('a refusal under the button, dismissible; the station\'s own error line untouched', (tester) async {
       final h = await pumpStation(tester, inWrapup(help: const HelpView(error: 'You can ask for help during a call, or while you finish one.')),
           needHelp: true);
@@ -279,6 +297,42 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       expect(find.text('You are 17:05 late. Start calls now.'), findsOneWidget);
+    });
+  });
+
+  group('a supervisor\'s messages over the station (LF36, decided 2026-11-26)', () {
+    final queued = [
+      for (var i = 1; i <= 3; i++)
+        SupervisorMessageView(id: 'm$i', text: 'Message number $i', from: 'Reshma Mohammad', sentAt: DateTime(2026, 11, 19, 10, 5)),
+    ];
+    final list = find.byKey(const Key('supervisor-message-list'));
+    final toggle = find.byKey(const Key('supervisor-message-toggle'));
+
+    testWidgets('the open list closes when a call comes and again when it connects, in the app\'s shell; nothing dismissed', (tester) async {
+      final dismissed = <String>[];
+      final h = await pumpStation(tester, station(), shell: true, size: const Size(411, 917), statusBar: 24, extra: [
+        supervisorMessagesProvider.overrideWith((ref) => queued),
+        dismissSupervisorMessageProvider.overrideWithValue(dismissed.add),
+      ]);
+      await settle(tester);
+      await tester.tap(toggle);
+      await settle(tester);
+      expect(list, findsOneWidget);
+
+      await h.setView(station(phase: AgentPhase.reserved, call: call()));
+      expect(list, findsNothing, reason: 'Call coming');
+      expect(find.text('Show 2 more messages'), findsOneWidget, reason: 'closed, every message still there');
+
+      await tester.tap(toggle);
+      await settle(tester);
+      await h.setView(onCall);
+      expect(list, findsNothing, reason: 'it connected');
+
+      await tester.tap(toggle);
+      await settle(tester);
+      await h.setView(inWrapup());
+      expect(list, findsOneWidget, reason: 'wrap-up is not a call arriving');
+      expect(dismissed, isEmpty);
     });
   });
 }

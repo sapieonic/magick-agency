@@ -7,6 +7,8 @@ import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/station/floor_assist.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
+import '../inbound/inbound_fixtures.dart' show stationFrame;
+import '../softphone/manual_calls.dart' as mc;
 import 'controller_harness.dart';
 import 'fixtures.dart';
 
@@ -120,13 +122,15 @@ void main() {
 
     test('a raise in flight: its request answered and ended before the reply lands, the reply opens nothing', () {
       var s = FloorAssistState.empty
-          .onAnswered(answeredFrame(raisedInstant, by: 'Anitha N'), raising: true)
-          .onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered), raising: true);
+          .onRaiseStarted(raisedInstant)
+          .onAnswered(answeredFrame(raisedInstant, by: 'Anitha N'))
+          .onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered));
       expect([s.help, s.notice?.text], [null, 'Anitha N is listening to your call.'], reason: 'told at once');
-      s = s.onRaised(open);
+      s = s.onRaised(open).onRaiseEnded();
       expect([s.help, s.notice?.text], [null, 'Anitha N is listening to your call.']);
       // Answered only: the reply opens it with the answer kept, and the help_cleared that follows names who.
-      final answeredFirst = FloorAssistState.empty.onAnswered(answeredFrame(raisedInstant, by: 'Ravi'), raising: true).onRaised(open);
+      final answeredFirst =
+          FloorAssistState.empty.onRaiseStarted(raisedInstant).onAnswered(answeredFrame(raisedInstant, by: 'Ravi')).onRaised(open).onRaiseEnded();
       expect(answeredFirst.help, open);
       expect(answeredFirst.onCleared(clearedFrame(raisedInstant, HelpClearedReason.answered)).notice?.text,
           'Ravi is listening to your call.');
@@ -136,8 +140,26 @@ void main() {
       // and a repeat of its frames while raising again says nothing new.
       final cancelled = FloorAssistState.empty.onRaised(open).onCancelled();
       expect(cancelled.onRaised(open).help, isNull);
-      final repeat = cancelled.onCleared(clearedFrame(raisedInstant, HelpClearedReason.expired), raising: true);
+      final repeat = cancelled.onRaiseStarted(raisedInstant).onCleared(clearedFrame(raisedInstant, HelpClearedReason.expired));
       expect([repeat.help, repeat.notice], [null, null]);
+    });
+
+    test('a raise in flight takes a frame only about a request stamped no earlier than a minute before the press', () {
+      final press = raisedInstant;
+      final older = press.subtract(FloorAssistState.inFlightSlack + const Duration(seconds: 1));
+      final within = press.subtract(FloorAssistState.inFlightSlack - const Duration(seconds: 1));
+      final raising = FloorAssistState.empty.onRaiseStarted(press);
+      // An older request (the raise expired it) is not the raise's: no notice, nothing held.
+      final ignored = raising.onCleared(clearedFrame(older, HelpClearedReason.expired));
+      expect([ignored.notice, ignored.ended], [null, older], reason: 'only remembered as ended');
+      expect(raising.holds(older), isFalse);
+      expect(raising.onAnswered(answeredFrame(older, by: 'X')), same(raising));
+      // Within the slack (the clocks a little apart), it is; exactly at it too.
+      expect(raising.holds(within), isTrue);
+      expect(raising.holds(press.subtract(FloorAssistState.inFlightSlack)), isTrue);
+      expect(raising.onCleared(clearedFrame(within, HelpClearedReason.expired)).notice?.expired, isTrue);
+      // Its reply landed or failed: no raise in flight, and the same request is no longer held.
+      expect(raising.onRaiseEnded().holds(within), isFalse);
     });
 
     test('raising again puts the last notice away; the cancel clears the request and says nothing', () {
@@ -303,6 +325,15 @@ void main() {
         final msgs = app.container.read(supervisorMessagesProvider);
         expect(msgs.single.from, 'Your supervisor');
         expect(msgs.single.text, 'Offer the 3-month plan');
+        // Answered: nothing open, so Need help can be pressed again, with the message still shown;
+        // the new request opens (a supervisor's message is one-way, LF5: asking again is the reply).
+        expect(app.view!.help.stage, HelpStage.none);
+        app.routes['POST $helpPath'] = (_) => json(200, helpBody(raised: '2026-11-01T09:05:00.000Z'));
+        app.run(app.controller.raiseHelp());
+        expect(app.requests('POST', helpPath), hasLength(2));
+        expect(app.view!.help.stage, HelpStage.open);
+        expect(app.view!.help.notice, isNull);
+        expect(app.container.read(supervisorMessagesProvider), hasLength(1), reason: 'asking again dismisses no message');
         app.dispose();
       });
     });
@@ -539,6 +570,80 @@ void main() {
         app.frame({...message('s1'), 'event': 'supervisor_message'});
         expect(app.view, isNull, reason: 'a soft-phone session has no campaign view');
         expect(app.container.read(supervisorMessagesProvider).single.id, 's1');
+        app.dispose();
+      });
+    });
+
+    // The banner closes its open list when a call arrives (LF36, decided 2026-11-26): the seam's
+    // key moves as a call comes and as it connects, never for wrap-up or an owed outcome, and
+    // only from the frames the server sends (no `agent_state` moves the call).
+    test('a call arriving: a campaign call as it comes and as it connects, keyed by its attempt; nothing for wrap-up', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        String? arrival() => app.container.read(callArrivalProvider);
+        app.readyFrame('available');
+        expect(arrival(), isNull, reason: 'waiting');
+        app.reserved('a1');
+        final coming = arrival();
+        expect(coming, isNotNull, reason: 'the call is coming');
+        app.bridged('a1');
+        final connected = arrival();
+        expect(connected, allOf(isNotNull, isNot(coming)), reason: 'it connected: a new key');
+        app.releasedFrame('a1');
+        expect(arrival(), isNull, reason: 'ended, owing its write-up');
+        app.agentStateFrame('wrapup');
+        app.wrapupFrame('a1');
+        expect(arrival(), isNull, reason: 'wrap-up');
+        app.agentStateFrame('available');
+        expect(arrival(), isNull);
+        app.reserved('a2');
+        expect(arrival(), allOf(isNotNull, isNot(coming)), reason: 'the next call: its own key');
+        app.dispose();
+      });
+    });
+
+    test('a call arriving: an inbound call as it is offered and as it connects; nothing while its outcome is owed', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        String? arrival() => app.container.read(callArrivalProvider);
+        app.readyFrame('available');
+        app.frame(stationFrame('inbound_call_offered'));
+        final offered = arrival();
+        expect(offered, isNotNull);
+        app.frame(stationFrame('inbound_call_connected'));
+        expect(arrival(), allOf(isNotNull, isNot(offered)));
+        app.frame(stationFrame('inbound_call_outcome_owed'));
+        expect(arrival(), isNull);
+        app.dispose();
+      });
+    });
+
+    test('a call arriving: a soft-phone call only once it connects (never while it dials or rings), on its own session', () {
+      fakeAsync((async) {
+        final app = App(async);
+        app.openSoftphone();
+        app.frame({'event': 'ready', 'session_id': 'sess-sp', 'state': 'break', 'break_reason': 'soft_phone'});
+        String? arrival() => app.container.read(callArrivalProvider);
+        Map<String, Object?> at(int s, Map<String, Object?> over) =>
+            mc.manualCallJson({'updated_at': '2026-10-30T10:00:${s.toString().padLeft(2, '0')}.000Z', ...over});
+        app.manualCallFrame(mc.manualCallJson());
+        expect(arrival(), isNull, reason: 'dialling: the agent placed it');
+        app.manualCallFrame(at(2, {'state': 'ringing'}));
+        expect(arrival(), isNull, reason: 'ringing');
+        app.manualCallFrame(at(4, {'state': 'answered', 'answered_at': '2026-10-30T10:00:04.000Z'}));
+        final connected = arrival();
+        expect(connected, isNotNull, reason: 'connected');
+        app.manualCallFrame(at(5, {'state': 'bridged', 'answered_at': '2026-10-30T10:00:04.000Z', 'bridged_at': '2026-10-30T10:00:05.000Z'}));
+        expect(arrival(), connected, reason: 'still the same call, connected');
+        app.manualCallFrame(at(40, {
+          'state': 'ended',
+          'answered_at': '2026-10-30T10:00:04.000Z',
+          'bridged_at': '2026-10-30T10:00:05.000Z',
+          'ended_at': '2026-10-30T10:00:40.000Z',
+          'requires_disposition': true,
+          'outcome_due_at': '2026-11-01T09:30:00.000Z',
+        }));
+        expect(arrival(), isNull, reason: 'owing its outcome');
         app.dispose();
       });
     });

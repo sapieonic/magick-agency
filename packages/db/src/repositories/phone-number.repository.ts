@@ -12,6 +12,9 @@ import type {
   ClearedInboundLink,
   PhoneNumberInboundLinkRecord,
   UnroutedMissedSummary,
+  CreatePinnedPhoneNumberResult,
+  PinPhoneNumberResult,
+  CampaignHoldingCallerId,
 } from '../models/phone-number.model.js';
 
 /**
@@ -19,7 +22,7 @@ import type {
  * is assigned to that credential's tenant, and the live route answering it. `pn` is the number.
  */
 const INBOUND_LINK_SELECT = `
-  SELECT pn.id AS phone_number_id, pn.phone_number, pn.status, pn.telephony_credential_id,
+  SELECT pn.id AS phone_number_id, pn.phone_number, pn.status, tp.name AS provider_name, pn.telephony_credential_id,
          pn.inbound_linked_at, pn.inbound_previous_app_id,
          c.label AS credential_label, c.status AS credential_status, c.tenant_id AS credential_tenant_id,
          c.inbound_app_id AS credential_app_id,
@@ -28,9 +31,35 @@ const INBOUND_LINK_SELECT = `
             WHERE tpa.phone_number_id = pn.id AND tpa.tenant_id = c.tenant_id)) AS assigned,
          r.id AS route_id, r.name AS route_name, r.account_id AS route_account_id
     FROM phone_numbers pn
+    JOIN telephony_providers tp ON tp.id = pn.provider_id
     LEFT JOIN telephony_credentials c ON c.id = pn.telephony_credential_id
     LEFT JOIN agency_inbound_route_numbers rn ON rn.phone_number_id = pn.id AND rn.detached_at IS NULL
     LEFT JOIN agency_inbound_routes r ON r.id = rn.route_id`;
+
+/**
+ * Assign the active numbers pinned to `credentialId` to the credential's tenant, untagged, so
+ * every account of the tenant may dial from them (B20, PL5). `phoneNumberIds` narrows it to those
+ * numbers (a number added by hand, CR6); null: every one of the credential's (a sync). Existing
+ * assignments, with their account tags and default, are left as they are. Runs in the caller's
+ * transaction, which holds the credential row.
+ */
+async function assignPinnedToCredentialTenant(
+  client: PoolClient,
+  tenantId: string,
+  credentialId: string,
+  adminId: string | null,
+  phoneNumberIds: readonly string[] | null,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO tenant_phone_assignments (tenant_id, phone_number_id, is_default, assigned_by)
+     SELECT $1::uuid, pn.id, false, $3::uuid
+       FROM phone_numbers pn
+      WHERE pn.telephony_credential_id = $2::uuid AND pn.status = 'active'
+        AND ($4::uuid[] IS NULL OR pn.id = ANY($4::uuid[]))
+     ON CONFLICT (tenant_id, phone_number_id) DO NOTHING`,
+    [tenantId, credentialId, adminId, phoneNumberIds === null ? null : [...phoneNumberIds]],
+  );
+}
 
 export class PhoneNumberRepository {
   async findAll(filters?: { provider_id?: string; status?: string; region?: string }): Promise<PhoneNumberRecord[]> {
@@ -151,7 +180,8 @@ export class PhoneNumberRepository {
 
       // With the credential each number is pinned to, to tell a revoked registration of
       // this same carrier account (taken over) from anyone else's (a conflict). Revoked is
-      // terminal, so the owner's row needs no lock.
+      // terminal, so the owner's row needs no lock. Locked in `id` order, the order a campaign
+      // write takes them `FOR SHARE` in (`lockPinnedAmong`, CR9), so the two cannot deadlock.
       const existing = await client.query<{
         id: string; phone_number: string; status: PhoneNumberRecord['status']; telephony_credential_id: string | null;
         provider_id: string; owner_status: string | null; owner_tenant_id: string | null; owner_provider: string | null; owner_account_ref: string | null;
@@ -162,6 +192,7 @@ export class PhoneNumberRepository {
            FROM phone_numbers pn
            LEFT JOIN telephony_credentials oc ON oc.id = pn.telephony_credential_id
           WHERE pn.phone_number = ANY($1::varchar[]) OR pn.telephony_credential_id = $2::uuid
+          ORDER BY pn.id
             FOR UPDATE OF pn`,
         [numbers, credentialId],
       );
@@ -249,14 +280,7 @@ export class PhoneNumberRepository {
 
       // Every listed number now pinned to this credential is assigned to its tenant.
       // Existing assignments (and their account tags and default) are left as they are.
-      await client.query(
-        `INSERT INTO tenant_phone_assignments (tenant_id, phone_number_id, is_default, assigned_by)
-         SELECT $1::uuid, pn.id, false, $3::uuid
-           FROM phone_numbers pn
-          WHERE pn.telephony_credential_id = $2::uuid AND pn.status = 'active'
-         ON CONFLICT (tenant_id, phone_number_id) DO NOTHING`,
-        [row.tenant_id, credentialId, adminId],
-      );
+      await assignPinnedToCredentialTenant(client, row.tenant_id, credentialId, adminId, null);
       const count = await client.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM phone_numbers WHERE telephony_credential_id = $1 AND status = 'active'`,
         [credentialId],
@@ -295,8 +319,218 @@ export class PhoneNumberRepository {
   }
 
   // There is no `findPlatformOwned`: its one use was refusing to register a
-  // platform DID as a tenant's BYOC number. A tenant's own-carrier numbers are not
-  // registered by hand: `syncForCredential` takes them from the carrier account.
+  // platform DID as a tenant's BYOC number. A tenant's own-carrier numbers come from
+  // `syncForCredential` on a carrier whose numbers are synced, or from `createPinned` on a
+  // carrier whose numbers are added by hand (CR6).
+
+  /**
+   * Which of `phoneNumbers` are pinned to a tenant credential (`telephony_credential_id` set),
+   * whatever their status or tenant: numbers of an organisation's own carrier account, which a
+   * campaign on the service's own account may not take as caller IDs (CR9).
+   */
+  async findPinnedAmong(phoneNumbers: readonly string[]): Promise<string[]> {
+    if (phoneNumbers.length === 0) return [];
+    const result = await getPool().query<{ phone_number: string }>(
+      `SELECT phone_number FROM phone_numbers
+        WHERE phone_number = ANY($1::varchar[]) AND telephony_credential_id IS NOT NULL
+        ORDER BY phone_number`,
+      [[...phoneNumbers]],
+    );
+    return result.rows.map((r) => r.phone_number);
+  }
+
+  /**
+   * {@link findPinnedAmong} inside the caller's transaction, holding every row of `phoneNumbers`
+   * (pinned or not) `FOR SHARE` until it ends: what a campaign write on the service's own account
+   * runs before its INSERT or UPDATE (CR9), so a move onto a tenant's account
+   * ({@link pinToCredential}, which holds the number's row `FOR UPDATE`) cannot commit beside it.
+   * Either the move committed first and this sees the number pinned, or the move waits for the
+   * write and then sees the campaign holding it (`in_use`). The rows are locked in `id` order, the
+   * order a sync locks them in, so two writers over the same numbers cannot deadlock. A number not
+   * in the inventory locks nothing (a service caller ID need not be one). Under REPEATABLE READ a
+   * move that commits while this waits is a `40001`: the caller runs its transaction again.
+   */
+  async lockPinnedAmong(client: PoolClient, phoneNumbers: readonly string[]): Promise<string[]> {
+    if (phoneNumbers.length === 0) return [];
+    const result = await client.query<{ phone_number: string; telephony_credential_id: string | null }>(
+      `SELECT phone_number, telephony_credential_id FROM phone_numbers
+        WHERE phone_number = ANY($1::varchar[])
+        ORDER BY id
+          FOR SHARE`,
+      [[...phoneNumbers]],
+    );
+    return result.rows
+      .filter((r) => r.telephony_credential_id !== null)
+      .map((r) => r.phone_number)
+      .sort();
+  }
+
+  /**
+   * Add a number by hand, pinned to tenant credential `credentialId` (CR6: a carrier whose
+   * tenant-account numbers the carrier cannot list), and assign it untagged to the credential's
+   * tenant in the same transaction, exactly as a sync assigns the numbers it adds (PL5,
+   * {@link assignPinnedToCredentialTenant}). The credential row is locked first (`FOR NO KEY
+   * UPDATE`, as a sync locks it), so a disable or revoke waits for the insert, or the insert sees
+   * the credential no longer `active` and writes nothing. Refused, with nothing written, when:
+   *  - `credential_not_found`: no such credential, or one on another carrier than `provider_id`;
+   *  - `credential_not_active`: the credential is not `active` (`status` says what it is);
+   *  - `duplicate`: the number is already in the inventory (the unique index, read in the insert).
+   * Whether the carrier takes numbers by hand at all is the caller's rule (the catalogue).
+   */
+  async createPinned(
+    input: CreatePhoneNumberInput,
+    credentialId: string,
+  ): Promise<CreatePinnedPhoneNumberResult> {
+    return withTransaction(async (client, tx) => {
+      const cred = await client.query<{ tenant_id: string; status: string; provider_id: string }>(
+        `SELECT c.tenant_id, c.status, p.id AS provider_id
+           FROM telephony_credentials c
+           JOIN telephony_providers p ON p.name = c.provider
+          WHERE c.id = $1::uuid
+            FOR NO KEY UPDATE OF c`,
+        [credentialId],
+      );
+      const row = cred.rows[0];
+      let refusal: CreatePinnedPhoneNumberResult | null = null;
+      if (!row || row.provider_id !== input.provider_id) refusal = { ok: false, reason: 'credential_not_found' };
+      else if (row.status !== 'active') refusal = { ok: false, reason: 'credential_not_active', status: row.status };
+      if (refusal) {
+        await tx.rollback();
+        return refusal;
+      }
+      const inserted = await client.query<PhoneNumberRecord>(
+        `INSERT INTO phone_numbers
+           (phone_number, provider_id, label, capabilities, region, max_concurrent_calls, notes, created_by, telephony_credential_id)
+         VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8::uuid, $9::uuid)
+         ON CONFLICT (phone_number) DO NOTHING
+         RETURNING *`,
+        [
+          input.phone_number,
+          input.provider_id,
+          input.label || null,
+          input.capabilities || [],
+          input.region || null,
+          input.max_concurrent_calls,
+          input.notes || null,
+          input.created_by || null,
+          credentialId,
+        ],
+      );
+      const phoneNumber = inserted.rows[0];
+      if (!phoneNumber) {
+        await tx.rollback();
+        return { ok: false, reason: 'duplicate' };
+      }
+      await assignPinnedToCredentialTenant(client, row!.tenant_id, credentialId, input.created_by ?? null, [phoneNumber.id]);
+      return { ok: true, phoneNumber, tenantId: row!.tenant_id };
+    }, { pool: getPool() });
+  }
+
+  /**
+   * Move a number on the service's own carrier account onto a tenant's own account of the same
+   * carrier: pin it to tenant credential `credentialId` and assign it untagged to the
+   * credential's tenant (PL5, {@link assignPinnedToCredentialTenant}), in one transaction. One way
+   * only: nothing unpins a number (CR6). Whether the carrier takes numbers by hand on tenant
+   * accounts is the caller's rule (the catalogue), as for {@link createPinned}.
+   *
+   * Locks the credential row first (`FOR NO KEY UPDATE`), then the number's (`FOR UPDATE`): the
+   * order `createPinned` and `syncForCredential` take them in, so none of the three can deadlock
+   * another. A disable or revoke of the credential waits for the pin, or the pin sees the
+   * credential no longer `active`; an assignment of the number (`tenantPhoneAssignmentRepository
+   * .assign`, which takes the number's row `FOR SHARE` first) waits for the pin and then sees it
+   * pinned, or the pin waits for the assignment and sees it. A campaign write on the service's own
+   * account takes the number's row `FOR SHARE` before it writes ({@link lockPinnedAmong}, CR9), so
+   * it waits for the pin and refuses the now-pinned number, or the pin waits for it and its
+   * `in_use` read sees the campaign. Refused, with nothing written, when:
+   *  - `phone_number_not_found`: no such number;
+   *  - `phone_number_not_active`: the number is retired or deleted (`status` says which);
+   *  - `already_pinned`: it is pinned to a credential already (this one or another);
+   *  - `credential_not_found`: no such credential, or one on another carrier than the number's;
+   *  - `credential_not_active`: the credential is not `active` (`status` says what it is);
+   *  - `assigned_elsewhere`: it is assigned to a tenant other than the credential's
+   *    (`tenantCount` of them): unassigning is a separate action;
+   *  - `in_use`: a campaign on the service's own account that is not finished (draft, running,
+   *    paused, stopping: the statuses a credential's revoke is refused for) holds it as a caller
+   *    ID; it would dial the tenant's number on the service's account (CR9). `total` of them, the
+   *    first `campaignsNamed` in `campaigns`.
+   */
+  async pinToCredential(
+    phoneNumberId: string,
+    credentialId: string,
+    adminId: string | null,
+    opts: { campaignsNamed?: number } = {},
+  ): Promise<PinPhoneNumberResult> {
+    return withTransaction(async (client, tx) => {
+      const refuse = async (result: PinPhoneNumberResult): Promise<PinPhoneNumberResult> => {
+        await tx.rollback();
+        return result;
+      };
+      const cred = await client.query<{ tenant_id: string; status: string; provider_id: string }>(
+        `SELECT c.tenant_id, c.status, p.id AS provider_id
+           FROM telephony_credentials c
+           JOIN telephony_providers p ON p.name = c.provider
+          WHERE c.id = $1::uuid
+            FOR NO KEY UPDATE OF c`,
+        [credentialId],
+      );
+      const number = await client.query<{ phone_number: string; provider_id: string; status: string; telephony_credential_id: string | null }>(
+        `SELECT phone_number, provider_id, status, telephony_credential_id
+           FROM phone_numbers WHERE id = $1::uuid
+            FOR UPDATE`,
+        [phoneNumberId],
+      );
+      const n = number.rows[0];
+      if (!n) return refuse({ ok: false, reason: 'phone_number_not_found' });
+      if (n.status !== 'active') return refuse({ ok: false, reason: 'phone_number_not_active', status: n.status });
+      if (n.telephony_credential_id !== null) return refuse({ ok: false, reason: 'already_pinned' });
+      const c = cred.rows[0];
+      if (!c || c.provider_id !== n.provider_id) return refuse({ ok: false, reason: 'credential_not_found' });
+      if (c.status !== 'active') return refuse({ ok: false, reason: 'credential_not_active', status: c.status });
+
+      const others = await client.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM tenant_phone_assignments
+          WHERE phone_number_id = $1::uuid AND tenant_id <> $2::uuid`,
+        [phoneNumberId, c.tenant_id],
+      );
+      const tenantCount = others.rows[0]!.n;
+      if (tenantCount > 0) return refuse({ ok: false, reason: 'assigned_elsewhere', tenantCount });
+
+      const holding = await client.query<CampaignHoldingCallerId & { total: number }>(
+        `SELECT c.id AS campaign_id, c.name AS campaign_name, c.status, t.name AS tenant_name, a.name AS account_name,
+                count(*) OVER ()::int AS total
+           FROM agency_campaigns c
+           JOIN tenants t ON t.id = c.tenant_id
+           LEFT JOIN accounts a ON a.id = c.account_id
+          WHERE c.telephony_credential_id IS NULL
+            AND c.status IN ${LIVE_CAMPAIGN}
+            AND $1::text = ANY(c.caller_ids)
+          ORDER BY CASE c.status WHEN 'running' THEN 0 WHEN 'stopping' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,
+                   t.name, a.name NULLS LAST, c.name, c.id
+          LIMIT $2`,
+        [n.phone_number, Math.max(1, opts.campaignsNamed ?? 5)],
+      );
+      if (holding.rows.length > 0) {
+        return refuse({
+          ok: false, reason: 'in_use', total: holding.rows[0]!.total,
+          campaigns: holding.rows.map(({ total: _total, ...row }) => row),
+        });
+      }
+
+      // The row is locked and was read unpinned and active above, so this lands.
+      const pinned = await client.query<PhoneNumberRecord>(
+        `WITH moved AS (
+           UPDATE phone_numbers SET telephony_credential_id = $2::uuid
+            WHERE id = $1::uuid AND telephony_credential_id IS NULL AND status = 'active'
+            RETURNING *
+         )
+         SELECT moved.*, tp.name AS provider_name, tp.display_name AS provider_display_name
+           FROM moved JOIN telephony_providers tp ON tp.id = moved.provider_id`,
+        [phoneNumberId, credentialId],
+      );
+      await assignPinnedToCredentialTenant(client, c.tenant_id, credentialId, adminId, [phoneNumberId]);
+      return { ok: true, phoneNumber: pinned.rows[0]!, tenantId: c.tenant_id };
+    }, { pool: getPool() });
+  }
 
   async create(input: CreatePhoneNumberInput): Promise<PhoneNumberRecord> {
     const pool = getPool();

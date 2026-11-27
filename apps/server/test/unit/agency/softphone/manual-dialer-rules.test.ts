@@ -66,6 +66,8 @@ describe('manualDialFailureFor — what a dial the bridge refused before the car
   it('a calls-per-second limit is a busy line: retryable in a moment (PL7)', () => {
     expect(manualDialFailureFor(refused('carrier_rate_limited', 503))).toBe('concurrency_limit');
     expect(manualDialFailureFor(refused('account_concurrency_limit', 429))).toBe('concurrency_limit');
+    // A carrier account's own cap (CR13): the same busy line.
+    expect(manualDialFailureFor(refused('carrier_account_concurrency_limit', 429))).toBe('concurrency_limit');
   });
 
   it('a carrier account that cannot dial is its own, non-retryable answer (PL2, PL3)', () => {

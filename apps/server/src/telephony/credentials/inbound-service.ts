@@ -76,11 +76,17 @@ import { hashInboundToken, INBOUND_TOKEN_REPOINT_GRACE_SECONDS, mintInboundToken
 import { PLIVO_INBOUND_ROUTES, plivoInboundUrls, splitInboundToken, type PlivoInboundUrls } from '../plivo/inbound-urls.js';
 import { PlivoApiError, type PlivoApplication } from '../plivo/plivo-inbound.wire.js';
 import type { PlivoAdapter } from '../plivo/plivo.adapter.js';
+import { carrierSupportsInbound } from '../carrier-catalog.js';
 
 const log = createChildLogger({ component: 'telephony-inbound' });
 
-/** The carrier that answers inbound calls here. A credential on any other is refused. */
-const INBOUND_PROVIDER = 'plivo';
+/**
+ * Every inbound action (Enable, Disable, Re-point, the health check, Link, Unlink) is refused
+ * with `inbound_not_supported` for a carrier whose catalogue entry does not declare inbound
+ * (`carrierSupportsInbound`, CR11), never by its name. The reads (`state`, `numberState`) answer
+ * for any carrier: they show nothing enabled or linked.
+ */
+const NOT_SUPPORTED = 'This carrier does not take inbound calls here, so inbound cannot be set up on it. Nothing was changed.';
 
 /** The Plivo REST calls inbound makes (`PlivoAdapter`'s inbound members). */
 export type InboundCarrierApi = Pick<PlivoAdapter,
@@ -200,7 +206,7 @@ export function inboundLinkBlocker(rec: PhoneNumberInboundLinkRecord): PhoneNumb
 }
 
 const BLOCKER_MESSAGE: Record<PhoneNumberInboundBlocker, string> = {
-  not_synced: 'Only a number synced from a tenant’s Plivo credential can be linked to inbound',
+  not_synced: 'Only a number on a tenant’s own carrier account can be linked to inbound',
   not_active: 'The number is not active',
   not_assigned: 'The number is not assigned to its credential’s tenant',
   credential_not_active: 'The number’s credential is not active',
@@ -261,6 +267,7 @@ export class TelephonyInboundService {
   async health(credentialId: string): Promise<ServiceResult<TelephonyCredentialInboundHealthResponse>> {
     const inbound = await this.deps.repo.findInbound(credentialId);
     if (!inbound) return fail('not_found', 'Credential not found');
+    if (!carrierSupportsInbound(inbound.provider)) return fail('inbound_not_supported', NOT_SUPPORTED);
     if (!inbound.app_id) return fail('inbound_not_enabled', 'Inbound is not enabled on this credential');
     return answer(async () => {
       const carrier = await this.carrier(credentialId, 'call_control');
@@ -443,6 +450,7 @@ export class TelephonyInboundService {
   async link(phoneNumberId: string, actor: InboundActor): Promise<ServiceResult<PhoneNumberInboundResponse>> {
     const rec = await this.deps.numbers.findInboundLink(phoneNumberId);
     if (!rec) return fail('phone_number_not_found', 'Phone number not found');
+    if (!carrierSupportsInbound(rec.provider_name)) return fail('inbound_not_supported', NOT_SUPPORTED);
     // Already linked: the carrier was set before the link committed. Nothing to do.
     if (rec.inbound_linked_at) return { ok: true, value: await this.numberStateOf(rec) };
     const blocker = inboundLinkBlocker(rec);
@@ -485,6 +493,7 @@ export class TelephonyInboundService {
   async unlink(phoneNumberId: string, actor: InboundActor): Promise<ServiceResult<PhoneNumberInboundResponse>> {
     const rec = await this.deps.numbers.findInboundLink(phoneNumberId);
     if (!rec) return fail('phone_number_not_found', 'Phone number not found');
+    if (!carrierSupportsInbound(rec.provider_name)) return fail('inbound_not_supported', NOT_SUPPORTED);
     if (!rec.inbound_linked_at) return fail('phone_number_not_linked', 'The number is not linked to inbound');
     const credentialId = rec.telephony_credential_id!;
     const result = await answer(async () => {
@@ -648,11 +657,11 @@ export class TelephonyInboundService {
     }
   }
 
-  /** The credential's inbound state, refused unless it exists and is on the inbound carrier. */
+  /** The credential's inbound state, refused unless it exists and its carrier takes inbound calls (CR11). */
   private async precheck(credentialId: string): Promise<ServiceResult<TelephonyCredentialInboundRecord>> {
     const inbound = await this.deps.repo.findInbound(credentialId);
     if (!inbound) return fail('not_found', 'Credential not found');
-    if (inbound.provider !== INBOUND_PROVIDER) return fail('unknown_provider', 'Inbound calls are answered only on Plivo credentials');
+    if (!carrierSupportsInbound(inbound.provider)) return fail('inbound_not_supported', NOT_SUPPORTED);
     if (inbound.status === 'revoked') return fail('invalid_transition', 'A revoked credential cannot be changed');
     return { ok: true, value: inbound };
   }

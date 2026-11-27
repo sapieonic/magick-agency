@@ -22,7 +22,10 @@ import { SERVICE_CARRIER, type CarrierChoice } from '../../utils/agencyCarriers'
 
 const CRED_A = '11111111-1111-4111-8111-111111111111';
 const CRED_B = '22222222-2222-4222-8222-222222222222';
+const CRED_VL = '44444444-4444-4444-8444-444444444444';
 const TENANT_A: CarrierChoice = { telephony_provider: 'plivo', telephony_credential_id: CRED_A };
+/** A tenant's own account on the same carrier as the service's (docs/carriers.md CR6, CR10). */
+const TENANT_VL: CarrierChoice = { telephony_provider: 'voicelink', telephony_credential_id: CRED_VL };
 
 const numbers = [
   {
@@ -68,6 +71,16 @@ const numbers = [
     label: 'Own B',
     is_default: false,
   },
+  {
+    // Added by hand onto the tenant's own VoiceLink account: the service's carrier, not its account.
+    phone_number_id: 'pn-6',
+    phone_number: '+912200000006',
+    provider_name: 'voicelink',
+    provider_display_name: 'VoiceLink',
+    telephony_credential_id: CRED_VL,
+    label: 'Own direct',
+    is_default: false,
+  },
 ];
 
 vi.mock('../../hooks/usePhoneNumbers', () => ({
@@ -94,8 +107,8 @@ describe('the excluded-numbers sentence', () => {
   it('counts and agrees in number with the numbers it excluded', () => {
     render(<CallerIdPicker selected={[]} onChange={vi.fn()} carrier={SERVICE_CARRIER} />);
 
-    // Four of the five are on another carrier account.
-    expect(screen.getByText(/4 numbers on other carriers are not shown/)).toBeTruthy();
+    // Five of the six are on another carrier account, one of them on the same carrier.
+    expect(screen.getByText(/5 numbers on other carrier accounts are not shown/)).toBeTruthy();
   });
 });
 
@@ -111,6 +124,26 @@ describe('filtering by the campaign’s carrier account', () => {
     // Named by alias and label, never by the carrier's identifier or vendor name.
     expect(screen.getByText(/dials through Pravah \(Acme main\) only/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/plivo/i);
+  });
+
+  it('keeps the service’s account and a tenant’s own account on the same carrier apart (CR9)', () => {
+    const { unmount } = render(<CallerIdPicker selected={[]} onChange={vi.fn()} carrier={SERVICE_CARRIER} />);
+    // The tenant's VoiceLink number is pinned to its credential: never a service caller ID.
+    expect(shown()).toEqual([expect.stringContaining('+912200000001')]);
+    unmount();
+
+    render(<CallerIdPicker selected={[]} onChange={vi.fn()} carrier={TENANT_VL} carrierLabel="Acme direct" />);
+    expect(shown()).toEqual([expect.stringContaining('+912200000006')]);
+    expect(screen.getByText(/dials through Swar \(Acme direct\) only/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/voicelink/i);
+  });
+
+  it('drops a service number from the selection when the campaign moves to the tenant’s own account on that carrier', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<CallerIdPicker selected={['+912200000001']} onChange={onChange} carrier={SERVICE_CARRIER} />);
+    expect(onChange).not.toHaveBeenCalled();
+    rerender(<CallerIdPicker selected={['+912200000001']} onChange={onChange} carrier={TENANT_VL} carrierLabel="Acme direct" />);
+    expect(onChange).toHaveBeenCalledWith([]);
   });
 
   it('says so when the carrier account has no numbers on this account', () => {

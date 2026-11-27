@@ -64,7 +64,9 @@ export type WebrtcCallRejectionReason =
   | 'global_concurrency_limit'
   | 'account_concurrency_limit'
   | 'provider_concurrency_limit'
-  | 'provider_concurrency_unavailable';
+  | 'provider_concurrency_unavailable'
+  /** The tenant carrier account's own cap is full (CR13). */
+  | 'carrier_account_concurrency_limit';
 
 /**
  * `webrtc_call_rejected` — a bridge call was refused at a pre-flight check

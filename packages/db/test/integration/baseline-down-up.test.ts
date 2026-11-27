@@ -116,6 +116,7 @@ const ALL_MIGRATIONS = [
   '0074_abandonment_grace_rollup_rebuild',
   '0075_abandonment_grace_setting',
   '0076_abandonment_grace_check_validate',
+  '0077_credential_concurrency_cap',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

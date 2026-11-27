@@ -64,14 +64,14 @@ import {
   RELAY_DWELL_SAMPLE_EVERY, trackCarrierDialRefusal, trackRelayDwell, trackWebsocketSendBackpressure,
 } from '@magick-agency/observability/metrics/voice';
 import {
-  CarrierDialNotSentError, carrierAuthRejectionReason, DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isCarrierDialAborted, isDialOutcomeUnknown,
+  CarrierDialNotSentError, carrierAuthRejectionReason, isCarrierDialAborted, isDialOutcomeUnknown,
 } from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
 } from '../utils/ws-backpressure.js';
 import { buildCarrierUrls, type CarrierUrls } from './bridge/carrier-urls.js';
 import {
-  carrierUnplacedRefusal, CREDENTIAL_UNAVAILABLE, isCredentialUnavailable, unplacedRefusalError, type UnplacedRefusal,
+  carrierInitFailureErrorCode, carrierUnplacedRefusal, CREDENTIAL_UNAVAILABLE, isCredentialUnavailable, unplacedRefusalError, type UnplacedRefusal,
 } from './bridge/dial-refusals.js';
 
 /**
@@ -102,8 +102,19 @@ function noRecording(result: InboundAudioRecording['result']): InboundAudioRecor
   return { result, pcm16: Buffer.alloc(0), sampleRate: INBOUND_RECORDING_SAMPLE_RATE, seconds: 0 };
 }
 
-/** One call's telephony slots, held under its concurrency key (`WebRtcBridgeManager.heldLeases`). */
-export interface HeldLease { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }
+/**
+ * One call's telephony slots, held under its concurrency key (`WebRtcBridgeManager.heldLeases`).
+ * `credentialId`: the tenant carrier account it was admitted on (CR13), null on the service's
+ * own account, so a release hands that account's own slot back too.
+ */
+export interface HeldLease {
+  callId: string;
+  concurrencyKey: string;
+  tenantId: string;
+  accountId: string;
+  provider: string;
+  credentialId: string | null;
+}
 
 /** A change in the telephony slots this process holds (`WebRtcBridgeManager.observeLeases`). */
 export type LeaseChange =
@@ -673,16 +684,19 @@ export class WebRtcBridgeManager {
     const maxDuration = await this.resolveMaxDuration(params.tenantId, params.accountId);
     const slotTtlSeconds = maxDuration + SLOT_TTL_GRACE_SECONDS;
 
+    // The tenant carrier account the call dials on (null: the service's own account): its own
+    // cap, when it has one, is a further scope of the admission (CR13).
+    const credentialId = params.telephonyCredentialId ?? null;
     await admitBridgeCall(this.guardHost, {
       concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider, slotTtlSeconds,
+      telephonyCredentialId: credentialId,
     });
-    this.noteLease({ op: 'held', lease: { callId: concurrencyKey, concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider } });
+    this.noteLease({ op: 'held', lease: { callId: concurrencyKey, concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider, credentialId } });
 
     // 2. Persist the call (status initiating), pinned to the tenant carrier credential it
     // dials on (null: the service's own account). The insert re-checks that credential is
     // `active` in the same statement and writes nothing otherwise. The INSERT stays inside
     // the same try so a failure still releases the slots it just took.
-    const credentialId = params.telephonyCredentialId ?? null;
     let record: WebRtcCallRecord;
     try {
       record = await webrtcCallRepository.create({
@@ -956,13 +970,15 @@ export class WebRtcBridgeManager {
       // agent and the slots are released and the media token is cleared (a late carrier
       // connect is refused and closed, which hangs it up). Its own error code, and the
       // adapter's error as `cause`, let the caller defer the contact's redial
-      // (`carrier-errors.ts`).
+      // (`carrier-errors.ts`). So does a dial the carrier took the login for and then
+      // refused with 401 (`CARRIER_API_REFUSED`, `carrierInitFailureErrorCode`): a carrier
+      // refusal like any other here, told apart by the refusal breaker (its API streak).
       const outcomeUnknown = isDialOutcomeUnknown(err);
       log.error({ err, callId: record.id, outcomeUnknown }, 'WebRTC outbound initiation failed');
       await this.endCall(record.id, {
         status: 'failed',
         outcome: 'telephony_init_failed',
-        errorCode: outcomeUnknown ? DIAL_OUTCOME_UNKNOWN_ERROR_CODE : 'TELEPHONY_INIT_FAILED',
+        errorCode: carrierInitFailureErrorCode(err),
         errorMessage: err instanceof Error ? err.message : String(err),
         hangupProvider: false,
       });
@@ -1465,11 +1481,13 @@ export class WebRtcBridgeManager {
     let capacity: 'admitted' | 'account_full' | 'no_capacity' | 'not_requested' = 'not_requested';
     if (params.takeSlots) {
       try {
+        // An inbound call on a tenant carrier account takes that account's own cap too (CR13).
         await admitBridgeCall(this.guardHost, {
           concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider, slotTtlSeconds,
+          telephonyCredentialId: params.telephonyCredentialId,
         });
         capacity = 'admitted';
-        this.noteLease({ op: 'held', lease: { callId: params.callId, concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider } });
+        this.noteLease({ op: 'held', lease: { callId: params.callId, concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider, credentialId: params.telephonyCredentialId ?? null } });
       } catch (err) {
         capacity = err instanceof WebRtcCallError && err.code === 'account_concurrency_limit' ? 'account_full' : 'no_capacity';
         log.warn({ err, callId: params.callId, capacity }, 'Inbound call admitted with no telephony slot');
@@ -3416,10 +3434,14 @@ export class WebRtcBridgeManager {
     callId?: string,
   ): Promise<void> {
     // `key` is a random uuid that appears in no other log line, so the bridge
-    // call id is threaded through purely for correlation.
+    // call id is threaded through purely for correlation. The carrier account the slots
+    // were admitted on is read off the lease itself (CR13), so the release hands back
+    // exactly what the admission took.
+    const credentialId = this.leases.get(key)?.credentialId ?? null;
     await releaseTelephonyLease(this.guardHost, {
       concurrencyKey: key, tenantId, accountId, provider, source: 'webrtc',
       ...(callId ? { callId } : {}),
+      ...(credentialId ? { credentialId } : {}),
     });
     this.noteLease({ op: 'released', concurrencyKey: key });
   }

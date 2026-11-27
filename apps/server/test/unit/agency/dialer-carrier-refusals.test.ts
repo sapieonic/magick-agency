@@ -69,10 +69,12 @@ import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 import { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
 import { StationRegistry } from '../../../src/agency/station-registry.js';
 import {
-  CarrierAuthRejectedError, CarrierDialNotSentError, CarrierRateLimitedError, CarrierRequestTimeoutError,
+  CarrierApiRefusedError, CarrierAuthRejectedError, CarrierDialNotSentError, CarrierRateLimitedError, CarrierRequestTimeoutError,
   CarrierDialRefusedError,
 } from '../../../src/telephony/carrier-errors.js';
-import { CarrierRefusalBreaker, CARRIER_REFUSAL_BREAKER_THRESHOLD } from '../../../src/agency/carrier-refusal-breaker.js';
+import {
+  CarrierRefusalBreaker, CARRIER_API_REFUSAL_BREAKER_THRESHOLD, CARRIER_REFUSAL_BREAKER_THRESHOLD,
+} from '../../../src/agency/carrier-refusal-breaker.js';
 import type { DialCommand } from '../../../src/agency/dial-dispatcher.js';
 
 function fakeWs() {
@@ -345,6 +347,64 @@ describe('the carrier refusal breaker', () => {
     const breaker = new CarrierRefusalBreaker(null, '');
     const own = { ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null };
     for (let i = 0; i < CARRIER_REFUSAL_BREAKER_THRESHOLD + 1; i++) await dialWith(carrierRefused(), breaker, own);
+    expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The breaker's API streak (CR4): an account whose login works while the carrier refuses every
+// dial request with 401 (`carrier_api_refused`). No single one pauses or marks anything; after
+// CARRIER_API_REFUSAL_BREAKER_THRESHOLD in a row with no call placed between, the campaign is
+// paused `carrier_refusing_calls`, audited with the API streak as its cause.
+// ---------------------------------------------------------------------------
+describe('the carrier refusal breaker: the API streak', () => {
+  const apiRefused = () => refusal('telephony_init_failed',
+    new CarrierApiRefusedError('voicelink', 401, 'VoiceLink /v1/add_lead error 401: {"message":"Unauthenticated."}'));
+  const carrierRefused = () => refusal('telephony_init_failed', new CarrierDialRefusedError('plivo', 403, 'Plivo create call error 403'));
+  const pausesOfBreaker = () => repos.campaign.pauseForCarrierAccount.mock.calls.filter(([, r]: any[]) => r === 'carrier_refusing_calls');
+
+  it('pauses `carrier_refusing_calls` on the tenth in a row, audited with its cause, and not before; never `carrier_auth`', async () => {
+    expect(CARRIER_API_REFUSAL_BREAKER_THRESHOLD).toBe(10);
+    expect(CARRIER_API_REFUSAL_BREAKER_THRESHOLD).toBeGreaterThan(CARRIER_REFUSAL_BREAKER_THRESHOLD);
+    const breaker = new CarrierRefusalBreaker(null, '');
+    for (let i = 1; i < CARRIER_API_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(apiRefused(), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+    await dialWith(apiRefused(), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).toHaveBeenCalledTimes(1);
+    expect(repos.campaign.pauseForCarrierAccount).toHaveBeenCalledWith('camp-1', 'carrier_refusing_calls');
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'agency_campaign.auto_paused',
+      actor: 'system:carrier-refusals',
+      eventData: expect.objectContaining({ campaign_id: 'camp-1', reason: 'carrier_refusing_calls', cause: 'carrier_api_refused' }),
+    }));
+  });
+
+  it('a placed call breaks the streak', async () => {
+    const breaker = new CarrierRefusalBreaker(null, '');
+    for (let i = 1; i < CARRIER_API_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(apiRefused(), breaker);
+    await dialWith(undefined, breaker);
+    for (let i = 1; i < CARRIER_API_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(apiRefused(), breaker);
+    expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
+  });
+
+  it('each refusal counts in one streak only: API refusals never bring PL11 to its threshold, nor 4xx refusals the API streak', async () => {
+    const breaker = new CarrierRefusalBreaker(null, '');
+    for (let i = 1; i < CARRIER_API_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(apiRefused(), breaker);
+    for (let i = 1; i < CARRIER_REFUSAL_BREAKER_THRESHOLD; i++) await dialWith(carrierRefused(), breaker);
+    expect(pausesOfBreaker()).toEqual([]);
+    // One more of either trips its own streak, and PL11's pause carries no API cause.
+    await dialWith(carrierRefused(), breaker);
+    expect(pausesOfBreaker()).toHaveLength(1);
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({
+      eventData: expect.not.objectContaining({ cause: expect.anything() }),
+    }));
+  });
+
+  it('a campaign on the service`s own account is never paused by it', async () => {
+    const breaker = new CarrierRefusalBreaker(null, '');
+    const own = { ...CAMPAIGN, telephony_provider: 'voicelink', telephony_credential_id: null };
+    for (let i = 0; i < CARRIER_API_REFUSAL_BREAKER_THRESHOLD + 1; i++) await dialWith(apiRefused(), breaker, own);
     expect(repos.campaign.pauseForCarrierAccount).not.toHaveBeenCalled();
   });
 });

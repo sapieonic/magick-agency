@@ -1,4 +1,5 @@
 import {
+  CARRIER_API_REFUSED_ERROR_CODE,
   CARRIER_AUTH_REJECTED,
   CARRIER_DIAL_INVALID_NUMBER_ERROR_CODE,
   CARRIER_DIAL_NOT_SENT_ERROR_CODE,
@@ -28,6 +29,7 @@ const MESSAGES: Readonly<Record<string, string>> = {
   [CARRIER_DIAL_NOT_SENT_ERROR_CODE]: 'The call was not placed: the carrier account could not be reached or is not set up to place calls. Contact support if it keeps happening.',
   [CARRIER_DIAL_INVALID_NUMBER_ERROR_CODE]: 'The call was not placed: the number is not one the carrier can dial.',
   [CARRIER_RATE_LIMITED.errorCode]: 'The call was not placed: the carrier account’s limit on new calls a second was reached.',
+  [CARRIER_API_REFUSED_ERROR_CODE]: 'The call was not placed: the carrier did not accept the request from this account. Please try again, and contact support if it keeps happening.',
   [CARRIER_AUTH_REJECTED.errorCode]: 'The call was not placed: the carrier refused this account’s credentials. Contact support to have them checked.',
   [CREDENTIAL_UNAVAILABLE.errorCode]: 'The call was not placed: this carrier account is no longer active. Contact support to have it re-enabled.',
   BRIDGE_SETUP_FAILED: 'The call could not be set up. Please try again.',

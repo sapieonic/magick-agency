@@ -57,7 +57,7 @@ export const CAMPAIGN_SETTINGS_SECTIONS: CampaignSettingsSectionDef[] = [
     id: 'roster-uploads',
     label: 'Lifecycle and uploads',
     tab: 'contacts',
-    keywords: ['uploads', 'upload history', 'roster', 'contact list', 'csv', 'file', 'lifecycle', 'started', 'paused', 'stopped'],
+    keywords: ['uploads', 'upload history', 'roster', 'contact list', 'csv', 'excel', 'xlsx', 'file', 'lifecycle', 'started', 'paused', 'stopped'],
   },
   {
     // CS2–CS4: the starting point, the buttons as sentences, the agent's view of them, and under

@@ -18,9 +18,9 @@ import {
   type AgencyPriorAttempt,
 } from '@magick-agency/contracts/agency';
 import { promiseState } from '@magick-agency/domain/promise-to-pay';
-// The codec-free declaration, not `carrier-modules.js`: that loads every carrier's media
+// The codec-free carrier catalogue, not `carrier-modules.js`: that loads every carrier's media
 // codec (and the tables it builds at load) into the repository's import graph.
-import { carrierCancelsRinging } from '../../../telephony/carrier-ringing.js';
+import { carrierCancelsRinging } from '../../../telephony/carrier-catalog.js';
 import type { CampaignInboundFacts, CampaignInboundLogRow, CampaignSoftphoneLogRow } from '../../../agency/campaign-call-log.js';
 
 /**

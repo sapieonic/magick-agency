@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.20.0...mobile-v0.21.0) (2026-11-26)
+
+
+### Features
+
+* **console,mobile:** Need help on every soft phone screen, a message vibration, floor assist telemetry (LF39) ([#126](https://github.com/sapieonic/magick-agency/issues/126)) ([882633b](https://github.com/sapieonic/magick-agency/commit/882633b4d0decd12dc7a4d783912a6fb20918332))
+
 ## [0.20.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.19.0...mobile-v0.20.0) (2026-11-24)
 
 

@@ -1,4 +1,5 @@
 import { createChildLogger } from '@magick-agency/observability';
+import { trackCarrierDialRefusal } from '@magick-agency/observability/metrics/voice';
 import type {
   TelephonyProvider,
   OutboundCallRequest,
@@ -9,9 +10,17 @@ import type {
   IvrStepRenderParams,
 } from '../types.js';
 import type { VoicelinkConfig, VoicelinkAddLeadResponse, VoicelinkCdrResponse, VoicelinkWebhookBody } from './voicelink.types.js';
-import { VoicelinkTokenManager } from './voicelink-token-manager.js';
+import { VoicelinkTokenManager, type VoicelinkAccountMode } from './voicelink-token-manager.js';
 import { parseVoicelinkWebhook } from './voicelink.webhook.js';
-import { CarrierDialOutcomeUnknownError, CarrierRequestTimeoutError, isAbortTimeout } from '../carrier-errors.js';
+import {
+  CarrierApiRefusedError,
+  CarrierDialNotSentError,
+  CarrierDialOutcomeUnknownError,
+  CarrierDialRefusedError,
+  CarrierRateLimitedError,
+  CarrierRequestTimeoutError,
+  isAbortTimeout,
+} from '../carrier-errors.js';
 
 const log = createChildLogger({ component: 'voicelink-adapter' });
 
@@ -88,12 +97,35 @@ export class VoicelinkAdapter implements TelephonyProvider {
    * queue (see `initiateCall`) — it is dialled when the carrier gets to it.
    */
   readonly capabilities = { cancelRinging: false, queuesOutboundDials: true } as const;
+  /**
+   * Whose account this adapter dials on (docs/carriers.md §2.1). `service`: the service's own
+   * login from env, its errors exactly as they always were. `tenant`: a tenant's own login from
+   * a credential (CR2), whose refusals are typed for the dial path (CR4): a refused login is
+   * `CarrierAuthRejectedError` (the only verdict on the credential); an `add_lead` still
+   * 401 after a successful re-login is {@link CarrierApiRefusedError} (`refusal`: no verdict on
+   * the credential, counted by a breaker streak of its own); a 429 is
+   * {@link CarrierRateLimitedError}; any other non-2xx is {@link CarrierDialRefusedError} with its
+   * status, so the refusal breaker counts a 4xx (PL11) and never a 5xx.
+   */
+  readonly accountMode: VoicelinkAccountMode;
   private readonly config: VoicelinkConfig;
   private readonly tokenManager: VoicelinkTokenManager;
 
-  constructor(config: VoicelinkConfig) {
+  constructor(config: VoicelinkConfig, opts: {
+    accountMode?: VoicelinkAccountMode;
+    /**
+     * The login to share (tenant accounts: one per credential and secret version, shared by the
+     * dial and call-control adapters, `voicelink-tenant.ts`). Absent: a login of its own, in
+     * this adapter's account mode.
+     */
+    tokenManager?: VoicelinkTokenManager;
+  } = {}) {
     this.config = config;
-    this.tokenManager = new VoicelinkTokenManager(config);
+    this.accountMode = opts.accountMode ?? 'service';
+    this.tokenManager = opts.tokenManager ?? new VoicelinkTokenManager(config, { accountMode: this.accountMode });
+    if (this.tokenManager.accountMode !== this.accountMode) {
+      throw new Error(`VoiceLink adapter on a ${this.accountMode} account given a ${this.tokenManager.accountMode} login`);
+    }
   }
 
   /**
@@ -128,6 +160,11 @@ export class VoicelinkAdapter implements TelephonyProvider {
   }
 
   async initiateCall(req: OutboundCallRequest): Promise<{ providerCallId: string }> {
+    // A tenant's account with no API address configured (`VOICELINK_BASE_URL`, CR2): nothing
+    // can be sent, and every dial on it would fail the same way. Refused before the carrier.
+    if (this.accountMode === 'tenant' && !this.config.baseUrl) {
+      throw new CarrierDialNotSentError('voicelink', 'configuration', 'no VoiceLink API address is configured on this server');
+    }
     // VoiceLink dials OUT to our per-lead websocket_url. The live provider call id
     // only arrives async on the WS `start` frame / webhook, so we correlate via
     // the callId embedded in the URL path and return our callId as providerCallId.
@@ -252,7 +289,7 @@ export class VoicelinkAdapter implements TelephonyProvider {
         }
         if (!response.ok) {
           const errBody = await response.text();
-          throw new Error(`VoiceLink ${path} error ${response.status}: ${errBody}`);
+          throw this.refusal(path, response.status, errBody);
         }
         const text = await response.text();
         try {
@@ -267,19 +304,53 @@ export class VoicelinkAdapter implements TelephonyProvider {
         const outcomeUnknown = status === null || (status >= 200 && status < 300);
         log.error({ path, timeoutMs, status, outcomeUnknown }, 'VoiceLink request timed out');
         if (status !== null && !outcomeUnknown) {
-          throw new Error(`VoiceLink ${path} error ${status}: (body not read within ${timeoutMs} ms)`);
+          throw this.refusal(path, status, `(body not read within ${timeoutMs} ms)`);
         }
         throw new CarrierRequestTimeoutError(operation, timeoutMs, true);
       }
     };
 
-    let result = await send(await this.tokenManager.getToken(), true);
+    const token = await this.tokenManager.getToken();
+    let result = await send(token, true);
     if ('unauthorized' in result) {
-      // Stale token — refresh once and retry.
-      result = await send(await this.tokenManager.refresh(), false);
+      // Stale token: retry once with a newer one (a fresh login only if nobody else has
+      // replaced this token yet, `refresh`).
+      result = await send(await this.tokenManager.refresh(token), false);
     }
     if ('unauthorized' in result) throw new Error(`VoiceLink ${path} error 401`); // unreachable: refreshOn401 false
     return result.data;
+  }
+
+  /**
+   * The error for a non-2xx answer to `path` (nothing was queued). The service's account: a
+   * plain `Error`, as always. A tenant's account (CR4): a 429 is
+   * {@link CarrierRateLimitedError}, any other status but 401 {@link CarrierDialRefusedError}
+   * carrying it.
+   *
+   * A 401 here is only ever the one on the retry, with a token from a login that VoiceLink
+   * ACCEPTED moments before (or from another dial's: `refresh`). It is not a verdict on the
+   * credential: the only one is the login itself (a refused login is
+   * `CarrierAuthRejectedError` in the token manager). If VoiceLink retires an account's
+   * earlier tokens on a new login, two processes on one credential (media workers, each with
+   * its own login) can retire each other's token between a login and its retry; condemning
+   * the credential for that would mark a healthy one `invalid` and pause its campaigns. So it
+   * marks nothing and pauses nothing at once: a failed dial (`telephony_init_failed`) that PL11
+   * does not count. But an account whose login works while its API refuses every dial (API
+   * access withdrawn) fails every dial this way, so a tenant's is a {@link CarrierApiRefusedError}
+   * (the bridge's `CARRIER_API_REFUSED`), counted in `carrier_dial_refusals_total`
+   * (`api_refused`) and by the breaker's API streak, which pauses the campaign only after
+   * several in a row with no call placed between (`agency/carrier-refusal-breaker.ts`). On the
+   * service's account it is a plain `Error`, as always.
+   */
+  private refusal(path: string, status: number, detail: string): Error {
+    const message = `VoiceLink ${path} error ${status}: ${detail}`;
+    if (this.accountMode !== 'tenant') return new Error(message);
+    if (status === 401) {
+      trackCarrierDialRefusal('voicelink', 'api_refused');
+      return new CarrierApiRefusedError('voicelink', status, `VoiceLink ${path} error ${status}: ${detail.slice(0, 300)}`);
+    }
+    if (status === 429) return new CarrierRateLimitedError('voicelink', 'carrier', 0);
+    return new CarrierDialRefusedError('voicelink', status, `VoiceLink ${path} error ${status}: ${detail.slice(0, 300)}`);
   }
 
   async endCall(_providerCallId: string): Promise<void> {
@@ -392,10 +463,11 @@ export class VoicelinkAdapter implements TelephonyProvider {
           headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
           signal: AbortSignal.timeout(timeoutMs),
         });
-      let response = await get(await this.tokenManager.getToken());
+      const token = await this.tokenManager.getToken();
+      let response = await get(token);
       if (response.status === 401) {
         await response.body?.cancel().catch(() => undefined);
-        response = await get(await this.tokenManager.refresh());
+        response = await get(await this.tokenManager.refresh(token));
       }
       if (!response.ok) {
         log.warn({ callId, status: response.status }, 'VoiceLink CDR fetch non-ok');

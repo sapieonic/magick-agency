@@ -45,6 +45,22 @@ super-admins add (not env). Built in steps:
 | Merge with main (2026-11-07) | Done | `main`'s dedicated caller ID per agent (#51, DN1–DN10) and the Insights tabs (#53) merged in (a merge commit; the branch is published). `main`'s `0018_agent_caller_ids.sql` is released and kept; this branch's unreleased migrations moved up one, to `0019_plivo_numbers_and_carrier_pause.sql`, `0020_carrier_account_unavailable_pause.sql` and `0021_carrier_refusing_calls_pause.sql` (headers, tests, `BASELINE.md`, the down → up ledger). The two caller-ID rules are one: every dial path hands `resolveCallerId` (DN2) the campaign's DIALABLE caller IDs (PL13), so on a tenant's own carrier account a dedicated number retired or revoked there falls back to the rotation, and the rotation is the dialable pool minus the dedicated numbers; a service-account campaign behaves as on `main` (`decisions.md`, PL13's addendum). The supervisor's caller-ID list and PUT and the agent's My contacts see the same pool; removing a retired number still dedicated is refused `caller_id_dedicated`, naming it. Tests: `pacing-engine.test.ts` and `dedicated-caller-ids.test.ts` ("over the dialable pool"), `agency-agent-caller-ids.test.ts` (a pinned campaign end to end), each mutation-checked |
 | 5 Live check | Not started | Needs a Plivo account. To check: one real call end to end (dial, answer XML, stream, hangup) and one recording analysed; the cause codes real hangup callbacks carry, added to `plivo-carrier.fixture.json`; the recording host and whether a recording fetch redirects (the fetch sends the credential to `media.plivo.com` and its subdomains only, and never follows a redirect with it; staging's account records on `aps1.media.plivo.com`); the assumption that a 403 on create-call is a geo-permission refusal of the destination, not an auth failure; and the call detail record the ring deadline reads (`GET Call/{call_uuid}/`): the values of its `call_state` for a busy, unanswered, cancelled, failed and answered call (the SDK names the field, not its values; `plivo-carrier.fixture.json` `cdr` holds illustrative ones), its `hangup_cause_name` catalogue, and that it answers 404 while the call is live |
 
+### Carrier account modes; VoiceLink on tenants' own accounts 2026-11-25 (CR1–CR14, [`carriers.md`](carriers.md))
+
+A carrier declares which accounts a call may be placed on: the service's own (env), tenants' own
+(a sealed credential), or both. VoiceLink now takes both; Plivo stays tenant accounts only.
+
+| Step | State | Evidence |
+|---|---|---|
+| 1 Foundation | Done | One codec-free carrier catalogue with account modes; `SERVICE_ADAPTERS` and `TENANT_ADAPTERS` instead of a switch; webhook base and public recordings from the catalogue; recording access per account mode; every per-carrier list held to the catalogue by `carrier-conformance.test.ts`, mutation-checked |
+| 2 VoiceLink tenant account | Done | Credential spec (login check, the service's username reserved), tenant adapter with one shared login per credential and secret version, typed refusals so PL2 and PL11 apply, recordings proxied and ended by revocation; `voicelink-tenant-call-e2e.test.ts` on the mock carrier. Not yet run on a real tenant VoiceLink account |
+| 3 Write rules | Done | Campaigns by account mode (CR8), no pinned caller ID on a service-account campaign (CR9), numbers added by hand pinned to a credential and assigned to its tenant (CR6, CR7), capability fields on the provider lists, inbound gated by capability (`inbound_not_supported`, CR11); readiness by account mode (a tenant VoiceLink account needs `VOICELINK_BASE_URL`) |
+| 4 Consoles | Done | Super-admin: Add number with the account picker, Move to a tenant's account, Sync and inbound by capability, a pinned number's account shown; console: carrier accounts named apart without vendor names, pinned VoiceLink recordings played from the carrier's URL after the server's access check (CR12) |
+| Review fixes | Done | An independent review found no critical defect; fixed with tests that fail without them: a 401 after a re-login no longer condemns a tenant credential (CR4), the username fits its column and is unique without case (CR2), existing service numbers can move to a tenant's account (CR6), tenant VoiceLink recordings redirect instead of being fetched through egress that cannot reach them (CR12), two conformance checks that guarded nothing |
+| Manas's answers | Done | CR2, CR4, CR9, CR11, CR13 decided 2026-11-25. Built for them: a concurrency cap per carrier account (`0077_credential_concurrency_cap.sql`, a fourth admission scope, super-admin's Concurrent calls), an account that logs in but cannot dial gets its own refusal, a breaker at 10 and the alert `agy-carrier-api-refused`, and the one-off CR9 clean-up script |
+| Pacing (CR15) | Done | The tick plans no dials past an account's carrier share or a carrier account's own cap; the pinned `it.fails` for the carrier share now passes |
+| 5 Ratify | Open | Manas: the rest of CR1–CR15 and the questions left in `carriers.md` §6 |
+
 ### Tidy-up 2026-10-16/17
 
 Manas asked on 2026-10-16 for the whole tidy-up plan to be implemented. Decisions and the
@@ -536,6 +552,74 @@ contact import check and re-import (IM)".
   500). Analytics: a check is no longer sent as a completed import. The builder offers the same
   way back as Add contacts after a check or import that did not finish. Not done: Insights'
   upload history offers no skipped-rows download (a new field through the contract and its read).
+
+### Excel customer list 2026-11-24 (IM8)
+
+ClickUp "Campaign customer upload: accept Excel (.xlsx) as well as CSV". Rulings: IM8 in
+[`decisions.md`](decisions.md) (decided, Manas 2026-11-25); the console's side is CS7
+([`campaign-setup.md`](campaign-setup.md)).
+
+- **Server.** `POST /ingest/upload` detects a workbook by its bytes (then its name), reads its first
+  visible worksheet in tab order (`agency-xlsx.ts`, over the zip's central directory in
+  `agency-xlsx-zip.ts` and `saxes`) and stores it as CSV; nothing after the upload changed. The 201
+  carries `format` and, for Excel, the sheet read and the other visible sheets. An `.xls` or a
+  workbook with a password, text named `.xlsx`, an unreadable workbook and one with no visible
+  sheet are refused 400 in words; over the rows or columns, 422 in the ingest's words; over the
+  size, the upload's own 413. Downloads are named without `.xlsx`.
+- **Row numbers, CSV too.** The ingest numbers a row as a spreadsheet shows it: a blank line counts
+  as a row and a quoted cell with line breaks is one row (it counted the file's lines). Row N of an
+  Excel upload's review and downloads is row N of its sheet. `agency-csv-ingest.test.ts` C17 and
+  the restart contract's numbering cases were rewritten for it.
+- Words that reach an Excel upload say "the file", not "the CSV" (`malformed_csv`'s "Could not read
+  the file: …", the header encoding refusal names both formats).
+- **Containment (review of 2026-11-24).** Two reviews found small hostile workbooks that held the
+  event loop for seconds or grew the heap past a gigabyte. The conversion now runs in a child
+  process (`agency-xlsx-runner.ts`, `dist/xlsx-worker.js`) with its own 1 GiB heap, a 5 minute
+  deadline, one at a time (a second Excel upload: 429 `workbook_busy`, `Retry-After: 60`), killed
+  when the client goes; and the converter caps its work and live objects (format codes, cell
+  references, merges, the zip directory, XML depth, cell length, shared strings, decompression
+  against the compressed size, cells a pass visits, sheet names). Not a worker thread: under the
+  image's `--max-old-space-size` a worker's heap limit does not hold. Each reviewer's input is
+  refused or answered in well under a second of the server's own time.
+- **Runner review (2026-11-24).** The slot is freed when the child exits whatever the CSV's reader
+  does (an S3 upload that stalled or failed before reading held it for good); the deadline reaches
+  the S3 upload (503 `upload_storage_slow` once only the upload is left); a fork that cannot start
+  is an error for the upload, not a crash; closing the server stops a conversion in flight (503
+  `server_restarting`, the upload route's `preClose` hook), so shutdown does not wait for it; a
+  bundle without `dist/xlsx-worker.js` says so; the child's `oom_score_adj` is 1000 and it exits with
+  the server; a second workbook is refused before its body is read. The RAM sizing in
+  `docs/operations.md` now counts the conversion child.
+- **Numbers as the sheet shows them (Manas, 2026-11-25).** IM8 decided. A number cell is written as
+  its format shows it (`agency-xlsx-numfmt.ts`: sections, conditions such as the lakh format, currency
+  tags, placeholders, percent, scaling, Excel's rounding, the built-in ids), General and padding as
+  before, Indian grouping; fractions and scientific formats keep the value. The agent station's money
+  and number facts read the rendered amounts (`₹1,25,000.00`, `1,25,000.00`); `(1,250.00)` and `15%`
+  are shown as written. Choosing another sheet is not in the first cut.
+- **Phone columns and signs (Manas, 2026-11-25).** A whole number in a column whose header looks
+  like a phone column's (the column analysis's own header rule, now one function,
+  `phone-header.ts`) is written in full digits whatever its format, so a `#,##0` mobile column
+  imports. A red-negative format keeps the minus (only when its negative section looks like the
+  positive one: `0" Cr";0" Dr"` stays `5 Dr`); grouping stays Indian. The renderer review's
+  fixes: a text section never read as negative or zero, zero written as zero (never `-0`/`(0)`),
+  the integer placed before a format's own point, `%` and scaling capped, padding only for a lone
+  zeros section, slots precomputed, whole characters escaped, a malformed condition falling back.
+- **Fresh review (2026-11-25).** Four reviewers with no part in the build read the whole change.
+  Converter: a number under a text-only format (`@` spelled out) is written as General, not lost;
+  a date-formatted cell stays a date in a phone-like column (`Last Contact Date`); serials past
+  9999 by either system's limit, after rounding; a no-digit section chosen by sign; a value under a
+  merge does not widen the CSV; the phone rule's header row is the ingest's; `<dxfs>` formats left
+  out; General past 2^53 at 15 digits; a format code capped at 255 characters with one `General`
+  per section, so a cell's cost is bounded (an 80 KB workbook had held the conversion slot for the
+  full 5 minutes); long text refused as it streams in. Route and runner: shutdown stops every live
+  conversion, one whose CSV is still being stored and one whose body is still arriving included;
+  at most 10 Excel conversions per user in 15 minutes (429 `upload_rate_limited`); every refusal
+  carries a code (`AgencyUploadRefusalCode`) and a 413 says `file_too_large` in plain words; the
+  row limit reads "10,00,000"; the parser stays out of the server's own process
+  (`agency-xlsx-refusals.ts`). Console: the same file can be picked again after a refusal; Add
+  contacts takes a dropped file and offers "Choose another file"; the sheet notice counts every
+  other sheet, names five and names the sheet to move customers to, as a status; a proxy's 413 in
+  plain words; New campaign's error line keeps the request id out of the sentence.
+- Not done: an Excel file's other sheets cannot be chosen (only the first visible one is read).
 
 ### Wrap-up redial 2026-11-03
 
@@ -2360,7 +2444,7 @@ Known limits: the dialler-conversations count reads the day's attempts deploymen
 filters to the account (an account-first index would bound it); Will pay shows Successes for a
 moment until the promises read answers.
 
-### Live floor Phase 3 2026-11-19 (LF4–LF7 decided; LF11–LF39 built as defaults, pending Manas)
+### Live floor Phase 3 2026-11-19 (LF4–LF7 decided; LF11–LF38 built as defaults, pending Manas)
 
 Phase 3 of the Live floor, as Manas decided LF4–LF7, on the console, the app and the server.
 **Need help** (LF4, LF11–LF16, LF24, LF28, LF35): the agent raises it on their own live session, on
@@ -2390,9 +2474,9 @@ only (`409 late_callbacks_pool_mode`). **The account's Callbacks page** (LF22, L
 keyset pages, the customer's name never the number (`0053_account_callbacks_index.sql`: 38 ms for
 the overdue page on 25 campaigns of 40,000 contacts, 3.4 s before it). Phase 4 (Join call, whisper,
 LF8) stays Coming soon. Known limits: the campaign Agents tab still flags breaks at the fixed 30
-minutes (its stats read carries no limit, LF33); Need help is not on the console's inbound and soft
-phone views nor the app's soft phone screens (LF24, LF39; since done by the agent station redesign,
-2026-11-20); the Callbacks page's campaign filter
+minutes (its stats read carries no limit, LF33); Need help was not on the console's inbound and soft
+phone views nor the app's soft phone screens (LF24, LF39; the station's views since the agent station
+redesign, 2026-11-20, the app's Phone tab and the console's soft phone page since LF39, 2026-11-24); the Callbacks page's campaign filter
 lists the board's first 25 campaigns.
 
 ### Staging reports of 2026-11-17: a stuck summary, short recordings, inbound on the soft phone 2026-11-19 (AD1, AD2, TR1)
@@ -2796,6 +2880,30 @@ or Mark handled, and no Missed, Voicemail or Abandoned in its outcome filter; an
 shows an inbound entry as one it cannot show yet ([`call-log.md`](call-log.md) §8 "What P6 left
 as it was").
 
+### Live floor Phase 3's follow-ups 2026-11-24 (LF39, [`decisions.md`](decisions.md) "Live floor (LF)")
+
+Manas decided LF39, the three follow-ups left by the app's Phase 3; all built, client-only (the
+server already accepted a raise on a soft-phone session and sent the frames to every station socket).
+
+- **Need help on every soft phone screen.** The app's Phone tab now has the button and the card (the
+  station controller publishes a soft-phone session's help beside its messages; the screens read it
+  through `sessionHelpProvider` and `sessionHelpActionsProvider`). The console's soft phone page
+  `/dialer/phone` has Need help and shows supervisors' messages; its socket is the station socket
+  (`client=web`), so `ready.help`, `help_answered`, `help_cleared` and `supervisor_message` already
+  reached it. The message banner and the side Need help button are shared with the station
+  (`SupervisorBanner`, `SideNeedHelpButton`).
+- **A message vibrates the app.** One short vibration, never a sound, when a message first arrives:
+  once per id, once per burst (2 s), only while Me → Vibration is on. The console is unchanged.
+- **Telemetry**, six events from both clients and one from the console (`decisions.md` LF39 (c)): `agency_help_raised`,
+  `_cancelled`, `_answered`, `_expired`, `_refused`, `agency_supervisor_message_shown`, and the
+  console's `agency_supervisor_message_sent`. Each Need help event at most once per request;
+  `cancelled` only on the server's `help_cleared {cancelled}`; no text, names or customer details.
+
+**Not verified:** the vibration has not been felt on a phone (Android with touch feedback off, iOS
+while the call's audio session records); none of it has been seen against a deployed server. Me →
+Vibration now gates the call-arrival and connect buzzes too (before LF39 it gated nothing), as its
+subtitle says; the buzz on a refused Save is form feedback and stays.
+
 ### Abandonment on 23 Nov: the 3 s grace, the Resume warning, answer-to-audio 2026-11-24 (AG1, AW1–AW3)
 
 On 23 Nov two staging campaigns read about 10% abandoned and the guardrail paused them over and over.
@@ -2834,8 +2942,15 @@ until the server is deployed.
 
 **Live floor** (LF8, open): Phase 4, Join call and whisper (reopens "listen only"), a Coming soon
 control on the cards. Phase 3's follow-up: break limits on the campaign Agents tab (LF33). (Need
-help on the inbound and soft-phone screens of both clients, LF24 and LF39, is done by the agent
-station redesign.)
+help on the inbound and soft-phone screens of both clients, LF24 and LF39, is done: the agent
+station redesign and LF39.) LF39's message vibration is unproven on a phone: Android's
+`HapticFeedback.vibrate` does nothing with the system's touch feedback off (fix: `Vibrator` over a
+platform channel; `VIBRATE` is in the manifest) and iOS mutes it while the call records (fix:
+`setAllowHapticsAndSystemSoundsDuringRecording(true)` in `VoiceEngine.swift`); neither native change
+could be compiled in the build container ([`mobile.md`](mobile.md) "Not verified yet"). The PostHog
+event names the console and the app share are typed by hand on each side, with no check that they
+match (the soft phone's and LF39's alike): a shared list in `packages/contracts`, carried to the app
+through `literals.json`, would guard them.
 
 **Launch work** (phase 10):
 
@@ -2845,8 +2960,9 @@ station redesign.)
 - The rollback-window DNC mirror back to the previous platform. Only the `agency_dnc_outbox` table
   exists; nothing writes it.
 - The link from the previous platform's UI to Magick Agency.
-- Applying agency's alert rules and dashboard (`grafana/`, B6) to Grafana Cloud: written and
-  validated, never applied. The first `terraform apply` is in `grafana/README.md`.
+- Agency's Slack routing (`grafana/terraform/routing.tf`, B6 amended 2026-11-26): written and
+  validated, not applied yet. The rules and dashboard are applied on magickagency.grafana.net;
+  the next apply needs `TF_VAR_slack_webhook_url` (`grafana/README.md`, "Routing").
 
 **Deployment pieces:**
 
@@ -2951,7 +3067,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Soft-phone results (2026-11-15) | Ratify SR1–SR3 and SR5–SR8: tagged soft-phone calls beside the dialler's figures, never in its connect rate; "Dialler connect rate" and "All calls" in the console and the campaign report; the export's `source` column; the workbook's Summary rows appear only when there were soft-phone calls (a parser keyed on "Connect rate" then reads "Dialler connect rate") |
 | Contact import (2026-11-15) | Ratify IM1–IM7: check before import (24 h), a failed or stopped import lets its check go ("Import again"), skipped rows, the formula guard on the downloads (`+91…` gains a leading `'`, read back on re-import), one live import per campaign. Decide how long uploads are kept (IM2) |
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
-| Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF8 (Join call, whisper); ratify LF1, LF9 and LF10, and Phase 3's defaults LF11–LF38 (LF21: no late callbacks to an agent on a break; LF27: Agents on every campaign's Settings); LF39 open. LF4–LF7 (Phase 3) decided 2026-11-19 and built (`decisions.md`, "Live floor (LF)") |
+| Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF8 (Join call, whisper); ratify LF1, LF9 and LF10, and Phase 3's defaults LF11–LF35, LF37 and LF38 (LF21: no late callbacks to an agent on a break; LF27: Agents on every campaign's Settings). LF4–LF7 (Phase 3) decided 2026-11-19 and built; LF36 decided 2026-11-26 and built; LF39 decided 2026-11-24 and built (`decisions.md`, "Live floor (LF)") |
 | Archived campaigns (2026-11-21) | Ratify AR1–AR7: a flag beside the status; draft and stopped only, not completed; archived campaigns out of every list, picker and search (a picker keeps one it holds); `agency.campaigns.write`; only Start refused on an archived campaign, the console offering no new work on it |
 | Staging reports (2026-11-19) | Ratify AD1–AD2 (a summary reads "delayed" server-wide while the AI vendor's newest answer is a refusal) and TR1 (identical audio transcribed at most twice across attempts that end short, at worst 2 per attempt); run `terraform apply` in `grafana/` so `agy-analysis-vendor-refusing` exists; decide P3 soft-phone pickup, and a note on the agent app's Phone tab meanwhile |
 
@@ -3108,7 +3224,7 @@ account their browser last had open. Every signed-in console page is now served 
 - [ ] Mailjet sender verified (SPF/DKIM); `MAILJET_*` and `CONSOLE_BASE_URL` set.
 - [ ] Terraform state bucket made (`aws/state`) and any local state moved into it
       (`aws/README.md`, "State").
-- [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and CSV uploads, applied per
+- [ ] S3 bucket and keys (`S3_AUDIO_BUCKET`, `AWS_*`) for clips and customer file uploads, applied per
       environment from `aws/terraform` (`aws/README.md`). The same module can create the VM, its
       security group and Elastic IP (`create_server`).
 - [ ] Analysis: `DIALER_ANALYSIS_ENABLED`, transcriber and LLM keys, `RECORDING_URL_SIGNING_SECRET`.

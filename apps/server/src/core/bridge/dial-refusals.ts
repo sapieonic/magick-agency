@@ -16,6 +16,8 @@ import type { CarrierAccountPauseReason } from '@magick-agency/contracts/agency'
 import {
   carrierDialNotSentReason,
   carrierDialRefusalStatus,
+  DIAL_OUTCOME_UNKNOWN_ERROR_CODE,
+  isCarrierApiRefused,
   isCarrierAuthRejected,
   isCarrierRateLimited,
   isDialOutcomeUnknown,
@@ -33,6 +35,8 @@ export const CAPACITY_REFUSAL_CODES: ReadonlySet<WebRtcRejectReason> = new Set<W
   'account_concurrency_limit',
   'provider_concurrency_limit',
   'provider_concurrency_unavailable',
+  // The tenant carrier account's own cap (CR13): the same back-pressure.
+  'carrier_account_concurrency_limit',
   'carrier_rate_limited',
 ]);
 
@@ -66,6 +70,10 @@ export function dialNotSentReason(err: unknown): CarrierDialNotSentReason | null
  *  - `carrier_account`: the carrier account cannot dial, with the pause it writes
  *    ({@link CARRIER_ACCOUNT_PAUSES});
  *  - `not_sent`: the adapter would not send the dial, and why;
+ *  - `carrier_api_refused`: the carrier took the account's login, then refused the dial
+ *    request itself (`telephony_init_failed` whose adapter error is a `CarrierApiRefusedError`,
+ *    {@link CARRIER_API_REFUSED_ERROR_CODE}): no verdict on the credential and no pause of its
+ *    own, but its own streak in the refusal breaker;
  *  - `carrier_refused`: the carrier refused the dial (`telephony_init_failed`), with whether
  *    it may have been placed after all (`outcomeUnknown`) and the HTTP status it answered
  *    (`httpStatus`, null when the adapter's error carries none: a timeout, a network fault,
@@ -77,6 +85,7 @@ export type DialRefusal =
   | { kind: 'capacity' }
   | { kind: 'carrier_account'; pause: CarrierAccountPauseReason }
   | { kind: 'not_sent'; reason: CarrierDialNotSentReason }
+  | { kind: 'carrier_api_refused' }
   | { kind: 'carrier_refused'; outcomeUnknown: boolean; httpStatus: number | null }
   | { kind: 'other' };
 
@@ -88,6 +97,7 @@ export function classifyDialRefusal(err: unknown): DialRefusal {
   const pause = CARRIER_ACCOUNT_PAUSES.get(err.code);
   if (pause) return { kind: 'carrier_account', pause };
   if (err.code === 'telephony_init_failed') {
+    if (isCarrierApiRefused(err) && !isDialOutcomeUnknown(err)) return { kind: 'carrier_api_refused' };
     return { kind: 'carrier_refused', outcomeUnknown: isDialOutcomeUnknown(err), httpStatus: carrierDialRefusalStatus(err) };
   }
   const notSent = dialNotSentReason(err);
@@ -150,6 +160,30 @@ export const CREDENTIAL_UNAVAILABLE: UnplacedRefusal = {
  */
 export const CARRIER_DIAL_NOT_SENT_ERROR_CODE = 'CARRIER_DIAL_NOT_SENT';
 export const CARRIER_DIAL_INVALID_NUMBER_ERROR_CODE = 'CARRIER_DIAL_INVALID_NUMBER';
+
+/**
+ * The `errorCode` of a dial the carrier took our login for and then refused with 401 on the
+ * fresh token (`CarrierApiRefusedError`, CR4: an account whose API access was withdrawn). Still
+ * a carrier refusal (`telephony_init_failed`, with an `ended`, settled as any other), with a
+ * code of its own so a lifecycle observer, the call row and its tenant-facing sentence can
+ * tell it from the rest.
+ */
+export const CARRIER_API_REFUSED_ERROR_CODE = 'CARRIER_API_REFUSED';
+
+/** The `errorCode` that ends a call the carrier refused or may have queued (`telephony_init_failed`). */
+export const TELEPHONY_INIT_FAILED_ERROR_CODE = 'TELEPHONY_INIT_FAILED';
+
+/**
+ * The `errorCode` the bridge ends a call with when its dial failed at the carrier
+ * (`telephony_init_failed`): {@link DIAL_OUTCOME_UNKNOWN_ERROR_CODE} when the carrier may have
+ * queued it, {@link CARRIER_API_REFUSED_ERROR_CODE} when it took the login and refused the
+ * dial request, else {@link TELEPHONY_INIT_FAILED_ERROR_CODE}.
+ */
+export function carrierInitFailureErrorCode(err: unknown): string {
+  if (isDialOutcomeUnknown(err)) return DIAL_OUTCOME_UNKNOWN_ERROR_CODE;
+  if (isCarrierApiRefused(err)) return CARRIER_API_REFUSED_ERROR_CODE;
+  return TELEPHONY_INIT_FAILED_ERROR_CODE;
+}
 
 /** A calls-per-second limit gave the dial no slot (our gate, or the carrier's 429). */
 export const CARRIER_RATE_LIMITED: UnplacedRefusal = {

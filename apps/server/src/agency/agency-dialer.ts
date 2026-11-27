@@ -34,7 +34,7 @@ import {
   DEVICE_AWAY_BREAK_REASON,
   SOFTPHONE_BREAK_REASON,
 } from '@magick-agency/contracts/agency';
-import { carrierCancelsRinging, carrierRingingDeclarations } from '../telephony/carrier-ringing.js';
+import { carrierCancelsRinging, carrierNames } from '../telephony/carrier-catalog.js';
 import type {
   AgencyActiveAttempt,
   AgencyAgentState,
@@ -52,7 +52,7 @@ import { campaignImportLineage, isCampaignSession, type AgencyCampaignRecord } f
 import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
 import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
 import { pauseCampaignForCarrierAccount } from './carrier-account-pause.js';
-import { CarrierRefusalBreaker, countsTowardBreaker } from './carrier-refusal-breaker.js';
+import { CarrierRefusalBreaker, refusalStreakOf } from './carrier-refusal-breaker.js';
 import { classifyDialRefusal, dialWasSent } from '../core/bridge/dial-refusals.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
@@ -181,7 +181,7 @@ export const DIAL_ACTIVITY_TTL_MS = 12 * 60 * 60_000;
 const DIAL_ACTIVITY_MAX_ENTRIES = 10_000;
 
 /** The carriers the code declares: the `provider` label's whole vocabulary, with `other`. */
-const PROVIDER_LABELS: ReadonlySet<string> = new Set(carrierRingingDeclarations());
+const PROVIDER_LABELS: ReadonlySet<string> = new Set(carrierNames());
 
 /**
  * How long a campaign's import column order (AS20, More details) is reused before it is read
@@ -804,17 +804,22 @@ export class AgencyDialer {
   }
 
   /**
-   * Count a dial's rejection toward the campaign's refusal breaker (PL11), and pause the
-   * campaign `carrier_refusing_calls` when the streak reaches the threshold. Only a campaign
-   * pinned to a tenant credential is counted: the service's own account is not a tenant's
-   * to fix. True when this rejection tripped the breaker. Never throws.
+   * Count a dial's rejection toward the campaign's refusal breaker, in the streak it belongs
+   * to (`refusalStreakOf`: PL11's, or the API streak of an account that logs in but cannot
+   * dial, CR4), and pause the campaign `carrier_refusing_calls` when that streak reaches its
+   * threshold. Only a campaign pinned to a tenant credential is counted: the service's own
+   * account is not a tenant's to fix. True when this rejection tripped the breaker. Never throws.
    */
   private async noteCarrierRefusal(cmd: DialCommand, err: unknown): Promise<boolean> {
-    if (!cmd.campaign.telephony_credential_id || !countsTowardBreaker(err)) return false;
+    if (!cmd.campaign.telephony_credential_id) return false;
+    const streak = refusalStreakOf(err);
+    if (!streak) return false;
     try {
-      if (!(await this.refusalBreaker.noteRefusal(cmd.campaignId))) return false;
-      log.warn({ campaignId: cmd.campaignId, attemptId: cmd.attemptId }, 'The carrier refused this campaign\'s dials several times in a row — pausing it');
-      await pauseCampaignForCarrierAccount(cmd.campaign, 'carrier_refusing_calls');
+      if (!(await this.refusalBreaker.noteRefusal(cmd.campaignId, streak))) return false;
+      log.warn({ campaignId: cmd.campaignId, attemptId: cmd.attemptId, streak }, 'The carrier refused this campaign\'s dials several times in a row — pausing it');
+      await pauseCampaignForCarrierAccount(
+        cmd.campaign, 'carrier_refusing_calls', streak === 'api' ? { cause: 'carrier_api_refused' } : {},
+      );
       return true;
     } catch (breakerErr) {
       log.error({ err: breakerErr, campaignId: cmd.campaignId }, 'Carrier refusal breaker failed — the dial settles as usual');

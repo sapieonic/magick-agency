@@ -93,6 +93,13 @@
   min-width: 0;
 }
 
+/* An Excel upload's sheet notice, under the size and rows (CS7): the fileText column's own gap. */
+.sheetNotice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .fileName {
   font-size: 14px;
   color: var(--text-primary);

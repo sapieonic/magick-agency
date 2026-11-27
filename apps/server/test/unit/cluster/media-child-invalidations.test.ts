@@ -30,6 +30,7 @@ function start() {
   const guardHost = {
     accountConcurrencyGuard: { invalidateLimit: vi.fn(async () => {}) },
     providerConcurrencyGuard: { invalidateLimits: vi.fn(async () => {}) },
+    credentialConcurrencyGuard: { invalidateCap: vi.fn() },
     gracefulShutdown: vi.fn(async () => {}),
   };
   const app = { close: vi.fn(async () => {}), server: {} };
@@ -69,6 +70,13 @@ describe('a media worker applies the primary\'s invalidations', () => {
     channel.events.get('concurrency.invalidate')!({ tenantId: 't', accountId: 'a' });
     expect(guardHost.accountConcurrencyGuard.invalidateLimit).toHaveBeenCalledWith('t', 'a');
     expect(guardHost.providerConcurrencyGuard.invalidateLimits).toHaveBeenCalledWith('t', 'a');
+    await child.shutdown();
+  });
+
+  it('`concurrency.invalidate_credential` drops the carrier account\'s cached cap (CR13)', async () => {
+    const { channel, guardHost, child } = start();
+    channel.events.get('concurrency.invalidate_credential')!({ credentialId: 'cred-1' });
+    expect(guardHost.credentialConcurrencyGuard.invalidateCap).toHaveBeenCalledWith('cred-1');
     await child.shutdown();
   });
 

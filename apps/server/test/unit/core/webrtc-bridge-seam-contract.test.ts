@@ -172,6 +172,7 @@ type CoreRejectReason =
   | 'account_concurrency_limit'
   | 'provider_concurrency_limit'
   | 'provider_concurrency_unavailable'
+  | 'carrier_account_concurrency_limit'
   | 'telephony_init_failed'
   | 'station_socket_unavailable'
   | 'telephony_credential_unavailable'

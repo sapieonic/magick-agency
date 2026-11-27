@@ -79,7 +79,7 @@ their key env var is set, and the subsystem behind them is then registered or sk
 | `SUPER_ADMIN_JWT_SECRET` | `/super-admin/*` routes are not registered (`api/platform.plugin.ts`) |
 | `FIREBASE_PROJECT_ID` | Every Firebase verify fails closed (401); in production the platform plugin refuses to boot |
 | `MAILJET_API_KEY` | No mail is sent |
-| `S3_AUDIO_BUCKET` | No S3 client (clips, CSV uploads) |
+| `S3_AUDIO_BUCKET` | No S3 client (clips, customer file uploads) |
 | `DIALER_ANALYSIS_ENABLED` (plus a transcriber and an LLM key) | No analysis worker; the bridge's analysis hooks stay no-ops (`bootstrap/analysis.ts`) |
 | `TELEPHONY_ENABLED_PROVIDERS=voicelink` or `NODE_ENV=production` | VoiceLink fields become required at boot |
 
@@ -1126,7 +1126,8 @@ It is never a rate-limit key and never an auth input.
 
 ## Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`)
 
-Off by default: with neither set, everything above is one process, exactly as described. Design
+Off by default: with neither set, everything above is one process, exactly as described (apart
+from the short-lived child process an Excel upload is converted in, IM8, `agency-xlsx-runner.ts`). Design
 and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`):
 
 - **The primary** is the process `index.ts` starts. It keeps the HTTP listener, the public API

@@ -8,7 +8,7 @@ import '../../../app/routes.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
 import '../../../core/session/local_preferences.dart';
-import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
+import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider, softphoneViewProvider;
 import '../../../core/station/station_view.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
@@ -88,22 +88,43 @@ class StationTopBar extends ConsumerWidget {
 ///
 /// Behind the account's `agency_floor_assist_enabled` ([stationNeedHelpProvider]). Its own stage,
 /// never the station's busy state, so asking for help never holds up ending or saving a call.
+///
+/// The request and its actions are the hosted session's ([sessionHelpProvider],
+/// [sessionHelpActionsProvider]), a campaign station's or a soft-phone session's. On the Phone tab
+/// ([NeedHelpButton.phoneTab], LF39) there is no campaign view: the soft phone's view
+/// ([softphoneViewProvider]) says whether a call is on screen and whether the socket is open.
 class NeedHelpButton extends ConsumerWidget {
-  const NeedHelpButton({super.key});
+  const NeedHelpButton({super.key}) : _phoneTab = false;
+
+  /// On the Phone tab's soft-phone session.
+  const NeedHelpButton.phoneTab({super.key}) : _phoneTab = true;
+
+  final bool _phoneTab;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (!ref.watch(stationNeedHelpProvider)) return const SizedBox.shrink();
-    final help = ref.watch(stationViewProvider.select((v) => v?.help ?? const HelpView()));
-    final phase = ref.watch(stationViewProvider.select((v) => v?.phase));
-    final open = ref.watch(stationViewProvider.select((v) => v?.link == StationLink.open));
-    // Every working screen (AS5, BE-9); on calls only when this server refused a raise off one.
-    final onCall = phase == AgentPhase.onCall || phase == AgentPhase.wrapup;
-    final offered = phase != null && (!help.onlyOnCall || onCall);
+    final help = ref.watch(sessionHelpProvider);
+    final bool offered;
+    final bool open;
+    if (_phoneTab) {
+      // A call on screen (live or owing its outcome), and whether the session's socket is open.
+      final phone = ref.watch(softphoneViewProvider.select((v) => (onCall: v.callOnScreen, linkOpen: v.link == StationLink.open)));
+      // A soft-phone session takes a raise in any state (AS5); on calls only when this server
+      // refused a raise off one.
+      offered = !help.onlyOnCall || phone.onCall;
+      open = phone.linkOpen;
+    } else {
+      final phase = ref.watch(stationViewProvider.select((v) => v?.phase));
+      open = ref.watch(stationViewProvider.select((v) => v?.link == StationLink.open));
+      // Every working screen (AS5, BE-9); on calls only when this server refused a raise off one.
+      final onCall = phase == AgentPhase.onCall || phase == AgentPhase.wrapup;
+      offered = phase != null && (!help.onlyOnCall || onCall);
+    }
     if (!help.isOpen && !offered) return const SizedBox.shrink();
     final s = context.stateTokens;
     final text = Theme.of(context).textTheme;
-    final actions = ref.read(stationActionsProvider);
+    final actions = ref.read(sessionHelpActionsProvider);
 
     if (help.isOpen) {
       final cancelling = help.stage == HelpStage.cancelling;

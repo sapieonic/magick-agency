@@ -20,6 +20,7 @@ vi.mock('../../../../src/telephony/credentials/index.js', () => ({
 import { superAdminTelephonyCredentialRoutes } from '../../../../src/api/routes/super-admin-telephony-credentials.routes.js';
 import { errorMaskHook } from '../../../../src/api/middleware/error-mask.middleware.js';
 import { TELEPHONY_CREDENTIAL_ERROR_CODES } from '@magick-agency/contracts/api/platform/super-admin-telephony-credentials';
+import { resetConcurrencyControl, setConcurrencyControl, type ConcurrencyControl } from '../../../../src/seams/concurrency-control.js';
 
 const ID = '22222222-2222-4222-8222-222222222222';
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -27,7 +28,7 @@ const CANARY = 'canaryTokenValue0123456789';
 const ROW = {
   id: ID, tenant_id: TENANT, provider: 'plivo', label: 'Main', status: 'active', account_ref: 'MA1',
   public_config: {}, secret_version: 1, secret_hint: '6789', verified_at: null, last_error: null,
-  created_by: null, updated_by: null, created_at: new Date(0), updated_at: new Date(0), revoked_at: null, shredded_at: null,
+  max_concurrent_calls: null as number | null, created_by: null, updated_by: null, created_at: new Date(0), updated_at: new Date(0), revoked_at: null, shredded_at: null,
 };
 
 const SYNC = {
@@ -67,7 +68,9 @@ beforeEach(async () => {
     usage: vi.fn().mockResolvedValue({ campaigns: 2, inFlightCalls: 1 }),
     list: vi.fn().mockResolvedValue([ROW]),
     syncNumbers: vi.fn().mockResolvedValue({ ok: true, value: { credential: ROW, sync: SYNC } }),
+    setConcurrencyCap: vi.fn().mockResolvedValue({ ok: true, value: { ...ROW, max_concurrent_calls: 2 } }),
   } as never;
+  resetConcurrencyControl();
   inb = {
     state: vi.fn().mockResolvedValue({ ok: true, value: INBOUND_STATE }),
     enable: vi.fn().mockResolvedValue({ ok: true, value: INBOUND_STATE }),
@@ -93,10 +96,22 @@ describe('super-admin telephony credential routes', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.store_available).toBe(true);
-    expect(body.providers).toEqual([expect.objectContaining({
-      provider: 'plivo',
-      fields: [expect.objectContaining({ key: 'auth_id', secret: false }), expect.objectContaining({ key: 'auth_token', secret: true })],
-    })]);
+    expect(body.providers).toEqual([
+      expect.objectContaining({
+        provider: 'plivo',
+        // Plivo lists an account's numbers (Sync), and takes inbound calls (CR6, CR11).
+        number_source: 'sync',
+        supports_inbound: true,
+        fields: [expect.objectContaining({ key: 'auth_id', secret: false }), expect.objectContaining({ key: 'auth_token', secret: true })],
+      }),
+      expect.objectContaining({
+        provider: 'voicelink', display_name: 'VoiceLink',
+        // VoiceLink numbers are added by hand, and it takes no inbound calls (CR6, CR11).
+        number_source: 'manual',
+        supports_inbound: false,
+        fields: [expect.objectContaining({ key: 'username', secret: false }), expect.objectContaining({ key: 'password', secret: true })],
+      }),
+    ]);
   });
 
   it('creates (201), audits without the secret, and never echoes it', async () => {
@@ -105,7 +120,10 @@ describe('super-admin telephony credential routes', () => {
       payload: { tenant_id: TENANT, provider: 'plivo', label: 'Main', fields: { auth_id: 'MA1', auth_token: CANARY } },
     });
     expect(res.statusCode).toBe(201);
-    expect(svc.create).toHaveBeenCalledWith({ tenantId: TENANT, provider: 'plivo', label: 'Main', fields: { auth_id: 'MA1', auth_token: CANARY }, adminId: 'super-1' });
+    expect(svc.create).toHaveBeenCalledWith({
+      tenantId: TENANT, provider: 'plivo', label: 'Main', fields: { auth_id: 'MA1', auth_token: CANARY }, adminId: 'super-1',
+      maxConcurrentCalls: null,
+    });
     expect(res.body).not.toContain(CANARY);
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'create_telephony_credential', resource_id: ID }));
     expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain(CANARY);
@@ -152,7 +170,8 @@ describe('super-admin telephony credential routes', () => {
     inbound_enabled: 409, inbound_not_enabled: 409, inbound_numbers_linked: 409, inbound_previous_token_in_use: 409,
     inbound_unconfigured: 503,
     phone_number_not_found: 404, phone_number_not_linkable: 409, phone_number_not_linked: 409,
-    carrier_number_missing: 409, carrier_refused: 422,
+    carrier_number_missing: 409, carrier_refused: 422, account_ref_reserved: 409,
+    inbound_not_supported: 409,
   };
 
   it('has an expected status for every code of the contract, and no other', () => {
@@ -169,16 +188,18 @@ describe('super-admin telephony credential routes', () => {
 
   it.each([
     ['GET', ''], ['PATCH', ''], ['PUT', '/secret'], ['POST', '/verify'], ['POST', '/disable'], ['POST', '/enable'], ['POST', '/revoke'],
-    ['POST', '/sync-numbers'],
+    ['POST', '/sync-numbers'], ['PATCH', '/concurrency'],
   ])('%s …/:id%s answers 404 for a non-UUID id without calling the service', async (method, suffix) => {
-    const res = await app.inject({ method: method as 'GET', url: `/super-admin/telephony-credentials/x'1${suffix}`, payload: method === 'GET' || method === 'POST' ? undefined : { label: 'x', fields: {}, expected_version: 1 } });
+    const payload = method === 'GET' || method === 'POST' ? undefined
+      : suffix === '/concurrency' ? { max_concurrent_calls: 2 } : { label: 'x', fields: {}, expected_version: 1 };
+    const res = await app.inject({ method: method as 'GET', url: `/super-admin/telephony-credentials/x'1${suffix}`, payload });
     expect(res.statusCode).toBe(404);
-    for (const fn of ['get', 'rename', 'rotate', 'verify', 'disable', 'enable', 'revoke', 'syncNumbers']) expect(svc[fn]).not.toHaveBeenCalled();
+    for (const fn of ['get', 'rename', 'rotate', 'verify', 'disable', 'enable', 'revoke', 'syncNumbers', 'setConcurrencyCap']) expect(svc[fn]).not.toHaveBeenCalled();
   });
 
-  it('returns detail with usage', async () => {
+  it('returns detail with usage (no cap of its own: nothing counted)', async () => {
     const res = await app.inject({ method: 'GET', url: `/super-admin/telephony-credentials/${ID}` });
-    expect(res.json().usage).toEqual({ campaigns: 2, in_flight_calls: 1 });
+    expect(res.json().usage).toEqual({ campaigns: 2, in_flight_calls: 1, concurrent_calls_in_use: null });
   });
 
   it('rotates with the expected version and audits the new version', async () => {
@@ -315,5 +336,105 @@ describe('inbound routes (docs/inbound.md §8.1)', () => {
     const res = await app.inject({ method: 'POST', url });
     expect(res.statusCode).toBe(status);
     expect(res.json()).toEqual({ error: code, message: 'service message' });
+  });
+});
+
+describe('a carrier account\'s own concurrency cap (CR13)', () => {
+  function control(over: Partial<ConcurrencyControl> = {}) {
+    const c = {
+      invalidateAccountLimit: vi.fn(), invalidateProviderLimits: vi.fn(), getAccountProviderCounts: vi.fn(),
+      getAccountCount: vi.fn(), getDistributedAccountCount: vi.fn(),
+      invalidateCredentialLimit: vi.fn().mockResolvedValue(undefined),
+      getCredentialCounts: vi.fn().mockResolvedValue({ status: 'available', counts: new Map([[ID, 1]]) }),
+      ...over,
+    };
+    setConcurrencyControl(c as unknown as ConcurrencyControl);
+    return c;
+  }
+
+  it('create passes the cap through', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/super-admin/telephony-credentials',
+      payload: { tenant_id: TENANT, provider: 'plivo', label: 'Main', fields: { auth_id: 'MA1', auth_token: CANARY }, max_concurrent_calls: 2 },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(svc.create).toHaveBeenCalledWith(expect.objectContaining({ maxConcurrentCalls: 2 }));
+  });
+
+  it.each([0, -1, 1001, 1.5, '2'])('create refuses a cap of %j with a 400', async (cap) => {
+    const res = await app.inject({
+      method: 'POST', url: '/super-admin/telephony-credentials',
+      payload: { tenant_id: TENANT, provider: 'plivo', label: 'Main', fields: {}, max_concurrent_calls: cap },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(svc.create).not.toHaveBeenCalled();
+  });
+
+  it('PATCH …/:id/concurrency sets the cap, drops the cached cap through the seam, and audits the old and new', async () => {
+    const c = control();
+    svc.get!.mockResolvedValue({ ...ROW, max_concurrent_calls: 5 });
+    const res = await app.inject({ method: 'PATCH', url: `/super-admin/telephony-credentials/${ID}/concurrency`, payload: { max_concurrent_calls: 2 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().credential.max_concurrent_calls).toBe(2);
+    expect(svc.setConcurrencyCap).toHaveBeenCalledWith(ID, 2, 'super-1');
+    expect(c.invalidateCredentialLimit).toHaveBeenCalledWith(ID);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'set_telephony_credential_concurrency', resource_id: ID,
+      details: expect.objectContaining({ max_concurrent_calls: 2, previous_max_concurrent_calls: 5 }),
+    }));
+  });
+
+  it('PATCH …/:id/concurrency with null clears it', async () => {
+    control();
+    svc.setConcurrencyCap!.mockResolvedValue({ ok: true, value: ROW });
+    const res = await app.inject({ method: 'PATCH', url: `/super-admin/telephony-credentials/${ID}/concurrency`, payload: { max_concurrent_calls: null } });
+    expect(res.statusCode).toBe(200);
+    expect(svc.setConcurrencyCap).toHaveBeenCalledWith(ID, null, 'super-1');
+  });
+
+  it.each([[{}], [{ max_concurrent_calls: 0 }], [{ max_concurrent_calls: 1001 }], [{ max_concurrent_calls: 2, label: 'x' }]])(
+    'PATCH …/:id/concurrency refuses %j with a 400', async (payload) => {
+      const res = await app.inject({ method: 'PATCH', url: `/super-admin/telephony-credentials/${ID}/concurrency`, payload });
+      expect(res.statusCode).toBe(400);
+      expect(svc.setConcurrencyCap).not.toHaveBeenCalled();
+    });
+
+  it('a refused write answers its code, invalidates nothing and audits nothing', async () => {
+    const c = control();
+    svc.setConcurrencyCap!.mockResolvedValue({ ok: false, code: 'invalid_transition', message: 'A revoked credential cannot be changed' });
+    const res = await app.inject({ method: 'PATCH', url: `/super-admin/telephony-credentials/${ID}/concurrency`, payload: { max_concurrent_calls: 2 } });
+    expect(res.statusCode).toBe(409);
+    expect(c.invalidateCredentialLimit).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it('a committed write still answers 200 when the cache drop fails (it expires within seconds)', async () => {
+    control({ invalidateCredentialLimit: vi.fn().mockRejectedValue(new Error('redis down')) });
+    const res = await app.inject({ method: 'PATCH', url: `/super-admin/telephony-credentials/${ID}/concurrency`, payload: { max_concurrent_calls: 2 } });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('the list carries the live calls of each capped credential, and none for an uncapped one', async () => {
+    const UNCAPPED = '44444444-4444-4444-8444-444444444444';
+    const c = control();
+    svc.list!.mockResolvedValue([{ ...ROW, max_concurrent_calls: 2 }, { ...ROW, id: UNCAPPED }]);
+    const res = await app.inject({ method: 'GET', url: '/super-admin/telephony-credentials' });
+    expect(res.json().concurrent_calls_in_use).toEqual({ [ID]: 1 });
+    expect(c.getCredentialCounts).toHaveBeenCalledWith([ID]);
+  });
+
+  it('the list and the detail answer without counts when they cannot be read', async () => {
+    control({ getCredentialCounts: vi.fn().mockResolvedValue({ status: 'unavailable', counts: new Map() }) });
+    svc.list!.mockResolvedValue([{ ...ROW, max_concurrent_calls: 2 }]);
+    svc.get!.mockResolvedValue({ ...ROW, max_concurrent_calls: 2 });
+    expect((await app.inject({ method: 'GET', url: '/super-admin/telephony-credentials' })).json().concurrent_calls_in_use).toEqual({});
+    expect((await app.inject({ method: 'GET', url: `/super-admin/telephony-credentials/${ID}` })).json().usage.concurrent_calls_in_use).toBeNull();
+  });
+
+  it('the detail carries the live calls its cap counts', async () => {
+    control();
+    svc.get!.mockResolvedValue({ ...ROW, max_concurrent_calls: 2 });
+    const res = await app.inject({ method: 'GET', url: `/super-admin/telephony-credentials/${ID}` });
+    expect(res.json().usage).toEqual({ campaigns: 2, in_flight_calls: 1, concurrent_calls_in_use: 1 });
   });
 });

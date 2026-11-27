@@ -670,8 +670,10 @@ function RecordingSection({
             )}`}
             // Browsers ignore `download` on a cross-origin href and navigate
             // instead, which would tear the SPA down to show the audio file. A
-            // blob URL is same-origin and downloads in place, keeping its name.
-            {...(isDirectUrl ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+            // blob URL is same-origin and downloads in place, keeping its name; the
+            // carrier's own URL a fetcher may hand back (CR12) is not, so it opens
+            // in a new tab as a direct URL does.
+            {...(isDirectUrl || !playUrl.startsWith('blob:') ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
             className={styles.downloadBtn}
           >
             <Download size={13} />

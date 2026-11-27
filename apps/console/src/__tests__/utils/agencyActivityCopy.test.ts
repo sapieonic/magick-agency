@@ -172,7 +172,7 @@ describe('activityDetailSummary', () => {
 
   it('says what to do when the carrier refused several calls in a row', () => {
     expect(activityDetailSummary(row({ detail: { reason: 'carrier_refusing_calls' } })))
-      .toBe('Paused: the carrier refused several of this campaign’s calls in a row. Contact support to have the carrier account’s destinations, balance and caller IDs checked, then resume.');
+      .toBe('Paused: the carrier refused several of this campaign’s calls in a row. Contact support to have the carrier account’s destinations, balance, caller IDs and access checked, then resume.');
   });
 
   it('names a move to another carrier account in a config change', () => {

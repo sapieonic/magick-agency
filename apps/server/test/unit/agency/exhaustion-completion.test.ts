@@ -32,6 +32,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // pins the STATE instead. See the last describe block for the proof.
 // ---------------------------------------------------------------------------
 
+// CR9: a service-account campaign's dial pool drops the numbers pinned to a credential
+// (`dialableCallerIds`); none of this file's numbers is.
+vi.mock('@magick-agency/db/repositories/phone-number.repository', () => ({
+  phoneNumberRepository: { findPinnedAmong: vi.fn(async () => []) },
+}));
 vi.mock('@magick-agency/observability', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
   createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),

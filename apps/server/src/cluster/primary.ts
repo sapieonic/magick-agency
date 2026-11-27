@@ -162,8 +162,13 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
       try { await inner.invalidateProviderLimits(tenantId, accountId); } finally { cluster.invalidateLimits(tenantId, accountId); }
     },
     getAccountProviderCounts: (tenantId, accountId) => inner.getAccountProviderCounts(tenantId, accountId),
+    getProviderCount: (tenantId, accountId, provider) => inner.getProviderCount(tenantId, accountId, provider),
     getAccountCount: (tenantId, accountId) => inner.getAccountCount(tenantId, accountId),
     getDistributedAccountCount: (tenantId, accountId) => inner.getDistributedAccountCount(tenantId, accountId),
+    async invalidateCredentialLimit(credentialId) {
+      try { await inner.invalidateCredentialLimit(credentialId); } finally { cluster.invalidateCredentialLimit(credentialId); }
+    },
+    getCredentialCounts: (credentialIds) => inner.getCredentialCounts(credentialIds),
   };
   setConcurrencyControl(broadcasting);
   // A number change made here (the super-admin routes) clears every worker's dialable caller-ID cache.
@@ -212,6 +217,7 @@ export async function reapSlot(
       await releaseTelephonyLease(voice.guardHost, {
         concurrencyKey: lease.concurrencyKey, tenantId: lease.tenantId, accountId: lease.accountId,
         provider: lease.provider, source: 'webrtc', callId: lease.callId,
+        ...(lease.credentialId ? { credentialId: lease.credentialId } : {}),
       }).catch(() => 'failure');
     }
   }

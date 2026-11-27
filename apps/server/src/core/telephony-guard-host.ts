@@ -12,6 +12,7 @@ import { auditLogger } from '../audit/audit-logger.js';
 import { ConcurrencyGuard } from './concurrency-guard.js';
 import { AccountConcurrencyGuard } from './account-concurrency-guard.js';
 import { ProviderConcurrencyGuard, type TelephonyAdmissionResult } from './provider-concurrency-guard.js';
+import { CredentialConcurrencyGuard, type CredentialScope } from './credential-concurrency-guard.js';
 
 const log = createChildLogger({ component: 'telephony-guard-host' });
 
@@ -50,6 +51,8 @@ export class TelephonyGuardHost {
   readonly concurrencyGuard: ConcurrencyGuard;
   readonly accountConcurrencyGuard: AccountConcurrencyGuard;
   readonly providerConcurrencyGuard: ProviderConcurrencyGuard;
+  /** A tenant carrier account's own cap (CR13), taken with the other scopes. */
+  readonly credentialConcurrencyGuard: CredentialConcurrencyGuard;
   private shuttingDown = false;
   /**
    * Returns the call ids the WebRTC bridge is actively handling in memory on this
@@ -94,6 +97,11 @@ export class TelephonyGuardHost {
       config.concurrency.callTimeoutSeconds,
       config.concurrency.maxConcurrentCalls,
     );
+    this.credentialConcurrencyGuard = new CredentialConcurrencyGuard(
+      redis,
+      config.redis.keyPrefix,
+      config.concurrency.callTimeoutSeconds,
+    );
     // Derive the self-heal dormancy window from the lock TTL so the idle cooldown
     // always outlasts it (delayed-visibility drift surfaces only after the locks
     // TTL-expire). Floored at the const so it never drops below the baseline.
@@ -115,28 +123,48 @@ export class TelephonyGuardHost {
 
   /** Single entry point for telephony capacity. Provider-mode accounts acquire
    * global, account and provider leases atomically; legacy accounts retain the
-   * established two-scope behavior until explicitly migrated. `callId` is the
-   * lease key. */
+   * established two-scope behavior until explicitly migrated. A call on a tenant carrier
+   * account (`credentialId`) also takes that account's scope (CR13), whether or not it has
+   * a cap of its own, so its counter is the true number of calls live on it and a cap set
+   * later binds at once; only a cap can refuse it (`credential_full`). In provider mode the
+   * scope is inside the same transaction; in legacy mode it is taken after the global and
+   * account scopes (handing them back on a refusal). An unreadable cap refuses any call on
+   * the credential (`allocation_unavailable`, `providerScoped: false`: nothing was asked of
+   * the provider guard). `callId` is the lease key. */
   async tryAcquireTelephonyConcurrency(
     callId: string,
     tenantId: string,
     accountId: string,
     provider: string,
     ttlSecondsOverride?: number,
+    credentialId?: string | null,
   ): Promise<TelephonyAdmissionResult> {
-    return this.acquireTelephonyScopes(callId, tenantId, accountId, provider, ttlSecondsOverride);
+    return this.acquireTelephonyScopes(callId, tenantId, accountId, provider, ttlSecondsOverride, credentialId ?? null);
   }
 
-  /** The global/account/provider half of {@link tryAcquireTelephonyConcurrency}. */
+  /** The scopes of {@link tryAcquireTelephonyConcurrency}. */
   private async acquireTelephonyScopes(
     callId: string,
     tenantId: string,
     accountId: string,
     provider: string,
-    ttlSecondsOverride?: number,
+    ttlSecondsOverride: number | undefined,
+    credentialId: string | null,
   ): Promise<TelephonyAdmissionResult> {
+    let credential: CredentialScope | null = null;
+    if (credentialId) {
+      try {
+        credential = await this.credentialConcurrencyGuard.scopeFor(credentialId, callId);
+      } catch (err) {
+        // The cap could not be read: fail closed, as an unreadable provider allocation does,
+        // for an uncapped credential too (it may have been capped since its last read). Read
+        // before the allocation, so the account's mode is not known: not provider-scoped.
+        log.error({ err, tenantId, accountId, provider, credentialId }, 'Carrier account cap unavailable; failing closed');
+        return { result: 'allocation_unavailable', providerScoped: false };
+      }
+    }
     const composite = await this.providerConcurrencyGuard.tryAcquireAll(
-      callId, tenantId, accountId, provider, ttlSecondsOverride,
+      callId, tenantId, accountId, provider, ttlSecondsOverride, credential,
     );
     if (composite.result !== 'legacy_mode') return composite;
 
@@ -150,8 +178,25 @@ export class TelephonyGuardHost {
         await this.concurrencyGuard.release(callId);
         return { result: 'account_full', providerScoped: false };
       }
+      if (credential) {
+        const taken = await this.credentialConcurrencyGuard.tryAcquire(
+          callId, credential.credentialId, credential.cap, provider.toLowerCase(), ttlSecondsOverride,
+        );
+        // A capped call is refused when Redis cannot count it (no process-local share of a
+        // carrier's cap). An uncapped one has no cap to over-commit: it is admitted without
+        // the lease, as it was before every call took one, and its release is a no-op.
+        if (taken === 'credential_full' || (taken === 'redis_unavailable' && credential.cap !== null)) {
+          await Promise.allSettled([
+            this.accountConcurrencyGuard.release(callId, tenantId, accountId),
+            this.concurrencyGuard.release(callId),
+          ]);
+          return { result: taken, providerScoped: false };
+        }
+      }
       return { result: 'acquired', providerScoped: false, newlyAcquired: true };
     } catch (err) {
+      // The account guard and the credential guard never throw (each answers a value), so
+      // only the global scope can be held here.
       await this.concurrencyGuard.release(callId);
       throw err;
     }
@@ -305,12 +350,14 @@ export class TelephonyGuardHost {
       const globalResult = await this.concurrencyGuard.reconcile();
       const accountResult = await this.accountConcurrencyGuard.reconcileAll();
       const providerResult = await this.providerConcurrencyGuard.reconcileAll();
+      const credentialResult = await this.credentialConcurrencyGuard.reconcileAll();
       const healed = globalResult.before !== globalResult.after
         || accountResult.accountsReconciled > 0
-        || providerResult.providersReconciled > 0;
+        || providerResult.providersReconciled > 0
+        || credentialResult.credentialsReconciled > 0;
       if (healed) {
         log.warn(
-          { reason, global: globalResult, account: accountResult, provider: providerResult },
+          { reason, global: globalResult, account: accountResult, provider: providerResult, credential: credentialResult },
           'Concurrency counters reconciled — healed crash drift',
         );
       } else {

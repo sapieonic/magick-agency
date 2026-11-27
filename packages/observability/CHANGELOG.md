@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.19.0...observability-v0.20.0) (2026-11-26)
+
+
+### Features
+
+* **server,console,super-admin,contracts,db,observability,web-ui:** VoiceLink on tenants' own carrier accounts, with carrier account modes (CR1–CR15) ([#130](https://github.com/sapieonic/magick-agency/issues/130)) ([eebb67a](https://github.com/sapieonic/magick-agency/commit/eebb67ac8af7cb1418239fafce9cc3c73e248d9e))
+
 ## [0.19.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.18.0...observability-v0.19.0) (2026-11-24)
 
 

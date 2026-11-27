@@ -1,13 +1,13 @@
 {
-  "apps/server": "0.35.0",
-  "apps/console": "0.35.0",
-  "apps/super-admin": "0.7.3",
-  "apps/report-renderer": "0.6.1",
+  "apps/server": "0.37.0",
+  "apps/console": "0.36.0",
+  "apps/super-admin": "0.8.0",
+  "apps/report-renderer": "0.6.2",
   "apps/e2e": "0.1.0",
-  "packages/contracts": "0.31.0",
-  "packages/db": "0.29.0",
-  "packages/domain": "0.17.0",
-  "packages/observability": "0.19.0",
-  "packages/web-ui": "0.4.0",
-  "apps/mobile": "0.20.0"
+  "packages/contracts": "0.32.0",
+  "packages/db": "0.30.0",
+  "packages/domain": "0.17.1",
+  "packages/observability": "0.20.0",
+  "packages/web-ui": "0.5.0",
+  "apps/mobile": "0.21.0"
 }

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AGENCY_PHONE_DISPLAY_DEFAULT, type AgencyPhoneDisplay } from '@magick-agency/contracts/agency';
-import { getErrorMessage } from '@magick-agency/web-ui/errors';
+import { getErrorMessage, splitRequestId } from '@magick-agency/web-ui/errors';
+import { RequestId } from '@magick-agency/web-ui/components/RequestId';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useGovernance } from '../../../contexts/GovernanceContext';
 import { useAgencyCarriers } from '../../../hooks/useAgencyCarriers';
@@ -942,11 +943,7 @@ export default function CampaignBuilderPage() {
         label="Campaign setup"
       />
 
-      {error ? (
-        <p className={styles.error} role="alert" data-testid="builder-error">
-          {error}
-        </p>
-      ) : null}
+      {error ? <BuilderError error={error} /> : null}
 
       <div className={styles.body} data-testid="builder-step" data-step={step} ref={bodyRef}>
         {step === 'basics' ? (
@@ -1239,6 +1236,20 @@ export default function CampaignBuilderPage() {
         onConfirm={template.confirm.onConfirm}
         onCancel={template.confirm.onCancel}
       />
+    </div>
+  );
+}
+
+/**
+ * The page's error line. A masked (5xx) error carries its request id after the words
+ * (`ApiError`); it is shown as the copyable chip `ErrorAlert` uses, never run into the sentence.
+ */
+function BuilderError({ error }: { error: string }) {
+  const { message, requestId } = splitRequestId(error);
+  return (
+    <div className={requestId ? styles.errorWithId : styles.error} role="alert" data-testid="builder-error">
+      <p data-testid="builder-error-message">{message}</p>
+      {requestId ? <RequestId requestId={requestId} tone="error" /> : null}
     </div>
   );
 }

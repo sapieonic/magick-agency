@@ -271,6 +271,59 @@ content, and the main action full width at the bottom in thumb reach (`widgets/a
 happened?, faded until it is ready, whose press says what is missing ("Choose one first."). At 200%
 text the band scrolls with the content and the main action keeps its place.
 
+**With the keyboard up.** The page ends at the on-screen keyboard's top and the actions stay where
+they are, on the keyboard, with the main action in view (AS1). The shell's `Scaffold` makes room for
+the keyboard once and takes it out of its body's `MediaQuery`; each tab is built with that
+`MediaQuery` (`ShellBody`, inside `ShellContent`, `lib/app/shell.dart`; the test harnesses' shell
+uses the same `ShellContent`, a supervisor's message included). It once rebuilt the tab's
+`MediaQuery` from the shell's own, above its `Scaffold`, which put the keyboard back: every
+`Scaffold` in a tab (the station, the Phone tab, My calls, Performance, Me) then made room for it a
+second time, so the page ended a keyboard's height above the keyboard, an empty grey band between
+them, and the outcomes and the note were squeezed out (the testers' report: the buttons jump up, the
+Notes label is gone). The same put the gesture bar's inset back under the tab bar, and gave a sheet
+over a tab a keyboard's height of empty space. With the keyboard up the actions take at most 45% of
+the page (`StationActionArea`); past that they scroll inside themselves and keep the main action
+whole in view (Save & next call first, Slide to end call last), so the secondary ones (Save & take
+break, Call again) are what scrolls, with a scroll bar beside them that says there is more. A
+refusal shows at the top of the area, at most 20% of the page and never leaving the main action
+under 64 dp; while one shows the area takes at least its first line (48 dp) and those 64 dp, more
+than its share on the smallest page, so one that comes while the agent types is seen. With the
+keyboard down the actions take at most half the window under their padding, as they always have (at
+200% text on 360×640, the whole of Save & next call, Save & take break and Call again), and never
+more than 70% of the page, so the top bar and some content keep their place under a supervisor's
+message. A supervisor's message takes one row (64 dp) while the keyboard is up (below). The band:
+on a page with 520 dp or more over the keyboard, at normal text, it stays whole; on a shorter one
+(the testers' phone under a message leaves 499, 360×800 with a 300 dp keyboard 476), or at 200%
+text, it keeps only its title and clock, in one 48 dp row, and stays, so the time left to choose an
+outcome is in view while the agent types (when it runs out with a tile picked, the outcome saves
+and the station moves on); on the shortest (under 440 dp: 360×800 under a message leaves 412,
+360×640 316) it scrolls with the content and goes out of view as the note comes into it. While the
+agent types, the note's label ("Note", "Note (needed)") and its save status are brought into view
+with the field once the keyboard settles, and again when a refusal shortens the content
+(`RevealWhileTyping`, `KeepTypingInView`, `lib/ui/keyboard.dart`; the soft phone's notes do the
+same); when they cannot all fit, the line being typed is. Measured in tests with the app's fonts, a
+24 dp status bar and gesture bar, at 411×917 with a 330 dp keyboard (the testers' phone), 360×800
+and 360×640 with 300 dp, 100% and 200% text, with and without three supervisor's messages queued:
+
+| Phone, keyboard | Page over the keyboard | Note in view (with a refusal) | Band while typing |
+|---|---|---|---|
+| 411×917, 330 | 563 | 233 to 363 (162 to 250) | whole at 100%, its row at 200% |
+| 411×917, 330, a message | 499 | 169 to 299 (162 to 199) | its row |
+| 360×800, 300 | 476 | 150 to 276 (150 to 181) | its row |
+| 360×800, 300, a message | 412 | 163 to 260 (163 to 178) | scrolls away |
+| 360×640, 300 | 316 | 110 to 164 (110) | scrolls away |
+| 360×640, 300, a message | 252 | 75 to 100 (52) | scrolls away |
+
+The label, status and first line of the note are in view, the main action whole, and a refusal's
+first line in view, but on 360×640: there, at 200% text, "Note (needed)" puts the status on a line
+of its own and the label is a scroll away; under a message's row the label is a scroll away at 200%
+text, and while a refusal shows at any size, and at 200% text the area holds 89 of the two-line Save
+& next call's 116 dp (its top, which takes a press). The line being typed stays in view in every
+case. 100 dp or less at the bottom (a hardware keyboard's suggestion strip) is not the keyboard
+(`keyboardOpenOf`). Guarded by `test/features/station/station_keyboard_test.dart` and, for the
+shell, `test/app/shell_test.dart` and `test/app/supervisor_message_room_test.dart`.
+None of this has been checked on a real phone yet.
+
 | Screen | When | Main action |
 |---|---|---|
 | 01 Start of day | the pre-flight (before the join), and `offline` after it | Start work |
@@ -297,7 +350,8 @@ text the band scrolls with the content and the main action keeps its place.
   left as it is. The join is still a separate request; the server is never asked for `/available`
   before the socket is open.
 - **Need help** is in the top bar on every working screen (AS5, BE-9), and beside Return to campaign
-  on the station's soft phone, whose header replaces the top bar; an open request shows as
+  on the station's soft phone, whose header replaces the top bar (beside Close soft phone on the
+  Phone tab too, LF39: "Floor assist" below); an open request shows as
   "Help asked · 0:42", and pressing it again cancels. A server older than BE-9 refuses a raise off a
   call `409 help_not_on_call`: the button is then offered on a call and while finishing one only, for
   the rest of the session (`HelpView.onlyOnCall`). With no internet it says "Call your supervisor to
@@ -1384,12 +1438,26 @@ the flag is on). Break limits are not behind it.
   stage, never the station's busy state, so asking for help never holds up hanging up or saving the
   outcome. A request raised in wrap-up stays open after the outcome is saved (the server's rule): the
   button shows it, and cancels it, on the waiting screen too (LF35).
+  - **On the soft phone** (LF39): beside Return to campaign on the station switched to the soft
+    phone, and beside Close soft phone on the Phone tab, with its notice or refusal under the
+    header (`softphone_panel.dart`), the same controls and states as on the station. A soft-phone
+    session has no campaign view (`stationViewProvider` is null for it), so the request and its
+    actions are read from the hosted session's own seam, `sessionHelpProvider` and
+    `sessionHelpActionsProvider` (`station_view.dart`; the core publishes `StationHost.help` for
+    either kind of session, as it does the messages); on the Phone tab the soft phone says whether a
+    call is on screen and whether the socket is open (`NeedHelpButton.phoneTab`). The server takes a
+    raise on a soft-phone session in any state (AS5); were an older one to refuse one off a call
+    (`help_not_on_call`), the button is then offered with a call on screen only, as on the station.
   - **Which request.** One at a time, identified by its `raised_at`. It is open from the raise's
     answer, or `ready.help` after a reconnect or a relaunch, until the `help_cleared` that names that
     same instant, or the cancel's answer. A frame about another request never touches the one shown.
     A `ready` with no `help` clears the one shown, with nothing said (the frame that ended it was
     missed). The frames can beat the raise's own reply: while it is in flight, `help_answered` is
-    kept and `help_cleared` leaves its notice at once, and a reply naming a request already ended
+    kept and `help_cleared` leaves its notice at once, for a request stamped no earlier than a
+    minute before the press on the server-aligned clock (`FloorAssistState.inFlightSlack`): an
+    older request the raise itself expired (one never shown here, say after a relaunch, at least
+    15 minutes old), whose `help_cleared {expired}` the server sends ahead of the reply, is not the
+    raise's and says nothing. A reply naming a request already ended
     (its `help_cleared` or the cancel's answer) opens nothing, so a slow reply never re-opens it.
     A `help_cleared` with nothing shown and no raise in flight is remembered the same way, with
     nothing said, and a `ready.help` naming a request already ended is stale and opens nothing: the
@@ -1424,13 +1492,136 @@ the flag is on). Break limits are not behind it.
 - **A supervisor's message** (`lib/features/station/supervisor_message_banner.dart`, LF36): the
   shell shows it at the top of every tab, over a call too, never as a dialog: plain text as sent
   (never markup or a link), "Anitha N · 10:05" ("Your supervisor" with no name), on this device's
-  clock. Several queue, oldest first: the banner shows one and "2 more messages"; Dismiss shows the
-  next. Each id is shown once (a resent frame is ignored), at most 20 are held, and leaving the
-  station forgets them. Each is announced to a screen reader once as it arrives ("Message from Anitha
-  N: …", polite), sender and text together. The banner is not a live region: one would say a
-  message twice as it arrives and again on a second message or a dismissal, where nothing new
-  arrived. A soft-phone session gets them too: the core publishes them beside the shell's signals
-  (`StationHost.messages`, `supervisorMessagesProvider`), not in the campaign view.
+  clock. Several queue, oldest first: the banner shows one, its own Dismiss, and a "Show 2 more
+  messages" button (48 dp) that opens it to every queued message, oldest first, each with its
+  sender, time, text and Dismiss, beside "Dismiss all"; the same button then reads "Show less"
+  (LF36's addendum: testers did not find the next message behind Dismiss). A message arriving while
+  the list is open joins it and the list scrolls to it (animated, at once with reduced motion; not
+  while the agent's finger is on the list; no focus moves). The list closes by itself once one is
+  left, and when a call arrives (`callArrivalProvider`: a campaign call coming, an inbound call
+  offered, either connecting, a soft-phone call connecting; never wrap-up or an owed outcome),
+  which dismisses nothing. Each id is shown once (a resent frame is ignored), at most 20 are held,
+  and leaving the station forgets them. Manas decided the review on 2026-11-26 (LF36): no replies
+  from the agent.
+  - **Dismiss all and Undo.** Dismiss all takes the messages off the banner at once and leaves
+    "3 messages dismissed" with a 48 dp Undo in its place for 6 seconds (12 with a screen reader
+    on), said once, politely ("3 messages dismissed. Press Undo to bring them back.", below). The banner
+    holds the dismissal itself and calls the seam's dismiss for each id only when the window ends,
+    so the controller is unchanged and the shell keeps the banner (the queue is not empty yet).
+    Undo brings them back where they were, oldest first, the list open as it was when Dismiss all
+    was pressed (shut if a call arrived in the window), with nothing announced or vibrated again
+    (they never left the queue). A message arriving in the window shows, with Undo under it while
+    there is room for both (not with the keyboard up: the one row is the new message's), and Undo
+    puts the others back before it. A second Dismiss all sends the first at once, and the banner
+    going while the messages are still queued (the shell leaving) sends one still pending. The
+    station closing sends nothing: its queue empties first, and the banner lets the pending ids go
+    with it. The 20-message cap is the controller's: one dropped in the window is simply not
+    brought back.
+  - **Room.** The shell gives the banner its body's height (the keyboard and the tab bar already
+    off it), and the banner, shut or open, takes at most about a third of what is left under the
+    status bar, never less than one message beside its 48 dp Dismiss (64 dp); its text and list
+    scroll inside, so the tab under it keeps the rest and nothing overflows. While the on-screen
+    keyboard is up it takes only that one row, on any phone: a third of the room over the keyboard
+    left a note being typed on a 360×640 phone 52 to 58 dp, its label and, at 200% text, the line
+    being typed out of view, and a refusal over the station's actions 7 to 12 dp. With no room for
+    the open list the banner shows the first message and says how to get the room (LF36, decided
+    2026-11-26): with the keyboard up, and room for the list once it is down (counted as the room
+    now, the keyboard's height back, less what a tab bar may take: 80 dp and the navigation bar's
+    inset, so never more than the shell will give), a 48 dp "See all 3" beside its Dismiss, inside
+    the one row (labelled "Hide the keyboard to see all 3 messages"), which takes focus off the
+    field being typed in and hides the keyboard, then opens the list once the keyboard is down
+    (asked to see all, the list opens; pressed from a hardware keyboard, focus goes to the list's
+    button; with no room for it by then, turned on its side since, the wish goes, and nothing
+    opens later unasked). The button takes at most half of what the row leaves beside the icon and
+    the Dismiss, so the message keeps at least as much; where "See all 3" does not fit whole there
+    it reads "All 3", and narrower still it is its icon alone, its label the whole sentence every
+    way (measured with the app's fonts, 3 and 20 messages: its words at 100% on 320 to 411 dp, but
+    "All 20" on 320 dp, and at 150% on 411 dp; "All 3" or "All 20" at 150% on 320 and 360 dp and at
+    200%, but the icon alone with 20 on 320 dp; the first cut's ellipsis cut it short from 130% on
+    320 dp and at 200% on 360 dp, and left the message 116 dp). On a phone on
+    its side, keyboard up or down, the third is too small for the list (144 dp) even with the
+    keyboard gone: "Turn your phone upright to see all 3 messages" after its time, words and not a
+    button (the first cut offered See all there, which hid the keyboard and opened nothing, then
+    opened the list unasked once the phone was upright); in a short window standing up (split
+    screen), "· 2 more messages". The list opens again once there is room, if it was open and no
+    call arrived since. The first cut sized it from the whole window, so with the keyboard up the
+    list could leave the tab nothing.
+  - **Screen readers and focus.** Each message is said once as it arrives ("Message from
+    Anitha N: …", polite), sender and text together, and Dismiss all's line once as it is pressed.
+    On iOS they are announcements (`SemanticsService.sendAnnouncement`, where
+    `MediaQuery.supportsAnnounceOf` is true). Android takes no announcements: its embedding always
+    reports `supportsAnnounce` false, so until 2026-11-26 TalkBack heard neither a message arriving
+    nor that Undo was there (a screen reader's press moves no input focus to it). There the banner
+    has a one-pixel live region of its own, out of sight, as `PhaseAnnouncer` and the soft phone's
+    announcer do: its words are only ever what is to be said (the newest arrivals, or Dismiss all's
+    line), and it is a new node for each, so TalkBack reads each once and nothing else (a
+    dismissal, opening or closing the list, Undo, the keyboard moving) changes it. The banner
+    itself is not a live region: one would say a message twice as it arrives and again on a second
+    message, a dismissal or opening the list, where nothing new arrived. The tests hear both ways
+    (`supportsAnnounce` true and false), the live region by the embedding's rule (a live region
+    whose words are new to its node is read). "Show 2 more messages" and "Show less" are one button, which keeps
+    focus as it opens and closes the list and says whether the list is open (expanded). Each
+    Dismiss says whose message it takes away ("Dismiss the message from Anitha N"). Nothing takes
+    focus on arrival; only when one of its controls had focus and went (its message dismissed, the
+    list closed by itself) does focus move: to the next message's Dismiss, else the one before,
+    else the button, else Undo. The list closed by a call moves focus in it to the button (or keeps
+    it on the first message's Dismiss), never to another message's Dismiss; Dismiss all moves it to
+    Undo, and Undo to the button. A banner mounted afresh while an earlier one's Dismiss all is
+    still on its way to the seam would show and say those messages once more; the shell keeps one
+    banner mounted while the queue is not empty, so it does not arise.
+  - Messages are one-way (LF5): once a message answers Need help, the request has ended and Need
+    help can be pressed again, on the station and on the Phone tab. A soft-phone session gets them
+    too: the core publishes them beside the shell's signals (`StationHost.messages`,
+    `supervisorMessagesProvider`), not in the campaign view.
+  - **One vibration, never a sound** (LF39): the phone vibrates once (`HapticFeedback.vibrate`)
+    when a new message arrives, on a call too (a tone could be heard by the customer; a vibration
+    cannot), only while Me → Vibration (also ⋮ More → Sound) is on. Once per message id, at
+    arrival, in the core where the id is first queued (`StationController._messageArrived`), not in
+    the banner: never again for the same id (a resent frame), nor when Dismiss brings the next one
+    up; messages arriving within 2 seconds of the one before are one burst and vibrate once
+    (`StationController.messageBuzzQuiet`). The preference and the vibration are the core's seams
+    `stationHapticsProvider` and `stationVibrateProvider` (`station_deps.dart`).
+  - **The Vibration switch** ("A buzz when a call arrives, when it connects and when your
+    supervisor sends a message"; on the station "Feel a call come and connect, and a message from
+    your supervisor.") gates exactly those three: the message's vibration above, and the station's
+    buzz when a call arrives (`reserved`) and when it connects (`on_call`, `station_screen.dart`
+    `_onPhase`), each reading the preference at that moment. The short buzz of a refused Save
+    (What happened? and an inbound call's outcome) is the form's feedback, not an alert, and does
+    not follow it.
+- **Telemetry** (LF39; `lib/core/telemetry/floor_assist_telemetry.dart`), the same names,
+  properties and rules as the console's, closed values, counts and booleans only (never a
+  message's text, a name, a number or who answered):
+  - `agency_help_raised` (`surface`: `station`, `inbound` or `softphone`, where the agent pressed
+    it; `on_call`; both as at the press) on the first raise answer (the `POST …/help` reply with a
+    request) naming a `raised_at` this phone has not reported, whether or not the request is still
+    on screen when it lands (the frames may have ended it, or a `ready.help` shown it, first). A
+    `ready.help` or a frame never sends it.
+  - The end events count a `help_answered` or `help_cleared` only for a request **in scope** when
+    it lands: the one on screen, the one a raise in flight is opening (stamped no earlier than 60 s
+    before the press, on the server-aligned clock; a raise whose reply failed is no longer in
+    flight), or one the agent pressed Cancel for this session (from the press, not the cancel's
+    reply; every such request, so an earlier one's late `help_cleared {cancelled}` still counts). A
+    request a reconnect's `ready` said is over is remembered as ended. Either way an older
+    request's `help_cleared {expired}`, which the server sends ahead of a new raise's reply, is
+    never taken for the new one (nor shown as its expiry).
+  - `agency_help_answered` (`how`: `listen` or `message` from the frame; `wait_bucket`) on
+    `help_answered`, a cancel that lost the race to the answer included; on `help_cleared
+    {answered}` only when no `help_answered` was seen for it (`how: unknown`).
+    `agency_help_expired` on `help_cleared {expired}`, `agency_help_cancelled` (`wait_bucket`) on
+    `help_cleared {cancelled}` (the cancel won), on either side of the cancel's reply. At most one
+    end event per request; `session_ended` sends none.
+  - `agency_help_refused` (`action`: `raise` or `cancel`; `code`: `floor_assist_disabled`,
+    `help_not_on_call`, `session_ended`, `not_found`, `network` or `other`), once per refusal; a 2xx
+    reply the app cannot read is `other` too (the screen treats it as before), and no sign-in token
+    offline is `network`.
+  - `agency_supervisor_message_shown` (`on_call`) once per message id.
+  - `on_call`: on a campaign or inbound call or in its wrap-up; on the soft phone only while its
+    call is connected or owes its outcome (dialling and ringing are not on a call).
+    `wait_bucket`: the time from the request's `raised_at` to the moment this phone learnt it
+    ended, on the server-aligned clock, in `agency_floor_intervention`'s buckets (`under_60`,
+    `1_5m`, `5_15m`, `over_15m`).
+  - Each raised and end event is sent at most once per `raised_at` in the process, across
+    reconnects and a repeated raise answered with the same request.
 - **Break countdown** (LF38): on a break whose reason has `limit_minutes` (the bootstrap's
   `break_reasons`, found by the break's code as its label is), On break counts from the
   `agent_state` frame's `since`: "4:18 / 15:00", a bar, "10:42 left of your 15 minutes." (rounded up,
@@ -1441,12 +1632,10 @@ the flag is on). Break limits are not behind it.
   reserved code (the app's own pauses, the soft phone), whatever a catalog says
   (`StationViewMapper.breakLimitMinutes`). A limit edited mid-shift reaches the agent at their next
   join (the server's rule).
-- Not done in the app (LF39): Need help on the soft phone's own screens (the Phone tab; the server
-  accepts a raise on a soft-phone call), a chime or vibration for a message, and telemetry events
-  for Need help (the console has none yet to match).
-
 Tests: `test/core/station/station_floor_assist_test.dart`,
-`test/features/station/station_floor_assist_test.dart`, `test/app/supervisor_message_banner_test.dart`,
+`test/core/station/station_floor_assist_events_test.dart` (the Phone tab's help state, the
+vibration, the events), `test/features/station/station_floor_assist_test.dart`,
+`test/features/softphone/softphone_need_help_test.dart`, `test/app/supervisor_message_banner_test.dart`,
 and the wire package's `station_test.dart`, `session_test.dart`, `platform_test.dart`. Not run on a
 phone (below).
 
@@ -1523,7 +1712,8 @@ packages/
   - Call events, named and shaped as the console's where it has them, so one dashboard reads both:
     `agency_attempt_bridged` and `agency_attempt_released` for campaign calls,
     `agency_softphone_call_placed` / `_refused` (as the console's), `_bridged`, `_ended` and
-    `agency_softphone_dial_failed` for the soft phone. Each call's end carries what the phone saw of
+    `agency_softphone_dial_failed` for the soft phone. Need help and a supervisor's messages send
+    the console's floor assist events ("Floor assist" above). Each call's end carries what the phone saw of
     its audio: A-law frames received, JSON `pcm16` frames received (on the app's `alaw8` socket,
     the sign of a server that ignored the format: the caller is heard as noise), microphone frames
     sent and refused by a closed socket.
@@ -1683,11 +1873,25 @@ from the browser or file manager it was opened from.
   `en-IN` voice, the manifest's `TTS_SERVICE` query on Android 11+ and the plugin's iOS audio session
   beside the call's are unverified.
 - **The listening notice (2026-11-16/17) is widget-tested only**: the button, the sheet and `ListenFirstNoticeCard` have not been seen on a phone.
+- **The message banner's review fixes (2026-11-26) are widget-tested only.** See all calls
+  `TextInput.hide` after the field lets go of focus: whether Android's keyboards (Gboard, Samsung
+  Keyboard) go down on it, and how their insets animate as they do, is unverified. Nor has TalkBack
+  been heard reading a message as it arrives, or Dismiss all's line and its Undo, through the
+  banner's live region: the tests follow the Android embedding's rule for live regions, not a
+  phone. VoiceOver has not heard the announcements either (iOS does not build).
 - **Floor assist (2026-11-19) has run only against the fixtures and fakes.** Need help, the message
   banner and the break countdown are unit- and widget-tested with the contract's sample frames in the
   server's order (`flutter test`, `dart test`), and the server's side drives a simulated phone station
   declaring `caps=floor_assist` (`floor-assist-e2e.test.ts`); nothing has run on a phone or against a
-  running server with this app build.
+  running server with this app build. The message's vibration (LF39) has not been felt on a phone,
+  and has two known risks there. On iOS, the system mutes vibration while the call's
+  `.playAndRecord` audio session records, so a message on a call may not buzz; the fix would be
+  `setAllowHapticsAndSystemSoundsDuringRecording(true)` in `VoiceEngine.swift` `configureSession`
+  (`packages/agent_audio`). On Android, `HapticFeedback.vibrate` is
+  `performHapticFeedback(LONG_PRESS)`, which follows the system's touch feedback setting, so a
+  phone with it off does not buzz; the fix would be the `Vibrator` service through a platform
+  channel (`VIBRATE` is already in the manifest). Neither is made: there is no Android SDK here to
+  compile the Kotlin, and iOS does not build.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
 - **Inbound calls (2026-11-10) have run only against the fixtures.** The app's flow is tested
   with the contract's sample frames and answers, played in the server's own frame order, not

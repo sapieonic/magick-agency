@@ -181,16 +181,8 @@ class AppShell extends ConsumerWidget {
               },
               destinations: [for (final b in branches) destination(b)],
             );
-    // A supervisor's message (floor assist, LF5) sits at the top of every tab, over a call too:
-    // the banner takes the status bar's inset, and the tab below it no longer needs it.
-    final messageShown = ref.watch(supervisorMessagesProvider.select((m) => m.isNotEmpty));
     return Scaffold(
-      body: Column(
-        children: [
-          if (messageShown) const SafeArea(bottom: false, child: SupervisorMessageBanner()),
-          Expanded(key: const ValueKey('shell-body'), child: MediaQuery.removePadding(context: context, removeTop: messageShown, child: shell)),
-        ],
-      ),
+      body: ShellContent(child: shell),
       bottomNavigationBar: switch ((ringNotice, bar)) {
         (null, _) => bar,
         (final String notice, null) => SafeArea(top: false, child: RingNoticeBanner(text: notice)),
@@ -199,4 +191,55 @@ class AppShell extends ConsumerWidget {
       },
     );
   }
+}
+
+/// The shell's `Scaffold` body: a supervisor's message (floor assist, LF5), when there is one, at
+/// the top of every tab, over a call too, and the tab ([child]) under it, in a [ShellBody]. The
+/// banner takes the status bar's inset, and the tab below it no longer needs it. It is told the
+/// body's height (the keyboard and the tab bar already off it) and takes at most about a third of
+/// what is left under the status bar, its one row while the keyboard is up, so the tab keeps the
+/// rest (LF36). The test harnesses' shell (`ShellScaffold`) uses it too.
+class ShellContent extends ConsumerWidget {
+  const ShellContent({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final messageShown = ref.watch(supervisorMessagesProvider.select((m) => m.isNotEmpty));
+    return LayoutBuilder(
+      builder: (_, body) => Column(
+        children: [
+          if (messageShown)
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: body.maxHeight),
+              child: const SafeArea(bottom: false, child: SupervisorMessageBanner()),
+            ),
+          Expanded(key: const ValueKey('shell-body'), child: ShellBody(removeTop: messageShown, child: child)),
+        ],
+      ),
+    );
+  }
+}
+
+/// The tab under the shell's tab bar: [child] with the `MediaQuery` the shell's `Scaffold` gives
+/// its body, less the status bar's inset while [removeTop] (a supervisor's message above the tab
+/// takes it).
+///
+/// It reads that `MediaQuery` from its own place in the tree, under the `Scaffold`. The `Scaffold`
+/// ends its body at the top of the on-screen keyboard (or of the tab bar) and takes the keyboard's
+/// inset, and the bottom inset the tab bar covers, out of its body's `MediaQuery`. Built from a
+/// context above the `Scaffold` (the shell's own), the tab would get them back: every `Scaffold`
+/// in a tab would then make room for the keyboard a second time, and the page would end a
+/// keyboard's height above the keyboard, an empty grey band between them. [ShellContent] nests
+/// the tab with it, in the app and in the test harnesses' shell (`ShellScaffold`), so they lay a
+/// tab out as the app does.
+class ShellBody extends StatelessWidget {
+  const ShellBody({super.key, required this.removeTop, required this.child});
+
+  final bool removeTop;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => MediaQuery.removePadding(context: context, removeTop: removeTop, child: child);
 }

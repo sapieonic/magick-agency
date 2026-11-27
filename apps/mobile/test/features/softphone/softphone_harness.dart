@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:magick_agency_agent/app/shell.dart' show ShellContent;
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
@@ -128,6 +130,30 @@ class FakeSoftphoneActions implements SoftphoneActions {
   void dismissSessionError() => _rec('dismissSessionError');
 }
 
+/// Need help's actions on the hosted session (LF39), recorded.
+class FakeHelpActions implements SessionHelpActions {
+  final calls = <String>[];
+  int count(String name) => calls.where((c) => c == name).length;
+
+  @override
+  Future<void> raiseHelp() async => calls.add('raiseHelp');
+  @override
+  Future<void> cancelHelp() async => calls.add('cancelHelp');
+  @override
+  void dismissHelpNotice() => calls.add('dismissHelpNotice');
+}
+
+/// The session's [HelpView], as the station core publishes it.
+class HelpHolder extends Notifier<HelpView> {
+  HelpHolder(this.initial);
+  final HelpView initial;
+
+  @override
+  HelpView build() => initial;
+
+  void set(HelpView v) => state = v;
+}
+
 class FakePermissions implements SoftphonePermissions {
   MicPermission mic = MicPermission.granted;
   int micAsked = 0;
@@ -172,6 +198,8 @@ class SoftphoneHarness {
     this.clock,
     this.platformCalls,
     this.announcements,
+    this.helpHolder,
+    this.helpActions,
   );
 
   final WidgetTester tester;
@@ -182,10 +210,18 @@ class SoftphoneHarness {
   final TestClock clock;
   final List<MethodCall> platformCalls;
   final List<Object?> announcements;
+  final NotifierProvider<HelpHolder, HelpView> helpHolder;
+  final FakeHelpActions helpActions;
   int settingsOpened = 0;
   late final GoRouter router;
 
   SoftphoneView get view => container.read(holder);
+
+  /// The session's Need help, as the station core would publish it.
+  Future<void> setHelp(HelpView v) async {
+    container.read(helpHolder.notifier).set(v);
+    await settle(tester);
+  }
 
   Future<void> setView(SoftphoneView v) async {
     container.read(holder.notifier).set(v);
@@ -218,7 +254,7 @@ Future<void> settle(WidgetTester tester) async {
 
 /// Pumps the Phone screen ([phoneScreen]) or the panel alone on [surface].
 ///
-/// [statusBar], [keyboard] and [shell] put the phone's own chrome around it:
+/// [statusBar], [keyboard], [navBar] and [shell] put the phone's own chrome around it:
 /// see [setPhoneInsets] and [ShellScaffold].
 Future<SoftphoneHarness> pumpSoftphone(
   WidgetTester tester,
@@ -230,6 +266,7 @@ Future<SoftphoneHarness> pumpSoftphone(
   Size size = const Size(390, 844),
   double statusBar = 0,
   double keyboard = 0,
+  double navBar = 0,
   bool shell = false,
   bool disableAnimations = false,
   bool supportsAnnounce = false,
@@ -237,10 +274,12 @@ Future<SoftphoneHarness> pumpSoftphone(
   bool listenNotice = false,
   String? listenScope,
   KeyValueStore? store,
+  bool needHelp = false,
+  HelpView help = const HelpView(),
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
-  setPhoneInsets(tester, statusBar: statusBar, keyboard: keyboard);
+  setPhoneInsets(tester, statusBar: statusBar, keyboard: keyboard, navBar: navBar);
   addTearDown(tester.view.reset);
 
   final platformCalls = <MethodCall>[];
@@ -257,6 +296,8 @@ Future<SoftphoneHarness> pumpSoftphone(
   addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
 
   final holder = NotifierProvider<ViewHolder, SoftphoneView>(() => ViewHolder(view));
+  final helpHolder = NotifierProvider<HelpHolder, HelpView>(() => HelpHolder(help));
+  final helpActions = FakeHelpActions();
   final actions = FakeSoftphoneActions();
   final permissions = FakePermissions();
   final clock = TestClock(now ?? t0);
@@ -273,14 +314,17 @@ Future<SoftphoneHarness> pumpSoftphone(
       stationListenNoticeProvider.overrideWithValue(listenNotice),
       listenNoticeScopeProvider.overrideWithValue(listenScope),
       keyValueStoreProvider.overrideWithValue(store ?? MemoryStore()),
-      // Need help on the station's soft phone (AS5): the account's flag, off unless a test says.
-      stationNeedHelpProvider.overrideWithValue(false),
+      // Need help on the soft phone (AS5, LF39): the account's flag, off unless a test says; the
+      // hosted session's request and its actions, as the station core publishes them.
+      stationNeedHelpProvider.overrideWithValue(needHelp),
+      sessionHelpProvider.overrideWith((ref) => ref.watch(helpHolder)),
+      sessionHelpActionsProvider.overrideWithValue(helpActions),
       // A phone that can speak, answered at once (What happened?'s speakers, AS13).
       readAloudAvailableProvider.overrideWith((ref) => true),
     ],
   );
   addTearDown(container.dispose);
-  h = SoftphoneHarness(tester, container, holder, actions, permissions, clock, platformCalls, announcements);
+  h = SoftphoneHarness(tester, container, holder, actions, permissions, clock, platformCalls, announcements, helpHolder, helpActions);
 
   final routes = <RouteBase>[
     GoRoute(
@@ -321,16 +365,24 @@ Future<SoftphoneHarness> pumpSoftphone(
 
 // ── A real phone ──────────────────────────────────────────────────────
 
-/// A status bar of [statusBar] dp (the top inset SafeArea takes away) and a
-/// soft keyboard of [keyboard] dp over the bottom of the screen.
-void setPhoneInsets(WidgetTester tester, {double statusBar = 0, double keyboard = 0}) {
+/// A status bar of [statusBar] dp (the top inset SafeArea takes away), a
+/// soft keyboard of [keyboard] dp over the bottom of the screen, and the
+/// system's navigation bar ([navBar] dp: about 24 for the gesture bar, 48 for
+/// three buttons) at the bottom. As the engine reports them: the keyboard
+/// covers the navigation bar, so the bottom padding is what of the bar the
+/// keyboard leaves (none once it is up), while the view padding keeps it.
+void setPhoneInsets(WidgetTester tester, {double statusBar = 0, double keyboard = 0, double navBar = 0}) {
   final ratio = tester.view.devicePixelRatio;
-  tester.view.padding = FakeViewPadding(top: statusBar * ratio);
+  tester.view.padding = FakeViewPadding(top: statusBar * ratio, bottom: math.max(0, navBar - keyboard) * ratio);
+  tester.view.viewPadding = FakeViewPadding(top: statusBar * ratio, bottom: navBar * ratio);
   tester.view.viewInsets = FakeViewPadding(bottom: keyboard * ratio);
 }
 
 /// The app shell as it nests a tab: a Scaffold with the five-tab
-/// NavigationBar, around the branch's own navigator ([child]). The real shell
+/// NavigationBar, around the branch's own navigator ([child]), in the app's own
+/// [ShellContent] as `AppShell` nests it, so a tab gets the `MediaQuery` it gets
+/// in the app (the keyboard's inset included or not), under a supervisor's
+/// message when one is queued (`supervisorMessagesProvider`). The real shell
 /// hides the bar during a live call; this one always shows it, the tighter case.
 class ShellScaffold extends StatelessWidget {
   const ShellScaffold({super.key, required this.selected, required this.child});
@@ -340,7 +392,7 @@ class ShellScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    body: child,
+    body: ShellContent(child: child),
     bottomNavigationBar: NavigationBar(
       selectedIndex: selected,
       destinations: const [

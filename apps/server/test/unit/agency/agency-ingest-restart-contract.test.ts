@@ -32,12 +32,13 @@ import {
  *
  *   1. the ingest never reuses a job id across a restart;
  *   2. `POST /ingest/jobs` always creates a fresh row;
- *   3. the ingest derives `source_row_number` from the FILE LINE (`startLine`).
+ *   3. the ingest derives `source_row_number` from the FILE's row (`startLine`): the row a
+ *      spreadsheet shows the record on, records and blank lines before it counted (IM8).
  *
  * That test synthesises all three itself — `randomUUID()` supplies the "new job
  * id", and its own helper supplies row numbers identical across both runs. So if
  * the ingest resumed a job id, re-chunked at a different size, or numbered rows by
- * accepted-count instead of file line, **that test stays green and the roster
+ * accepted-count instead of file row, **that test stays green and the roster
  * duplicates in production.** That is a test writing both sides of a contract.
  *
  * This file asserts the ingest service's three obligations against its real
@@ -236,33 +237,35 @@ describe('the ingest service’s restart contract ', () => {
     });
   });
 
-  // ── Obligation 3: source_row_number is the FILE LINE, stably ───────────────
+  // ── Obligation 3: source_row_number is the FILE's row, stably ──────────────
 
-  describe('source_row_number is the file line, and is stable across runs', () => {
+  describe('source_row_number is the row a spreadsheet shows, and is stable across runs', () => {
     /**
-     * A file whose accepted rows land on lines 2, 4 and 6.
+     * A file whose accepted rows are on rows 2, 5 and 6 of a spreadsheet.
      *
      * Every element is load-bearing:
-     *   - line 3 is REJECTED, so accepted-count numbering (1,2,3) diverges from
-     *     file-line numbering (2,4,6);
-     *   - the record starting on line 4 spans TWO lines via a quoted embedded
-     *     newline, so counting emitted records instead of `info.lines` drifts by
-     *     one line for that row and every row after it.
+     *   - row 3 is REJECTED, so accepted-count numbering (1,2,3) diverges;
+     *   - row 4 is a blank line, which the parser skips: counting records alone
+     *     would put every later row one too high (2,4,5);
+     *   - the record on row 5 spans TWO lines of the file through a quoted line
+     *     break, which a spreadsheet shows as one row: counting the file's lines
+     *     (as the ingest did before IM8) puts the row after it one too low (2,5,7).
      *
-     * Without both, a wrong implementation still produces the right numbers.
+     * Without all three, a wrong implementation still produces the right numbers.
      */
     const LINES = [
-      'Mobile,Name',                 // line 1 — header
-      '+919000000001,Alice',         // line 2 — accepted
-      'not-a-phone,Bob',             // line 3 — REJECTED
-      '+919000000003,"Carol',        // line 4 — accepted, record starts here
-      'Multiline"',                  // line 5 —   … and ends here
-      '+919000000005,Dave',          // line 6 — accepted
+      'Mobile,Name',                 // row 1 — header
+      '+919000000001,Alice',         // row 2 — accepted
+      'not-a-phone,Bob',             // row 3 — REJECTED
+      '',                            // row 4 — blank
+      '+919000000003,"Carol',        // row 5 — accepted, one record over two lines
+      'Multiline"',
+      '+919000000005,Dave',          // row 6 — accepted
     ];
     const CSV = `${LINES.join('\n')}\n`;
 
-    /** File lines the accepted records START on, read off the fixture above. */
-    const EXPECTED_FILE_LINES = [2, 4, 6];
+    /** The spreadsheet rows of the accepted records, read off the fixture above. */
+    const EXPECTED_FILE_LINES = [2, 5, 6];
 
     async function runIngest(batchSize: number) {
       const accepted: AgencyIngestContact[] = [];
@@ -281,7 +284,7 @@ describe('the ingest service’s restart contract ', () => {
       return { accepted, rejections, batches, summary };
     }
 
-    it('numbers accepted rows by FILE LINE, not by accepted count', async () => {
+    it('numbers accepted rows by the row a spreadsheet shows, not by accepted count, records or file lines', async () => {
       const { accepted, rejections } = await runIngest(500);
 
       expect(accepted.map((c) => c.phone_e164)).toEqual([
@@ -294,8 +297,11 @@ describe('the ingest service’s restart contract ', () => {
       // while making a re-upload's rows collide with DIFFERENT rows of the
       // original, which is the failure the dialer side cannot see.
       expect(accepted.map((c) => c.source_row_number)).not.toEqual([1, 2, 3]);
+      // Records alone (blank lines dropped), and the file's lines (a quoted line break counted).
+      expect(accepted.map((c) => c.source_row_number)).not.toEqual([2, 4, 5]);
+      expect(accepted.map((c) => c.source_row_number)).not.toEqual([2, 5, 7]);
 
-      // The rejected row is reported against its own file line, so the operator's
+      // The rejected row is reported against its own row, so the operator's
       // error list and the dialer's collision report share one coordinate system.
       expect(rejections.map((r) => r.row_number)).toEqual([3]);
     });
@@ -327,7 +333,7 @@ describe('the ingest service’s restart contract ', () => {
 
       // Genuinely different chunking …
       expect(big.batches).toEqual([EXPECTED_FILE_LINES]);
-      expect(small.batches).toEqual([[2], [4], [6]]);
+      expect(small.batches).toEqual([[2], [5], [6]]);
       // … and identical numbering.
       expect(small.accepted.map((c) => c.source_row_number))
         .toEqual(big.accepted.map((c) => c.source_row_number));
@@ -358,10 +364,10 @@ describe('the ingest service’s restart contract ', () => {
       expect(iface![0]).toMatch(/\n\s*source_row_number:\s*number;/);
       expect(iface![0]).not.toMatch(/source_row_number\?/);
 
-      // And the value assigned to it is the file line, at the one site that
+      // And the value assigned to it is the file's row, at the one site that
       // builds an outgoing contact.
       expect(source).toMatch(/source_row_number:\s*startLine/);
-      expect(source).toMatch(/const startLine\s*=\s*previousEndLine \+ 1/);
+      expect(source).toMatch(/const startLine\s*=\s*previousRow \+ 1 \+ \(info\.empty_lines - previousEmptyLines\)/);
     });
   });
 });

@@ -12,6 +12,11 @@
  * not change, and a future limit writer that invalidates the guards — which it must
  * — invalidates pacing with it.
  *
+ * A carrier account's own cap (CR13) is cached by pacing too (`pacing/dial-scopes.ts`): the
+ * seam's `invalidateCredentialLimit`, which the super-admin credential routes call after a cap
+ * write, also publishes `credential_limit_changed`, so the next tick reads the new cap with
+ * admission rather than a TTL later.
+ *
  * The event is published even when the guard invalidation throws: the database
  * write has happened either way, and a pacing cache must not outlive it because
  * Redis was down.
@@ -41,7 +46,16 @@ export function withPacingInvalidation(
       }
     },
     getAccountProviderCounts: (tenantId, accountId) => inner.getAccountProviderCounts(tenantId, accountId),
+    getProviderCount: (tenantId, accountId, provider) => inner.getProviderCount(tenantId, accountId, provider),
     getAccountCount: (tenantId, accountId) => inner.getAccountCount(tenantId, accountId),
     getDistributedAccountCount: (tenantId, accountId) => inner.getDistributedAccountCount(tenantId, accountId),
+    async invalidateCredentialLimit(credentialId) {
+      try {
+        await inner.invalidateCredentialLimit(credentialId);
+      } finally {
+        publish({ type: 'credential_limit_changed', credentialId });
+      }
+    },
+    getCredentialCounts: (credentialIds) => inner.getCredentialCounts(credentialIds),
   };
 }

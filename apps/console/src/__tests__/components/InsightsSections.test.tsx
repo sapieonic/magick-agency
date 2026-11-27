@@ -701,7 +701,7 @@ describe('the lifecycle panel (Settings tab)', () => {
       transitions: [{ to_status: 'paused', at: '2026-11-04T09:00:00.000Z', actor: null, reason: 'carrier_refusing_calls' }],
     }} />);
     const items = Array.from(screen.getByTestId('insights-transitions').querySelectorAll('li')).map((li) => li.textContent);
-    expect(items[0]).toMatch(/automatically: the carrier refused several of this campaign’s calls in a row\. Contact support to have the carrier account’s destinations, balance and caller IDs checked, then resume\.$/);
+    expect(items[0]).toMatch(/automatically: the carrier refused several of this campaign’s calls in a row\. Contact support to have the carrier account’s destinations, balance, caller IDs and access checked, then resume\.$/);
   });
 });
 
@@ -809,6 +809,34 @@ describe('upload history', () => {
     expect(table.textContent).toContain('96 on Loan No');
     fireEvent.click(within(table).getByRole('button', { name: /Download the rejected rows/ }));
     await waitFor(() => expect(mocks.downloadRejectedRows).toHaveBeenCalledWith('job-2', 'tenant-1', 'account-1'));
+  });
+
+  it('names the rejected rows of an Excel upload as a CSV, without the .xlsx or .xlsm', async () => {
+    mocks.downloadRejectedRows.mockResolvedValue(new Blob(['row_number,_reason\n']));
+    Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:x'), revokeObjectURL: vi.fn() });
+    const names: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    try {
+      const base = uploads().uploads[0]!;
+      const list = uploads({
+        uploads: [
+          { ...base, job_id: 'job-3', file_name: 'Customers May.XLSX' },
+          { ...base, job_id: 'job-4', file_name: 'Macros.xlsm' },
+          { ...base, job_id: 'job-2' },
+        ],
+      });
+      show(<UploadsSection campaignId="camp-1" campaignName="EMI Recovery" uploads={list} timezone={ZONE} tenantId="tenant-1" accountId="account-1" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Download the rejected rows of Customers May.XLSX' }));
+      await waitFor(() => expect(names).toEqual(['rejected-Customers May.csv']));
+      fireEvent.click(screen.getByRole('button', { name: 'Download the rejected rows of Macros.xlsm' }));
+      await waitFor(() => expect(names).toEqual(['rejected-Customers May.csv', 'rejected-Macros.csv']));
+      fireEvent.click(screen.getByRole('button', { name: /Download the rejected rows of october/ }));
+      await waitFor(() => expect(names).toEqual(['rejected-Customers May.csv', 'rejected-Macros.csv', 'rejected-october, cycle -B.csv']));
+    } finally {
+      click.mockRestore();
+    }
   });
 
   it('quotes a file name with a comma and quotes in its CSV', () => {
