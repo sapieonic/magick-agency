@@ -1,4 +1,5 @@
 import { COMPARE_PAGE_MAX_AGENTS } from '@magick-agency/contracts/api/agency/compare';
+import { reportWindowDays } from '@magick-agency/contracts/api/agency/reports';
 import { COMPARE_PATH } from '../compare/compareFlag';
 import {
   COMPARE_WINDOW_PRESETS,
@@ -98,9 +99,24 @@ export function teamWindowDates(state: Pick<TeamUrlState, 'window' | 'from' | 't
 /** Why the window cannot be read, in words, or null when it can (the reports' rule, RP2). */
 export const teamWindowError = windowError;
 
-/** The window holds today, so its figures move: the page refreshes it (TP11, §2 States). */
+/** The window holds today, so its figures move: it runs to now (TP11). */
 export function windowHoldsToday(dates: { from: string; to: string } | null, today: string): boolean {
   return dates !== null && dates.from <= today && today <= dates.to;
+}
+
+/** The longest window the page reads again on its own (§2 States): a week. */
+export const TEAM_AUTO_REFRESH_MAX_DAYS = 7;
+
+/**
+ * The page reads this window again on its own (every minute while shown, on return to the page):
+ * it holds today AND spans at most {@link TEAM_AUTO_REFRESH_MAX_DAYS} local days (§2 States). A
+ * longer window is the heavy read (a month of All campaigns sits at the budget, §4), so it is read
+ * once per question and again only when the reader asks.
+ */
+export function windowAutoRefreshes(dates: { from: string; to: string } | null, today: string): boolean {
+  if (dates === null || !windowHoldsToday(dates, today)) return false;
+  const days = reportWindowDays(dates.from, dates.to);
+  return days !== null && days <= TEAM_AUTO_REFRESH_MAX_DAYS;
 }
 
 // ─── Picks for Compare picked (TP18) ────────────────────────────────────────

@@ -44,13 +44,19 @@ export interface TeamAgentsTableProps {
   onSort: (sort: TeamSort) => void;
   /** Compare agents is on: the pick boxes and Compare picked are offered. */
   canCompare: boolean;
+  /**
+   * The answer is for the filters on screen. While a new question loads, or after it failed, the
+   * rows on screen are another question's: the pick boxes and Compare picked are disabled, so a
+   * pick never opens Compare on the new filters with the old filters' agents.
+   */
+  canPickNow: boolean;
   picks: readonly string[];
   onTogglePick: (agentId: string) => void;
   onComparePicked: () => void;
 }
 
 export function TeamAgentsTable(props: TeamAgentsTableProps) {
-  const { data, label, period, sort, onSort, canCompare, picks, onTogglePick, onComparePicked } = props;
+  const { data, label, period, sort, onSort, canCompare, canPickNow, picks, onTogglePick, onComparePicked } = props;
   const titleId = useId();
   const sortId = useId();
   const reasonId = useId();
@@ -113,7 +119,7 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
             <button
               type="button"
               className={`btn-primary ${styles.compareButton}`}
-              disabled={reason !== null}
+              disabled={reason !== null || !canPickNow}
               aria-describedby={reason ? reasonId : undefined}
               onClick={onComparePicked}
               data-testid="team-compare-picked"
@@ -166,7 +172,7 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
                           type="checkbox"
                           className={styles.pickBox}
                           checked={picked}
-                          disabled={!picked && full}
+                          disabled={!canPickNow || (!picked && full)}
                           aria-label={pickLabel(rowName(row))}
                           onChange={() => onTogglePick(row.agent_user_id)}
                         />

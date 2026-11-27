@@ -26,12 +26,12 @@ import {
   teamWindowDates,
   teamWindowError,
   togglePick,
+  windowAutoRefreshes,
   windowHoldsToday,
   type TeamUrlState,
   type TeamWindowPreset,
 } from '../../utils/agency/team/teamUrl';
-import { asOfWords, mainLabel, periodWords } from '../../utils/agency/team/teamCopy';
-import { formatReportDay } from '../../utils/reports/reportCopy';
+import { asOfWords, datesWords, mainLabel, periodWords, refreshFailedWords } from '../../utils/agency/team/teamCopy';
 import { browserZone, todayIn } from '../../utils/reports/reportWindow';
 import { TeamFilters } from '../../components/agency/team/TeamFilters';
 import { TeamTiles, TeamTilesSkeleton } from '../../components/agency/team/TeamTiles';
@@ -39,6 +39,7 @@ import { MainOutcomePerDayChart } from '../../components/agency/team/MainOutcome
 import { OutcomeBreakdown } from '../../components/agency/team/OutcomeBreakdown';
 import { TeamAgentsTable } from '../../components/agency/team/TeamAgentsTable';
 import { TeamReadError } from '../../components/agency/team/TeamReadError';
+import { isRetryableTeamError } from '../../api/teamPerformance';
 import teamStyles from '../../components/agency/team/Team.module.css';
 import styles from './TeamPerformancePage.module.css';
 
@@ -116,7 +117,14 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
   const query: AgencyTeamPerformanceQuery | null = window
     ? { from: window.from, to: window.to, timezone: zone, ...(state.campaignId ? { campaign_id: state.campaignId } : {}) }
     : null;
-  const read = useTeamPerformance(query, { tenantId, accountId, live: holdsToday, settleMs });
+  const read = useTeamPerformance(query, {
+    tenantId,
+    accountId,
+    // A window that holds today and spans at most a week is read again on its own (§2 States).
+    autoRefresh: windowAutoRefreshes(window, today),
+    refreshAtMidnight: state.window === 'custom',
+    settleMs,
+  });
   const data = read.data;
   const label = data ? mainLabel(data.main_outcome) : 'Will pay';
 
@@ -144,7 +152,7 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
             entry="team_performance"
             label="Download Excel"
             target={exportTarget}
-            initial={window ? { from: window.from, to: window.to, formats: { pdf: false, xlsx: true } } : undefined}
+            initial={{ ...(window ? { from: window.from, to: window.to } : {}), formats: { pdf: false, xlsx: true } }}
           />
         }
       />
@@ -167,8 +175,20 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
       {read.failed ? <TeamReadError error={read.error} onRetry={read.retry} /> : null}
       {stale ? (
         <p className={teamStyles.note} role="status" data-testid="team-stale">
-          {`These are the last figures that loaded, for ${windowWords(data.from, data.to)}, not for the filters above.`}
+          {`These are the last figures that loaded, for ${datesWords(data)}, not for the filters above.`}
         </p>
+      ) : null}
+      {/* A failed quiet refresh keeps the figures up and says so calmly (no alert): the next tick
+          tries again, or, once refreshing has stopped (a timeout), the reader can. */}
+      {read.refreshFailed && data !== null ? (
+        <div className={`${teamStyles.note} ${teamStyles.errorBox}`} role="status" data-testid="team-refresh-failed">
+          <p className={teamStyles.errorText}>{refreshFailedWords(data.as_of)}</p>
+          {read.refreshStopped && isRetryableTeamError(read.error) ? (
+            <button type="button" className={teamStyles.linkButton} onClick={read.retry} data-testid="team-retry">
+              Try again
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {read.updating && data !== null ? (
         <p className={teamStyles.updating} role="status" data-testid="team-updating">
@@ -207,25 +227,23 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
           <TeamAgentsTable
             data={data}
             label={label}
-            period={window ? periodWords(state.window, window) : windowWords(data.from, data.to)}
+            period={window ? periodWords(state.window, window) : datesWords(data)}
             sort={state.sort}
             onSort={(sort) => update({ sort })}
             canCompare={canCompare}
+            // Picks are made from the answer to the filters on screen only: rows kept up while a new
+            // question loads, or after it failed, belong to other filters (TP18).
+            canPickNow={read.current}
             picks={picks}
             onTogglePick={(id) => setPicks((prev) => togglePick(prev, id))}
             onComparePicked={() => {
-              if (data.campaign_id && picks.length > 0) navigate(comparePickedPath(state, data.campaign_id, picks));
+              if (read.current && data.campaign_id && picks.length > 0) navigate(comparePickedPath(state, data.campaign_id, picks));
             }}
           />
         </div>
       ) : null}
     </div>
   );
-}
-
-/** A window in words: "15 Nov to 21 Nov", or "21 Nov" for one day. */
-function windowWords(from: string, to: string): string {
-  return from === to ? formatReportDay(from, false) : `${formatReportDay(from, false)} to ${formatReportDay(to, false)}`;
 }
 
 /**
