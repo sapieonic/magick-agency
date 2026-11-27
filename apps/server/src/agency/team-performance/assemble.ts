@@ -188,7 +188,11 @@ export function wrapupAllowed(campaigns: readonly TeamCampaign[], codes: readonl
   return { seconds: null, varies: values.size > 1 };
 }
 
-/** The team's sums over EVERY cohort row (ratios of sums). */
+/**
+ * The team's sums over EVERY cohort row (ratios of sums), and only those: the tiles always agree
+ * with the table, and an agent with no row (soft-phone or inbound only) is in no tile (TP14). The
+ * per-day chart and the bars are the whole team's in scope ({@link teamTrend}, {@link outcomeBars}).
+ */
 export function teamTotals(
   kind: AgencyTeamMainOutcomeKind,
   agents: readonly TeamAgentSources[],

@@ -243,6 +243,19 @@ function seed(): void {
   t0.promises += 2; t0.other += 2;
   promisesByDay.set(day, (promisesByDay.get(day) ?? 0) + 2);
 
+  // The supervisor's own soft-phone promise on c0 (TP14): no dialler call, so no row and not in the
+  // tiles, which sum the rows; the per-day chart is the whole team's, so it counts there.
+  const s = sup().id;
+  const ssp = randomUUID();
+  sessions.push({ id: ssp, tenant_id: floor.tenant, account_id: floor.account, campaign_id: null, agent_user_id: s, kind: 'softphone', state: 'offline', joined_at: L(day, '16:00'), left_at: L(day, '16:30') });
+  manual.push({
+    id: randomUUID(), tenant_id: floor.tenant, account_id: floor.account, session_id: ssp, agent_user_id: s, campaign_id: c0,
+    destination_e164: '+919811110001', caller_id: '+919000000001', state: 'ended', outcome: 'connected',
+    dialed_at: L(day, '16:05'), bridged_at: L(day, '16:05:10'), ended_at: L(day, '16:10'), created_at: L(day, '16:05'), settled_at: L(day, '16:11'),
+    disposition_code: 'will_pay', disposition_source: 'campaign', dispositioned_at: L(day, '16:11'), promise_date: day, promise_amount: 300,
+  });
+  promisesByDay.set(day, (promisesByDay.get(day) ?? 0) + 1);
+
   // The other tenant: one agent's evening on its own campaign, whose catalog records promises under another label.
   const o = other.agents[0]!.id;
   const osid = session(other, other.campaigns[0]!, o, L(day, '09:00'), L(day, '12:00'), null);
@@ -403,6 +416,15 @@ describe('one campaign: every figure equals the seed, the roster and Compare', (
     });
     expect(a.totals.main).toMatchObject({ numerator: sum((t) => t.promises), denominator: sum((t) => t.connected + t.other), reportable: true });
     expect(a.medians.calls_handled).not.toBeNull();
+  });
+
+  it('an agent with no dialler call has no row and is not in the tiles, but is in the whole team\'s per-day chart (TP14)', () => {
+    expect(a.agents.some((r) => r.agent_user_id === sup().id)).toBe(false);
+    const rowSum = (f: (r: AgencyTeamPerformance['agents'][number]) => number) => a.agents.reduce((n, r) => n + f(r), 0);
+    expect(a.totals.main.numerator).toBe(rowSum((r) => r.main.numerator));
+    expect(a.totals.main.denominator).toBe(rowSum((r) => r.main.denominator ?? 0));
+    const inWindow = a.trend.dates.reduce((n, d, k) => (d >= FROM && d <= TO ? n + a.trend.counts[k]! : n), 0);
+    expect(inWindow).toBe(a.totals.main.numerator + 1);
   });
 
   it('what happened on the calls: the rollup\'s conversations by code, labelled from the catalog (TP13)', () => {

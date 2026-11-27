@@ -22,6 +22,11 @@
  * - **The cohort** is every agent with a row in the roster for the scope and window (who dialled
  *   in it, `rosterAttemptTotals`), a departed member kept and flagged (TP5). An agent whose only
  *   work in the window was soft-phone or inbound calls has no row (TP14).
+ * - **Tiles and table agree; the charts are the whole team's (TP14):** `totals` are sums over
+ *   `agents`, so an agent with no row is in no tile. `trend` and `outcomes` are the whole team's in
+ *   the scope, whoever took the calls: the per-day promises count an agent with no row too, and the
+ *   bars are the rollup's dialler conversations (the console labels them "whole team" and "Dialler
+ *   calls only").
  * - **Rates are FRACTIONS in [0, 1]** on this wire (`0.27`, not `27`), and so are their intervals
  *   and medians. The console renders percentages.
  * - **Data, not words (TP17, CP12, AS15):** the server sends codes, counts and labels from the
@@ -241,7 +246,10 @@ export interface AgencyTeamWrapupAllowed {
   varies: boolean;
 }
 
-/** The team's own figures: sums over EVERY cohort row, thin ones included (ratios of sums). */
+/**
+ * The team's own figures: sums over EVERY cohort row, thin ones included (ratios of sums), and
+ * nothing else: an agent with no row is in no total (TP14), so the tiles always agree with the table.
+ */
 export interface AgencyTeamTotals {
   /** Cohort rows ("by N agents"). */
   agents: number;
@@ -308,7 +316,8 @@ export interface AgencyTeamTrend {
   dates: string[];
   /**
    * The team's count per date, `dates.length` long: promises recorded that local day (every call
-   * type), or conversations ending in a success code (the rollup).
+   * type, by whoever took the call, an agent with no row included: TP14), or conversations ending
+   * in a success code (the rollup).
    */
   counts: number[];
 }
