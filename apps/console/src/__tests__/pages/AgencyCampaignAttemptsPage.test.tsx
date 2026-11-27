@@ -33,6 +33,9 @@ const mocks = vi.hoisted(() => ({
   campaignLineage: vi.fn(),
   getCampaignCallLog: vi.fn(),
   downloadSpineCsv: vi.fn(),
+  getCallExportFields: vi.fn(),
+  /** The signed-in reader, for the key Export with fields remembers a choice under. */
+  auth: null as null | { user: { id: string } },
   listCampaignAgents: vi.fn(),
   markMissedInboundCallHandled: vi.fn(),
   refreshMissedCallsCount: vi.fn(),
@@ -45,6 +48,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/AuthContext', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../contexts/AuthContext')>()),
+  useOptionalAuth: () => mocks.auth,
+}));
 vi.mock('../../contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ isEnabled: (flag: string) => mocks.flags.has(flag) }),
 }));
@@ -71,12 +78,14 @@ vi.mock('../../hooks/useMissedCallsCount', () => ({ refreshMissedCallsCount: moc
 vi.mock('../../api/agencySpine', () => ({
   getCampaignCallLog: mocks.getCampaignCallLog,
   downloadSpineCsv: mocks.downloadSpineCsv,
+  getCallExportFields: mocks.getCallExportFields,
 }));
 
 import AttemptsPage from '../../pages/agency/AgencyCampaignAttemptsPage';
 import { ApiError } from '../../api/client';
 import { noLineage, workspaceStats } from '../helpers/campaignWorkspace';
 import { attemptsLink, type InsightsAttemptsFilter } from '../../utils/agency/insights/links';
+import { exportFieldsFixture } from '../helpers/callExportFields';
 
 /** Connected, agent named, recording reachable. */
 const BRIDGED: AgencyAttempt = {
@@ -155,6 +164,7 @@ function renderPage(initialPath = ALL_DATES) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.flags = new Set();
+  mocks.auth = null;
   mocks.isEnabled.mockReturnValue(true);
   mocks.useTenant.mockReturnValue({
     tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin',
@@ -1797,5 +1807,171 @@ describe('with To follow up on, the dates narrow nothing and the page says so', 
     await screen.findByTestId(`attempt-row-${INBOUND_MISSED.id}`);
     expect(screen.queryByTestId('attempts-inverted-range')).toBeNull();
     expect((screen.getByText('Apply') as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+/*
+  Export with fields (docs/call-log.md §10, CL43–CL52). Export CSV is a split button: its main
+  part is the plain export, unchanged and never sending `fields` (CL43); its arrow opens a menu
+  whose one item opens the dialog. The dialog's own behaviour is ExportFieldsDialog.test.tsx's;
+  here, what the page sends and to whom it is offered.
+*/
+describe('Export with fields', () => {
+  const FILE = { blob: new Blob(['a']), truncated: false, reason: null, rowLimit: null, rows: 3 };
+  const AT = '/agency/campaigns/camp-1/attempts?outcome=connected&type=dialler&dates=all';
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    mocks.downloadSpineCsv.mockResolvedValue(FILE);
+    mocks.getCallExportFields.mockResolvedValue(exportFieldsFixture());
+  });
+
+  async function openDialog() {
+    fireEvent.click(await screen.findByRole('button', { name: 'More export options' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export with fields…' }));
+    await screen.findByText('Columns in the file');
+  }
+
+  function box(name: string): HTMLInputElement {
+    return document.querySelector<HTMLInputElement>(`input[data-field="${name}"]`)!;
+  }
+
+  it('the plain Export CSV sends exactly the list’s query and never fields', async () => {
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+    await waitFor(() => expect(mocks.downloadSpineCsv).toHaveBeenCalledTimes(1));
+    expect(mocks.downloadSpineCsv).toHaveBeenCalledWith(
+      'camp-1', 'attempts', { outcome: ['connected'], source: 'dialler' }, 'tenant-1', 'account-1',
+    );
+    expect(mocks.downloadSpineCsv.mock.calls[0]![2]).not.toHaveProperty('fields');
+    expect(mocks.getCallExportFields).not.toHaveBeenCalled();
+    expect(mocks.showToast).toHaveBeenCalledWith('Export downloaded.', 'success');
+  });
+
+  it('the plain export sends no fields even with a choice remembered', async () => {
+    mocks.auth = { user: { id: 'u-1' } };
+    window.localStorage.setItem('magick.callExport.fields.v1:u-1:tenant-1:account-1:camp-1', JSON.stringify(['ai_summary']));
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+    await waitFor(() => expect(mocks.downloadSpineCsv).toHaveBeenCalledTimes(1));
+    expect(mocks.downloadSpineCsv.mock.calls[0]![2]).toEqual({ outcome: ['connected'], source: 'dialler' });
+  });
+
+  it('the arrow is a menu button the keyboard can open and leave', async () => {
+    renderPage(AT);
+    const arrow = await screen.findByRole('button', { name: 'More export options' });
+    expect(arrow.getAttribute('aria-haspopup')).toBe('menu');
+    expect(arrow.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    arrow.focus();
+    fireEvent.keyDown(arrow, { key: 'ArrowDown' });
+    const item = await screen.findByRole('menuitem', { name: 'Export with fields…' });
+    expect(arrow.getAttribute('aria-expanded')).toBe('true');
+    expect(arrow.getAttribute('aria-controls')).toBe(screen.getByRole('menu').id);
+    await waitFor(() => expect(document.activeElement).toBe(item));
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(document.activeElement).toBe(arrow);
+    expect(arrow.getAttribute('aria-expanded')).toBe('false');
+
+    // A press outside closes it.
+    fireEvent.click(arrow);
+    expect(screen.getByRole('menu')).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('the menu opens the dialog, which reads its fields with the export’s own query', async () => {
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    await openDialog();
+    expect(screen.getByRole('dialog', { name: 'Export with fields' })).toBeTruthy();
+    expect(screen.getByText('24,812 calls · All dates · Dialler')).toBeTruthy();
+    expect(mocks.getCallExportFields).toHaveBeenCalledTimes(1);
+
+    // The very query the plain export sends.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+    await waitFor(() => expect(mocks.downloadSpineCsv).toHaveBeenCalledTimes(1));
+    expect(mocks.getCallExportFields).toHaveBeenCalledWith(
+      'camp-1', mocks.downloadSpineCsv.mock.calls[0]![2], 'tenant-1', 'account-1',
+    );
+  });
+
+  it('Download CSV sends the list’s query plus fields in the order the preview shows', async () => {
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    await openDialog();
+    fireEvent.click(box('dim_promise_strength'));
+    fireEvent.click(box('ai_summary'));
+    fireEvent.click(box('field_loan_account_no'));
+    const preview = screen.getAllByTestId('export-fields-preview-chosen').map((el) => el.textContent);
+    expect(preview).toEqual(['field_loan_account_no', 'ai_summary', 'dim_promise_strength']);
+
+    fireEvent.click(screen.getByTestId('export-fields-download'));
+    await waitFor(() => expect(mocks.downloadSpineCsv).toHaveBeenCalledTimes(1));
+    expect(mocks.downloadSpineCsv).toHaveBeenCalledWith(
+      'camp-1', 'attempts',
+      { outcome: ['connected'], source: 'dialler', fields: preview.join(',') },
+      'tenant-1', 'account-1',
+    );
+    // The same toast as the plain export, and the dialog closes.
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('Export downloaded.', 'success'));
+    expect(screen.queryByRole('dialog', { name: 'Export with fields' })).toBeNull();
+  });
+
+  it('a file cut at the AI ceiling is reported as every truncation is, with the ceiling that applied', async () => {
+    mocks.downloadSpineCsv.mockResolvedValue({ ...FILE, truncated: true, reason: 'row_limit', rowLimit: 20_000, rows: 20_000 });
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    await openDialog();
+    fireEvent.click(box('ai_summary'));
+    fireEvent.click(screen.getByTestId('export-fields-download'));
+    await waitFor(() => expect(mocks.showToast).toHaveBeenCalled());
+    const [message, level] = mocks.showToast.mock.calls[0]!;
+    expect(level).toBe('error');
+    expect(message).toContain('20,000-row export limit');
+  });
+
+  it('a refusal stays in the dialog, and no toast claims a download', async () => {
+    mocks.downloadSpineCsv.mockRejectedValue(new ApiError(403, { code: 'export_fields_not_permitted', message: 'Forbidden' }));
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    await openDialog();
+    fireEvent.click(box('ai_summary'));
+    fireEvent.click(screen.getByTestId('export-fields-download'));
+    expect((await screen.findByTestId('export-fields-download-error')).textContent)
+      .toBe('Call analysis is off for this account, so its fields can’t be exported.');
+    expect(mocks.showToast).not.toHaveBeenCalled();
+    expect(mocks.showErrorToast).not.toHaveBeenCalled();
+    // The page's own button is usable again.
+    expect((screen.getByRole('button', { name: 'Export CSV' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('remembers the choice under the reader, tenant, account and campaign', async () => {
+    mocks.auth = { user: { id: 'u-1' } };
+    const key = 'magick.callExport.fields.v1:u-1:tenant-1:account-1:camp-1';
+    window.localStorage.setItem(key, JSON.stringify(['ai_sentiment', 'dim_dropped']));
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    await openDialog();
+    expect(box('ai_sentiment').checked).toBe(true);
+    fireEvent.click(box('ai_summary'));
+    fireEvent.click(screen.getByTestId('export-fields-download'));
+    await waitFor(() => expect(mocks.downloadSpineCsv).toHaveBeenCalledTimes(1));
+    expect(mocks.downloadSpineCsv.mock.calls[0]![2]).toMatchObject({ fields: 'ai_summary,ai_sentiment' });
+    expect(JSON.parse(window.localStorage.getItem(key)!)).toEqual(['ai_summary', 'ai_sentiment']);
+  });
+
+  it('is not offered to an agent', async () => {
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    expect(screen.queryByRole('button', { name: 'More export options' })).toBeNull();
+    expect(screen.queryByText(/Export with fields/)).toBeNull();
   });
 });

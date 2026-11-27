@@ -3,7 +3,6 @@ import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } 
 import {
   AlertCircle,
   Calendar,
-  Download,
   ListChecks,
   MicOff,
   PhoneOutgoing,
@@ -14,6 +13,7 @@ import {
   User,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
+import { useOptionalAuth } from '../../contexts/AuthContext';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { INBOUND_FLAG } from '../../utils/inbound/inboundFlag';
 import { useMarkMissedHandled } from '../../hooks/useMarkMissedHandled';
@@ -115,6 +115,10 @@ import {
 } from '../../utils/agency/callLog';
 import styles from './AgencyCampaignAttemptsPage.module.css';
 import { AttemptDispositionCell } from '../../components/agency/AttemptDispositionCell';
+import { ExportSplitButton } from '../../components/agency/callLog/ExportSplitButton';
+import { ExportFieldsDialog } from '../../components/agency/callLog/ExportFieldsDialog';
+import { callExportDatesWords, callExportTypeWords, callLogExportQuery } from '../../utils/agency/callExportFields';
+import { callExportFieldsKey } from '../../utils/agency/callExportFieldsStore';
 
 const PAGE_SIZE = 50;
 /** The applied-filter chip of the soft-phone status (the attempt filters' chips have their own ids). */
@@ -219,6 +223,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
   const stats = campaignScope?.stats ?? null;
   const [searchParams, setSearchParams] = useSearchParams();
   const { tenantId, accountId, role } = useTenant();
+  const userId = useOptionalAuth()?.user?.id ?? null;
   const { showToast, showErrorToast } = useToast();
   const navigate = useNavigate();
 
@@ -232,6 +237,8 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
   /** The server refused the filters themselves: Retry would send them again, so none is offered. */
   const [filterRefused, setFilterRefused] = useState(false);
   const [exporting, setExporting] = useState(false);
+  /** Export with fields' dialog (`docs/call-log.md` §10). */
+  const [fieldsOpen, setFieldsOpen] = useState(false);
   /** The campaign's assigned agents, for the Agent filter. A courtesy: rows still name the rest. */
   const [assignedAgents, setAssignedAgents] = useState<AgencyAssignedAgent[]>([]);
   /** All calls: the account's campaigns, for the Campaign filter and each row's outcome words. */
@@ -507,46 +514,71 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
     });
   }, [navigate]);
 
+  /**
+   * The file is what the list shows: its filters (the dates among them), its soft-phone status,
+   * and its chip as the export's `source`. One query for the plain export, Export with fields'
+   * download and its field list, so the three can never disagree.
+   */
+  const exportQuery = useMemo(() => callLogExportQuery(filters, { type, status }), [filters, type, status]);
+
+  /**
+   * Download the campaign call export, plain or with `fields` added (CL43): the plain Export CSV
+   * never sends `fields`. Rejects with the server's refusal; the caller says it.
+   */
+  const downloadExport = useCallback(async (fields: readonly string[] = []) => {
+    if (!id) return;
+    const result = await downloadSpineCsv(
+      id, 'attempts',
+      fields.length > 0 ? { ...exportQuery, fields: fields.join(',') } : exportQuery,
+      tenantId ?? undefined, accountId ?? undefined,
+    );
+    const url = URL.createObjectURL(result.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    // Campaign names are free text and routinely carry `/`, `:` and `?`,
+    // which browsers reject or mangle in `download` — so the name goes
+    // through the same sanitiser the other exports use. The prefix is applied
+    // OUTSIDE it on purpose: sanitised as part of the name, a campaign called
+    // `///` would strip to a bare `attempts.csv` and lose the only thing
+    // identifying which campaign the file came from.
+    link.download = `attempts-${outcomeReportFilename(campaign?.name ?? null, id)}`;
+    link.click();
+    URL.revokeObjectURL(url);
+    if (result.truncated) {
+      // Not a success toast with a footnote: a large campaign truncates by
+      // design, and an operator who reads this as "done" hands over a file
+      // that is missing most of the campaign. With AI fields the ceiling is
+      // lower (CL48); `rowLimit` is the one that applied.
+      showToast(
+        exportTruncationNotice(result.reason, result.rowLimit, result.rows, 'attempts'),
+        'error',
+      );
+    } else {
+      showToast('Export downloaded.', 'success');
+    }
+  }, [id, exportQuery, campaign, tenantId, accountId, showToast]);
+
   const onExport = useCallback(async () => {
     if (!id) return;
     setExporting(true);
     try {
-      // The file is what the list shows: its filters (the dates among them), its soft-phone
-      // status, and its chip as the export's `source`.
-      const result = await downloadSpineCsv(
-        id, 'attempts',
-        { ...filters, ...(status ? { status } : {}), ...(type !== 'all' ? { source: type } : {}) } as Record<string, string | string[] | undefined>,
-        tenantId ?? undefined, accountId ?? undefined,
-      );
-      const url = URL.createObjectURL(result.blob);
-      const link = document.createElement('a');
-      link.href = url;
-      // Campaign names are free text and routinely carry `/`, `:` and `?`,
-      // which browsers reject or mangle in `download` — so the name goes
-      // through the same sanitiser the other exports use. The prefix is applied
-      // OUTSIDE it on purpose: sanitised as part of the name, a campaign called
-      // `///` would strip to a bare `attempts.csv` and lose the only thing
-      // identifying which campaign the file came from.
-      link.download = `attempts-${outcomeReportFilename(campaign?.name ?? null, id)}`;
-      link.click();
-      URL.revokeObjectURL(url);
-      if (result.truncated) {
-        // Not a success toast with a footnote: a large campaign truncates by
-        // design, and an operator who reads this as "done" hands over a file
-        // that is missing most of the campaign.
-        showToast(
-          exportTruncationNotice(result.reason, result.rowLimit, result.rows, 'attempts'),
-          'error',
-        );
-      } else {
-        showToast('Export downloaded.', 'success');
-      }
+      await downloadExport();
     } catch (err: unknown) {
       showErrorToast(err, 'Could not export these calls.');
     } finally {
       setExporting(false);
     }
-  }, [id, filters, type, status, campaign, tenantId, accountId, showToast, showErrorToast]);
+  }, [id, downloadExport, showErrorToast]);
+
+  /** Export with fields' download: the dialog says a refusal beside its fields. */
+  const onExportWithFields = useCallback(async (fields: string[]) => {
+    setExporting(true);
+    try {
+      await downloadExport(fields);
+    } finally {
+      setExporting(false);
+    }
+  }, [downloadExport]);
 
   const applyFilters = useCallback(() => {
     // A phone filter with no digit is refused by the server: said under the field, not sent.
@@ -716,19 +748,31 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
             Refresh
           </button>
           {canExport && (
-            <button
-              type="button"
-              className={`${spine.actionButton} btn-secondary`}
-              onClick={() => void onExport()}
+            <ExportSplitButton
+              onExport={() => void onExport()}
+              onExportWithFields={() => setFieldsOpen(true)}
+              exporting={exporting}
               disabled={exporting || loading}
               title={exportTitle}
-            >
-              <Download size={16} />
-              {exporting ? 'Preparing…' : 'Export CSV'}
-            </button>
+            />
           )}
         </div>
       </header>
+
+      {canExport && id && (
+        <ExportFieldsDialog
+          open={fieldsOpen}
+          onClose={() => setFieldsOpen(false)}
+          campaignId={id}
+          query={exportQuery}
+          dates={callExportDatesWords(filters, type)}
+          type={callExportTypeWords(type)}
+          storageKey={userId && tenantId && accountId ? callExportFieldsKey(userId, tenantId, accountId, id) : null}
+          tenantId={tenantId ?? undefined}
+          accountId={accountId ?? undefined}
+          onDownload={onExportWithFields}
+        />
+      )}
 
       <PageDescription
         pageKey={account ? 'agency-all-calls' : 'agency-campaign-attempts'}
@@ -745,6 +789,9 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
             : []),
           'A recording is only kept for a call that actually connected, and only while the call itself is kept.',
           'Export CSV downloads everything matching the filters, not just the rows on screen.',
+          ...(canExport
+            ? ['Export with fields, under the arrow beside Export CSV, adds the call analysis and the agent’s call details at the end of the same file.']
+            : []),
           // Not with To follow up on: that view, and its export, are not narrowed by the dates.
           ...(type === 'to_follow_up'
             ? []

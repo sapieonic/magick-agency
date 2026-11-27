@@ -195,6 +195,9 @@ describe('All calls', () => {
   it('has no export: a campaign’s file is its own Call log’s', async () => {
     await renderAt();
     expect(screen.queryByRole('button', { name: /Export CSV/ })).toBeNull();
+    // Nor Export with fields (docs/call-log.md §10): it is the campaign Call log's alone.
+    expect(screen.queryByRole('button', { name: 'More export options' })).toBeNull();
+    expect(screen.queryByText(/Export with fields/)).toBeNull();
   });
 
   it('says an empty day is about the dates, in the account’s words', async () => {
