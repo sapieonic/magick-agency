@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   listAgencyCampaigns: vi.fn(),
   listArchivedAgencyCampaigns: vi.fn(),
   getTeamPerformance: vi.fn(),
+  /** The midnight timers armed now (`useAtLocalMidnight`, faked below): fired by `midnight()`. */
+  midnight: new Set<() => void>(),
 }));
 
 vi.mock('firebase/auth', () => ({ getAuth: () => ({ currentUser: null }) }));
@@ -40,6 +42,24 @@ vi.mock('../../api/agencyCampaigns', () => ({
   listAgencyCampaigns: mocks.listAgencyCampaigns,
   listArchivedAgencyCampaigns: mocks.listArchivedAgencyCampaigns,
 }));
+// Local midnight, on demand: each hook adds its callback while it is enabled.
+vi.mock('../../hooks/useAtLocalMidnight', async () => {
+  const { useEffect, useRef } = await import('react');
+  return {
+    useAtLocalMidnight: (fn: () => void, enabled: boolean) => {
+      const latest = useRef(fn);
+      latest.current = fn;
+      useEffect(() => {
+        if (!enabled) return undefined;
+        const fire = () => latest.current();
+        mocks.midnight.add(fire);
+        return () => {
+          mocks.midnight.delete(fire);
+        };
+      }, [enabled]);
+    },
+  };
+});
 vi.mock('../../api/teamPerformance', async () => {
   const actual = await vi.importActual<typeof import('../../api/teamPerformance')>('../../api/teamPerformance');
   return { ...actual, getTeamPerformance: mocks.getTeamPerformance };
@@ -101,7 +121,24 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  mocks.midnight.clear();
 });
+
+/** A minute on the page's refresh timer (setInterval faked by the test). */
+function aMinute() {
+  act(() => {
+    vi.advanceTimersByTime(60_000);
+  });
+}
+
+/** Local midnight: every midnight timer armed now fires. */
+const midnight = () =>
+  act(() => {
+    for (const fire of [...mocks.midnight]) fire();
+  });
+
+/** Gives a read that would start the time to (the settle timer is real). */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 40)));
 
 describe('who sees it', () => {
   function renderPage() {
@@ -205,6 +242,7 @@ describe('the figures', () => {
     expect(within(outcomes).getByRole('heading').textContent).toBe('What happened on today’s 360 calls');
     expect(within(outcomes).getAllByTestId('team-outcome')[0]!.textContent).toBe('Will pay96');
     expect(within(outcomes).getByText('Bars share one colour on purpose: this compares sizes, not outcome types.')).toBeTruthy();
+    expect(within(outcomes).getByTestId('team-outcomes-line').textContent).toMatch(/^Dialler calls only · as of \d{1,2}:\d{2} [AP]M$/);
     // 96 conversations ended in Will pay; the tile counts 98 promises recorded.
     expect(within(outcomes).getByTestId('team-outcomes-footnote').textContent).toMatch(/\(98 vs 96 here\)/);
     fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: '' } });
@@ -237,6 +275,29 @@ describe('the agents', () => {
       const worth = cells.at(-1)!;
       expect(worth.hasAttribute('data-empty')).toBe(within(worth).queryAllByTestId('team-badge').length === 0);
     }
+  });
+
+  it('gives an agent whose name did not resolve the initials of the name shown, and every name a title (C8, C9)', async () => {
+    const lakshmi = TEAM_AGENT['Lakshmi P']!;
+    const shown = `Agent ${lakshmi.slice(0, 8)}`;
+    mocks.getTeamPerformance.mockImplementation(async (q: AgencyTeamPerformanceQuery) => {
+      const a = answerFor(q);
+      return { ...a, agents: a.agents.map((r) => (r.agent_user_id === lakshmi ? { ...r, agent_name: null } : r)) };
+    });
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    const head = (name: string) => within(screen.getAllByTestId('team-row').find((r) => r.textContent!.includes(name))!).getByRole('rowheader');
+    expect(head(shown).querySelector('[aria-hidden="true"]')!.textContent).toBe('AA');
+    expect(within(head(shown)).getByTitle(shown)).toBeTruthy();
+    expect(within(head('Swapna K')).getByTitle('Swapna K')).toBeTruthy();
+  });
+
+  it('names the scrolling table apart from its section (C10)', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    const section = await screen.findByTestId('team-agents');
+    const region = within(section).getByRole('region', { name: 'Agents table' });
+    expect(region.getAttribute('tabindex')).toBe('0');
+    expect(within(section).queryAllByRole('region', { name: /^Agents · / })).toHaveLength(0);
   });
 
   it('sorts with toggle pills, into the URL', async () => {
@@ -309,6 +370,29 @@ describe('picking for Compare agents (TP18)', () => {
     expect(screen.getByTestId('team-picks').textContent).toBe('1 of 3 picked');
     fireEvent.change(screen.getByTestId('team-when'), { target: { value: 'this_week' } });
     expect(screen.getByTestId('team-picks').textContent).toBe('0 of 3 picked');
+  });
+
+  it('disables the picks and Compare picked while the rows on screen are another filter’s (C3)', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    mocks.getTeamPerformance.mockImplementation(() => new Promise(() => {}));
+    fireEvent.change(screen.getByTestId('team-when'), { target: { value: 'this_week' } });
+    await screen.findByTestId('team-updating');
+    const boxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
+    expect(boxes.length).toBeGreaterThan(0);
+    expect(boxes.every((b) => b.disabled)).toBe(true);
+    fireEvent.click(boxes[0]!);
+    expect(screen.getByTestId('team-picks').textContent).toBe('0 of 3 picked');
+    expect((screen.getByTestId('team-compare-picked') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps the picks disabled when the new filter’s read failed, over the last figures (C3)', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    mocks.getTeamPerformance.mockRejectedValue(refusal(503, 'team_timed_out'));
+    fireEvent.change(screen.getByTestId('team-when'), { target: { value: 'this_week' } });
+    await screen.findByTestId('team-stale');
+    expect((screen.getAllByRole('checkbox') as HTMLInputElement[]).every((b) => b.disabled)).toBe(true);
   });
 
   it('offers no picking without Compare agents', async () => {
@@ -392,7 +476,130 @@ describe('the states', () => {
   });
 });
 
+describe('reading again on its own (§2 States)', () => {
+  it('reads Last 7 days and This week again, but never Last 30 days, a month-long read (C1)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    for (const [when, again] of [['7d', true], ['week', true], ['30d', false]] as const) {
+      mocks.getTeamPerformance.mockClear();
+      const { unmount } = renderView(`?when=${when}`);
+      await screen.findByTestId('team-tiles');
+      expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+      aMinute();
+      fireEvent.focus(window);
+      await settle();
+      expect(mocks.getTeamPerformance.mock.calls.length > 1, `when=${when}`).toBe(again);
+      unmount();
+    }
+  });
+
+  it('does not ask again, on the timer or on return, after a refusal that would only repeat (C1)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    mocks.getTeamPerformance.mockRejectedValue(refusal(404, 'team_campaign_not_found'));
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-error');
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+    aMinute();
+    aMinute();
+    fireEvent.focus(window);
+    await settle();
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops after a timeout until the reader presses Try again (C1)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    mocks.getTeamPerformance.mockRejectedValueOnce(refusal(503, 'team_timed_out'));
+    renderView();
+    const error = await screen.findByTestId('team-error');
+    aMinute();
+    fireEvent.focus(window);
+    await settle();
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(error).getByTestId('team-retry'));
+    await screen.findByTestId('team-tiles');
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2);
+    // Answered again: the minute's refresh resumes.
+    aMinute();
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3));
+  });
+
+  it('keeps the figures up after a failed quiet refresh, says so calmly, and tries again next minute (C2)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-tiles');
+    mocks.getTeamPerformance.mockRejectedValueOnce(refusal(429, 'team_busy'));
+    aMinute();
+    const line = await screen.findByTestId('team-refresh-failed');
+    expect(line.textContent).toBe('Couldn’t refresh. Showing figures up to 8:45 AM.');
+    expect(line.getAttribute('role')).toBe('status');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByTestId('team-error')).toBeNull();
+    expect(screen.queryByTestId('team-stale')).toBeNull();
+    expect(screen.getByTestId('team-tiles')).toBeTruthy();
+    expect(within(line).queryByTestId('team-retry')).toBeNull();
+    aMinute();
+    await waitFor(() => expect(screen.queryByTestId('team-refresh-failed')).toBeNull());
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3);
+  });
+
+  it('after a quiet refresh times out, keeps the figures and offers Try again, as nothing else will read (C1, C2)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    renderView();
+    await screen.findByTestId('team-tiles');
+    mocks.getTeamPerformance.mockRejectedValueOnce(refusal(503, 'team_timed_out'));
+    aMinute();
+    const line = await screen.findByTestId('team-refresh-failed');
+    expect(screen.queryByRole('alert')).toBeNull();
+    aMinute();
+    await settle();
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2);
+    fireEvent.click(within(line).getByTestId('team-retry'));
+    await waitFor(() => expect(screen.queryByTestId('team-refresh-failed')).toBeNull());
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3);
+  });
+
+  it('at midnight reads a custom window again, but not a preset, whose question moves with the day (C7)', async () => {
+    const { unmount } = renderView();
+    await screen.findByTestId('team-tiles');
+    midnight();
+    await settle();
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+    unmount();
+    mocks.getTeamPerformance.mockClear();
+    renderView('?when=custom&from=2026-11-15&to=2026-11-17');
+    await screen.findByTestId('team-tiles');
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+    midnight();
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2));
+  });
+});
+
 describe('Download Excel (TP19)', () => {
+  it('opens on the dialog’s today at the latest, when the campaign’s day is behind the browser’s (C6)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    // 08:50 UTC on 17 Nov is 22:50 on 16 Nov in Honolulu: the page's today is the campaign's tomorrow.
+    mocks.listAgencyCampaigns.mockResolvedValue([{ id: CAMPAIGN, name: 'Nov dues', status: 'running', default_timezone: 'Pacific/Honolulu' }]);
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-tiles');
+    await waitFor(() => expect((screen.getByTestId('team-campaign') as HTMLSelectElement).value).toBe(CAMPAIGN));
+    fireEvent.click(await screen.findByTestId('report-entry-team_performance'));
+    const dialog = await screen.findByRole('dialog');
+    const to = within(dialog).getByLabelText('To') as HTMLInputElement;
+    expect(to.max).toBe('2026-11-16');
+    expect(to.value).toBe('2026-11-16');
+    expect((within(dialog).getByLabelText('From') as HTMLInputElement).value).toBe('2026-11-16');
+  });
+
+  it('chooses only the workbook even when the page’s window cannot be read (C6)', async () => {
+    renderView('?when=custom&from=2026-09-01&to=2026-11-17');
+    fireEvent.click(await screen.findByTestId('report-entry-team_performance'));
+    const dialog = await screen.findByRole('dialog');
+    expect((within(dialog).getByLabelText('Excel') as HTMLInputElement).checked).toBe(true);
+    expect((within(dialog).getByLabelText('PDF') as HTMLInputElement).checked).toBe(false);
+    // No dates to carry over: the dialog's default window.
+    expect((within(dialog).getByLabelText('Custom') as HTMLInputElement).checked).toBe(false);
+  });
+
   it('opens the campaign report on the page’s dates with only the workbook chosen', async () => {
     renderView(`?campaign=${CAMPAIGN}&when=7d`);
     await screen.findByTestId('team-tiles');

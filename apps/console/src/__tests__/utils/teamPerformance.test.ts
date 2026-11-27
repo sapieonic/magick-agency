@@ -11,6 +11,7 @@ import {
   teamWindowDates,
   teamWindowError,
   togglePick,
+  windowAutoRefreshes,
   windowHoldsToday,
 } from '../../utils/agency/team/teamUrl';
 import {
@@ -27,8 +28,11 @@ import {
   outcomesTitle,
   percent,
   picksLine,
+  datesWords,
   rateLabel,
   rateWords,
+  refreshFailedWords,
+  rollupLine,
   trendLine,
   withheldWords,
 } from '../../utils/agency/team/teamCopy';
@@ -79,6 +83,16 @@ describe('the URL (teamUrl)', () => {
     expect(windowHoldsToday({ from: '2026-11-01', to: '2026-11-07' }, '2026-11-17')).toBe(false);
   });
 
+  it('reads again on its own only a window that holds today and spans at most 7 days (§2 States)', () => {
+    const today = '2026-11-17';
+    expect(windowAutoRefreshes({ from: today, to: today }, today)).toBe(true);
+    expect(windowAutoRefreshes({ from: '2026-11-11', to: today }, today)).toBe(true);
+    expect(windowAutoRefreshes({ from: '2026-11-10', to: today }, today)).toBe(false);
+    expect(windowAutoRefreshes({ from: '2026-10-19', to: today }, today)).toBe(false);
+    expect(windowAutoRefreshes({ from: '2026-11-01', to: '2026-11-07' }, today)).toBe(false);
+    expect(windowAutoRefreshes(null, today)).toBe(false);
+  });
+
   it(`picks at most ${COMPARE_PAGE_MAX_AGENTS}: a fourth changes nothing, and unpicking frees a place`, () => {
     let picks: string[] = [];
     for (const id of ['a', 'b', 'c', 'd']) picks = togglePick(picks, id);
@@ -111,6 +125,18 @@ describe('the words (teamCopy)', () => {
     expect(rateWords('PTP')).toBe('PTP rate');
   });
 
+  it('names the successes fallback’s rate in the singular: Success rate, Low success rate (C5)', () => {
+    const label = mainLabel({ kind: 'successes', label: null });
+    expect(rateLabel(label)).toBe('Success rate');
+    expect(rateWords(label)).toBe('success rate');
+    expect(findingBadge({ code: 'clear_gap', metric: 'success_rate' }, label)).toEqual({ label: 'Low success rate', tone: 'watch' });
+    expect(
+      mainLine({ main: { value: 0.3, numerator: 30, denominator: 100, reportable: true, interval: null, withheld: null }, other_conversations: 4 }, label, 20),
+    ).toBe('30% success rate · counts 4 soft-phone and inbound calls');
+    // A catalog's own label keeps its words.
+    expect(rateLabel('Sale made')).toBe('Sale-made rate');
+  });
+
   it('writes the tiles’ lines from the answer', () => {
     expect(mainLine(TEAM_ONE_CAMPAIGN.totals, 'Will pay', 20)).toBe('27% of calls handled');
     // Soft-phone and inbound calls in the rate (TP4): the line says so.
@@ -134,6 +160,14 @@ describe('the words (teamCopy)', () => {
     expect(trendLine(TEAM_ALL_CAMPAIGNS.trend)).toBe('whole team, 6 working days');
     expect(outcomesTitle('today', 360)).toBe('What happened on today’s 360 calls');
     expect(outcomesTitle('last_7_days', 2120)).toBe('What happened on 2,120 calls');
+    expect(datesWords({ from: '2026-11-11', to: '2026-11-17' })).toBe('11 Nov to 17 Nov');
+    expect(datesWords({ from: '2026-11-17', to: '2026-11-17' })).toBe('17 Nov');
+  });
+
+  it('says how fresh the bars are, as a line of its own, and a failed refresh calmly (C13, C2)', () => {
+    expect(rollupLine('2026-11-17T08:40:00.000Z')).toBe('Dialler calls only · as of 8:40 AM');
+    expect(rollupLine(null)).toBe('Dialler calls only');
+    expect(refreshFailedWords('2026-11-17T08:45:12.000Z')).toBe('Couldn’t refresh. Showing figures up to 8:45 AM.');
   });
 
   it('writes an outcome without a label as the code, and none chosen as such (TP13)', () => {

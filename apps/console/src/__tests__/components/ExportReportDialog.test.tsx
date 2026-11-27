@@ -31,7 +31,7 @@ vi.mock('../../utils/reports/reportWindow', async () => {
   return { ...actual, browserZone: () => 'Asia/Kolkata' };
 });
 
-import { CAMPAIGN_ZONE_UNUSABLE, ExportReportDialog, type ExportReportTarget } from '../../components/agency/reports/ExportReportDialog';
+import { CAMPAIGN_ZONE_UNUSABLE, ExportReportDialog, initialDatesFor, type ExportReportTarget } from '../../components/agency/reports/ExportReportDialog';
 import { ApiError } from '../../api/client';
 
 // 20:00 UTC on Sunday 8 Nov 2026: already Monday 9 Nov in Kolkata, still 8 Nov in New York.
@@ -276,5 +276,23 @@ describe('ExportReportDialog — submission', () => {
       const labelled = input.closest('label') !== null || (id !== null && document.querySelector(`label[for="${id}"]`) !== null);
       expect(labelled, input.outerHTML).toBe(true);
     }
+  });
+});
+
+describe('the dates an entry point opens the dialog on (initialDatesFor)', () => {
+  const formats = { pdf: false, xlsx: true };
+
+  it('keeps dates that end no later than the dialog’s today', () => {
+    expect(initialDatesFor({ from: '2026-11-11', to: '2026-11-17', formats }, '2026-11-17')).toEqual({ from: '2026-11-11', to: '2026-11-17' });
+  });
+
+  it('brings both ends back to today when the page’s day is ahead of the report zone’s', () => {
+    expect(initialDatesFor({ from: '2026-11-11', to: '2026-11-17', formats }, '2026-11-16')).toEqual({ from: '2026-11-11', to: '2026-11-16' });
+    expect(initialDatesFor({ from: '2026-11-17', to: '2026-11-17', formats }, '2026-11-16')).toEqual({ from: '2026-11-16', to: '2026-11-16' });
+  });
+
+  it('gives none without both dates, so the dialog opens on its default window', () => {
+    expect(initialDatesFor({ formats }, '2026-11-17')).toBeNull();
+    expect(initialDatesFor(undefined, '2026-11-17')).toBeNull();
   });
 });
