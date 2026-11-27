@@ -370,6 +370,25 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency compare agents: supervisors compare up to three agents of a campaign against its other agents, with findings',
   },
+
+  // ── Team performance (docs/team-performance.md, TP6) ─────────────────────────
+  //
+  // Gates `GET /proxy/agency/team-performance` (`403 feature_disabled` when off) and the console's
+  // Team performance tab on Reports. Separate from `agency_compare_enabled` and
+  // `agency_reports_enabled` because it runs in the primary against the live database over the
+  // whole account's cohort (TP20), with its own guards, and a tenant gets it on its own once those
+  // are watched. Off by default: a super-admin turns it on per tenant or account with an override
+  // row. Client-exposed: the console shows or hides the tab.
+  agency_team_performance_enabled: {
+    key: 'agency_team_performance_enabled',
+    type: 'boolean',
+    default: false,
+    envVar: 'FF_AGENCY_TEAM_PERFORMANCE', // staging: FF_AGENCY_TEAM_PERFORMANCE=true
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the console shows/hides Reports' Team performance tab
+    owner: 'voice',
+    description: 'Agency team performance: supervisors see how the whole team did on one campaign or all campaigns, with one row per agent',
+  },
   // ── Campaign templates (docs/campaign-templates.md, CT17) ────────────────────
   //
   // Gates every `/proxy/agency/campaign-templates/*` route (`403 feature_disabled` when off), New
@@ -392,7 +411,7 @@ export const AGENCY_FLAGS = Object.freeze({
   },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The fourteen agency flag keys. */
+/** The fifteen agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -409,6 +428,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_live_listen_unrecorded',
   'agency_floor_assist_enabled',
   'agency_compare_enabled',
+  'agency_team_performance_enabled',
   'agency_campaign_templates_enabled',
 ] as const satisfies readonly AgencyFlagKey[];
 

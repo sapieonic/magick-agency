@@ -1013,3 +1013,59 @@ export const AGENCY_CAMPAIGN_TEMPLATE_ERROR_STATUS = {
   campaign_template_archived: 409,
   campaign_template_invalid: 400,
 } as const satisfies Record<AgencyCampaignTemplateErrorCode, number>;
+
+// ─── 11. Team performance refusals ──────────────────────────────────────────
+//
+// The codes of the Team performance read (`GET /proxy/agency/team-performance`,
+// docs/team-performance.md; shapes in `./api/agency/team-performance`). The body is
+// `{ error, code, message }`. HTTP status beside each code. The flag gate
+// (`agency_team_performance_enabled` off) answers the dialer gate's `403 feature_disabled`, a
+// caller without `agency.supervise` the RBAC 403, and a request without an account context
+// `400 account_scope_required`: none of these. A query that fails schema validation is the
+// generic agency 400. None may overlap the report or compare codes (the page is a Reports tab and
+// the console reads all three).
+
+/** Why the team performance read refused. */
+export type AgencyTeamPerformanceErrorCode =
+  /** 404. `campaign_id` is not a campaign of the context account. Uniform: it never says a campaign exists elsewhere. */
+  | 'team_campaign_not_found'
+  /** 400. `timezone` is missing or not an IANA zone the server knows. */
+  | 'team_timezone_invalid'
+  /** 400. `from` or `to` is malformed, `to` is before `from` or after today in the zone, or the window is longer than the reports allow (`teamWindowProblem`). */
+  | 'team_window_invalid'
+  /**
+   * 429. No team read could start: the tenant already runs `TEAM_PERFORMANCE_TENANT_CONCURRENT_READS`,
+   * or the server already runs its process-wide limit (a share of its database pool, across
+   * tenants). Carries `Retry-After` and `retry_after_seconds`. Retry in a moment.
+   */
+  | 'team_busy'
+  /**
+   * 503. The read ran past `TEAM_PERFORMANCE_READ_TIMEOUT_MS` and was cancelled. Try a shorter
+   * period. A fixed, reviewed body: the server sends it through the error mask's reviewed opt-out
+   * so it is not masked as "contact support".
+   */
+  | 'team_timed_out';
+
+/** Runtime list of {@link AgencyTeamPerformanceErrorCode}, in declaration order. */
+export const AGENCY_TEAM_PERFORMANCE_ERROR_CODES = [
+  'team_campaign_not_found',
+  'team_timezone_invalid',
+  'team_window_invalid',
+  'team_busy',
+  'team_timed_out',
+] as const satisfies readonly AgencyTeamPerformanceErrorCode[];
+
+const _allTeamPerformanceCodesListed: AllListed<
+  AgencyTeamPerformanceErrorCode,
+  typeof AGENCY_TEAM_PERFORMANCE_ERROR_CODES
+> = true;
+void _allTeamPerformanceCodesListed;
+
+/** The HTTP status of each team performance refusal, for the server's replies and the route tests. */
+export const AGENCY_TEAM_PERFORMANCE_ERROR_STATUS = {
+  team_campaign_not_found: 404,
+  team_timezone_invalid: 400,
+  team_window_invalid: 400,
+  team_busy: 429,
+  team_timed_out: 503,
+} as const satisfies Record<AgencyTeamPerformanceErrorCode, number>;

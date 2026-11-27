@@ -347,6 +347,15 @@ by the public API layer itself and have no dialer counterpart. `AgencyCompareErr
 re-exported. It reads one dialer-contract name unchanged, `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, the
 floor of its rates.
 
+Team performance (`team-performance.ts`, docs/team-performance.md) is console-side only too: the
+read (`AgencyTeamPerformanceQuery`, `AgencyTeamPerformance` and its parts), its vocabularies
+(`AgencyTeamMainOutcomeKind`, `AgencyTeamTrendSpan`) and its limits are served by the public API
+layer itself and have no dialer counterpart. It embeds Compare's console shapes unchanged
+(`AgencyCompareValue`, `AgencyCompareFinding`, keyed by `COMPARE_BUILTIN_METRICS` keys) and reads one
+dialer-contract name unchanged, `AgencyTileIcon`, on an outcome bar.
+`AgencyTeamPerformanceErrorCode` / `AGENCY_TEAM_PERFORMANCE_ERROR_CODES` /
+`AGENCY_TEAM_PERFORMANCE_ERROR_STATUS` are declared in `../../errors.ts` (§11) and re-exported.
+
 Campaign templates (`campaign-templates.ts`, docs/campaign-templates.md) are console-side too: the
 templates, their versions, the filled-in form (`AgencyCampaignTemplateEffective`), apply and the
 refusal bodies are served by the public API layer from its own tables (0067), with no dialer twin.
