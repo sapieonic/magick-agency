@@ -11,6 +11,8 @@ import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import { agentNamesOrNone, resolveAgentNames } from '../../../agency/agency-agent-identity.js';
 import {
   ATTEMPT_QUERY_PARAMS,
+  CALL_EXPORT_FIELDS_QUERY_PARAMS,
+  CALL_LOG_EXPORT_FIELDS_QUERY_PARAMS,
   CALL_LOG_EXPORT_QUERY_PARAMS,
   CALL_LOG_QUERY_PARAMS,
   CONTACT_QUERY_PARAMS,
@@ -40,6 +42,21 @@ import {
   withCallLogNames,
   type CampaignCallLogRow,
 } from '../../../agency/campaign-call-log.js';
+import {
+  callExportCsvHeader,
+  callExportCsvRow,
+  callExportFieldsInvalidBody,
+  callExportFieldsNotPermittedBody,
+  callExportInclude,
+  callExportPreambleLines,
+  parseCallExportFields,
+  planCallExportFields,
+  toCallExportFieldsResponse,
+  type CallExportFieldPlan,
+  type CallExportFieldsRead,
+  type CallExportRow,
+} from '../../../agency/call-export-fields.js';
+import { readAccountMediaGrants } from '../helpers/account-media-grants.js';
 import { parseCallLogType } from '../helpers/call-log-query.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { drainPages } from '../helpers/drain-pages.js';
@@ -273,14 +290,17 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
    */
   function boundedFilters(filters: Record<string, string>): Record<string, string> {
     const out: Record<string, string> = {};
-    for (const [key, value] of Object.entries(filters)) {
-      out[key] = value.length > AUDIT_FILTER_VALUE_MAX_CHARS
-        // Marked, not silently cut: a truncated value that looks whole would
-        // misreport what the export actually covered.
-        ? `${value.slice(0, AUDIT_FILTER_VALUE_MAX_CHARS)}…[truncated]`
-        : value;
-    }
+    for (const [key, value] of Object.entries(filters)) out[key] = boundedAuditValue(value);
     return out;
+  }
+
+  /** One value as the audit row may hold it: {@link AUDIT_FILTER_VALUE_MAX_CHARS} at most. */
+  function boundedAuditValue(value: string): string {
+    return value.length > AUDIT_FILTER_VALUE_MAX_CHARS
+      // Marked, not silently cut: a truncated value that looks whole would
+      // misreport what the export actually covered.
+      ? `${value.slice(0, AUDIT_FILTER_VALUE_MAX_CHARS)}…[truncated]`
+      : value;
   }
 
   // ── The exports ───────────────────────────────────────────────────────────
@@ -306,8 +326,15 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     request: FastifyRequest<{ Params: { id: string } }>;
     path: string;
     filters: Record<string, string>;
+    /**
+     * Sent on every page beside the filters, and never written into the preamble or the audit
+     * row as a filter: the call export's `include` (the extras its chosen fields read).
+     */
+    pageQuery?: Record<string, string>;
     header: string;
     renderRow: (row: TRow) => string;
+    /** The row ceiling: the export's own {@link SPINE_EXPORT_MAX_ROWS}, unless the call export's fields lower it (CL48). */
+    maxRows?: number;
     /**
      * Applied per page, before rendering. The attempts export uses it to put
      * agent names on the rows — the export has to carry what the screen does,
@@ -324,6 +351,7 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         // large one.
         const query: Record<string, string> = {
           ...params.filters,
+          ...params.pageQuery,
           limit: String(SPINE_EXPORT_PAGE_SIZE),
           ...(cursor ? { cursor } : {}),
         };
@@ -358,7 +386,7 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       },
       header: params.header,
       renderRow: params.renderRow,
-      maxRows: SPINE_EXPORT_MAX_ROWS,
+      maxRows: params.maxRows ?? SPINE_EXPORT_MAX_ROWS,
       budgetMs: SPINE_EXPORT_TIME_BUDGET_MS,
       deadlineReason: 'deadline',
       onDeadline: (rows) => log.warn(
@@ -395,8 +423,19 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       filters: Record<string, string>;
       campaignName: string | null;
       coreAccountId: string;
+      /**
+       * The call export's chosen fields (`docs/call-log.md` §10): the ceiling that applied
+       * (`X-Export-Row-Limit`, the preamble's Truncated line), the preamble's lines about them
+       * (CL51) and their names for the audit row. Absent: the file, its headers and its audit row
+       * are exactly the plain export's.
+       */
+      exportFields?: {
+        plan: CallExportFieldPlan;
+        preambleLines: string[];
+      };
     },
   ) {
+    const rowLimit = input.exportFields?.plan.rowLimit ?? SPINE_EXPORT_MAX_ROWS;
     const lines = [...input.lines];
     // Built LAST and unshifted onto the front: the row count and the truncation
     // are only known once the drain has finished, and a preamble asserting
@@ -412,7 +451,15 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         filters: input.filters,
         rowCount: input.rowCount,
         truncated: input.truncated,
-        rowLimit: SPINE_EXPORT_MAX_ROWS,
+        rowLimit,
+        ...(input.exportFields
+          ? {
+            exportFields: {
+              lines: input.exportFields.preambleLines,
+              callFields: input.exportFields.plan.includeCallFields,
+            },
+          }
+          : {}),
       }));
     }
 
@@ -438,6 +485,16 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         // a compliance reader depends on.
         filters: boundedFilters(input.filters),
         ...(input.truncated ? { truncated: input.truncated } : {}),
+        // The names of the fields added (CL51), never their values, and the ceiling they set:
+        // only when fields were asked, so a plain export's row is as it always was. Each name
+        // is already a validated key of at most 56 characters; bounded all the same, as a
+        // filter value is, because this is the append-only trail.
+        ...(input.exportFields
+          ? {
+            fields: input.exportFields.plan.fields.map((f) => boundedAuditValue(f.name)),
+            row_limit: rowLimit,
+          }
+          : {}),
       },
     });
 
@@ -450,23 +507,43 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       // Only where the ceiling is what stopped it. On a deadline this number
       // would describe a file that does not exist.
       if (input.truncated === 'row_limit') {
-        reply.header('X-Export-Row-Limit', String(SPINE_EXPORT_MAX_ROWS));
+        reply.header('X-Export-Row-Limit', String(rowLimit));
       }
     }
     return reply.send(lines.join(''));
   }
 
+  /**
+   * The campaign call export, with the supervisor's chosen fields when `fields` is given
+   * (`docs/call-log.md` §10, CL43–CL52). The order matters and each step refuses before the next:
+   *
+   *  1. the query (an unknown param, then a `fields` item of no known shape or more than 100:
+   *     400 `export_fields_invalid`), before anything is read;
+   *  2. the campaign's ownership (`requireOwnedCampaign`, its own 404);
+   *  3. an analysis or dimension field without the campaign's account's analytics setting: 403
+   *     `export_fields_not_permitted`, never dropped (CL47); the setting is read only then;
+   *  4. a dimension chosen: its newest description, from the field list read with the file's own
+   *     filters (one extra internal call), for the preamble (CL51);
+   *  5. the drain, asking the call log read for `include=analysis` only when an analysis or
+   *     dimension field is chosen and `include=call_fields` only when a call detail is.
+   *
+   * With no `fields` none of 3–5 happens and the file is the plain export, byte for byte.
+   */
   app.get<{ Params: { id: string } }>('/campaigns/:id/attempts.csv', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    // `preamble` is consumed here (`wantsPreamble` below) and deliberately never
-    // forwarded to the internal handler, so it must not read as an unknown param.
-    // `source` (SR6) is the export's own filter, forwarded to the call log's read.
+    // `preamble` and `fields` are consumed here and deliberately never forwarded to the
+    // internal handler, so neither may read as an unknown param. `source` (SR6) is the
+    // export's own filter, forwarded to the call log's read.
     const forwarded = forwardAllowedQuery(
-      request.query, [...ATTEMPT_QUERY_PARAMS, ...CALL_LOG_EXPORT_QUERY_PARAMS], PREAMBLE_QUERY_PARAMS,
+      request.query, [...ATTEMPT_QUERY_PARAMS, ...CALL_LOG_EXPORT_QUERY_PARAMS],
+      [...PREAMBLE_QUERY_PARAMS, ...CALL_EXPORT_FIELDS_QUERY_PARAMS],
     );
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
     const filters = forwarded.query;
+    const parsedFields = parseCallExportFields((request.query as { fields?: unknown } | undefined)?.fields);
+    if (!parsedFields.ok) return reply.code(400).send(callExportFieldsInvalidBody(parsedFields));
+    const plan = parsedFields.fields.length > 0 ? planCallExportFields(parsedFields.fields) : null;
 
     // Resolved for the preamble's chain-of-custody block and the filename, and
     // the ownership proof the drain's pages carry (`provenCampaignId`): an unowned
@@ -474,15 +551,31 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     const owned = await requireOwnedCampaign(request, reply);
     if (!owned) return reply;
 
+    if (plan && plan.needsAnalysisGrant.length > 0) {
+      // The CAMPAIGN's account's setting (`requireOwnedCampaign`), failing closed.
+      const grants = await readAccountMediaGrants(request.tenantId!, owned.accountId, (err) => log.error(
+        { err, tenantId: request.tenantId, campaignId: request.params.id },
+        'agency call export: account settings resolve failed — failing closed',
+      ));
+      if (!grants.analytics) return reply.code(403).send(callExportFieldsNotPermittedBody(plan.needsAnalysisGrant));
+    }
+
     try {
+      const descriptions = plan?.fields.some((f) => f.kind === 'dimension')
+        ? await dimensionDescriptions(request, filters)
+        : new Map<string, string | null>();
+      const include = plan ? callExportInclude(plan) : null;
+      const fields = plan?.fields ?? [];
       // The campaign's call log (SR6): its attempts and the soft-phone calls tagged to it,
       // newest first on one keyset, each row marked with its `source`.
-      const drained = await drainSpineExport<SpineAttemptRow>({
+      const drained = await drainSpineExport<CallExportRow>({
         request,
         path: `/agency-campaigns/${request.params.id}/call-log`,
         filters,
-        header: attemptCsvHeader(),
-        renderRow: attemptCsvRow,
+        ...(include ? { pageQuery: { include } } : {}),
+        header: plan ? callExportCsvHeader(fields) : attemptCsvHeader(),
+        renderRow: plan ? (row) => callExportCsvRow(row, fields) : attemptCsvRow,
+        ...(plan ? { maxRows: plan.rowLimit } : {}),
         enrich: (body) => enrichAttemptAgentNames(
           body, request.tenantId!, resolveAgentNames,
           (err) => log.warn(
@@ -499,11 +592,109 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         campaignName: owned.name,
         // The campaign row's account (`requireOwnedCampaign`), always present.
         coreAccountId: owned.accountId,
+        ...(plan
+          ? {
+            exportFields: {
+              plan,
+              preambleLines: callExportPreambleLines({ fields, descriptions, rowLimit: plan.rowLimit }),
+            },
+          }
+          : {}),
       });
     } catch (err: unknown) {
       if (err instanceof SpineExportRefused) return reply.code(err.status).send(err.body);
       throw err;
     }
+  });
+
+  /**
+   * The chosen dimensions' newest descriptions for the preamble (CL51), by key: the field list
+   * read with the file's own filters and `include_analysis=1` (only reached with the grant). A
+   * refusal stops the export as a refused page does, and nothing is exported.
+   */
+  async function dimensionDescriptions(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    filters: Record<string, string>,
+  ): Promise<Map<string, string | null>> {
+    const result = await callCore({
+      method: 'GET',
+      path: `/agency-campaigns/${request.params.id}/call-log/export-fields`,
+      query: { ...filters, include_analysis: '1' },
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+      // No `provenCampaignId`: one call, so the handler's own gate and ownership check run
+      // (the proof stays the page drain's alone, `core-dispatch.test.ts`).
+    });
+    if (result.status < 200 || result.status >= 300) throw new SpineExportRefused(result.status, result.body);
+    const read = asCallExportFieldsRead(result.body);
+    if (!read?.analysis) {
+      throw new SpineExportRefused(502, {
+        error: 'Bad Gateway',
+        code: 'spine_export_unreadable',
+        message: 'The voice service returned a field list this export could not read. Nothing was exported.',
+      });
+    }
+    return new Map(read.analysis.dimensions.map((d) => [d.key, d.description]));
+  }
+
+  /** The internal field list's body, or null when it is not one. */
+  function asCallExportFieldsRead(body: unknown): CallExportFieldsRead | null {
+    if (!body || typeof body !== 'object') return null;
+    const value = body as Partial<CallExportFieldsRead>;
+    if (typeof value.calls !== 'number' || !Array.isArray(value.call_fields)) return null;
+    if (value.analysis !== null && (typeof value.analysis !== 'object' || !Array.isArray(value.analysis?.dimensions)
+      || !Array.isArray(value.analysis?.fields))) return null;
+    return value as CallExportFieldsRead;
+  }
+
+  /**
+   * What can be added to the campaign call export of the calls the Call log's filters match
+   * (`AgencyCallExportFieldsResponse`, `docs/call-log.md` §10, CL45, CL47): read when the console's
+   * Export with fields dialog opens. The JSON Call log's query (its filters, `type` mapped to the
+   * read's `source` as that route maps it, `status`); no paging, no chip counts.
+   *
+   * `agency.supervise`, the export's own floor. The analysis and dimension groups follow the
+   * campaign's account's analytics setting (`analyze_calls`), failing closed: without it they are
+   * never asked for (`include_analysis` is not sent, so nothing of the analysis is read) and the
+   * answer says so (`analysis_available: false`, `analysed: null`, both groups empty). The call
+   * details are what an agent typed and are not behind it.
+   */
+  app.get<{ Params: { id: string } }>('/campaigns/:id/call-log/export-fields', {
+    preHandler: requirePermission('agency.supervise'),
+  }, async (request, reply) => {
+    const forwarded = forwardAllowedQuery(request.query, [...ATTEMPT_QUERY_PARAMS, ...CALL_LOG_EXPORT_FIELDS_QUERY_PARAMS]);
+    if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
+    const { type: rawType, ...query } = forwarded.query;
+    const typed = parseCallLogType(rawType, reply);
+    if (!typed) return reply;
+    const { source } = typed;
+
+    const owned = await requireOwnedCampaign(request, reply);
+    if (!owned) return reply;
+    const grants = await readAccountMediaGrants(request.tenantId!, owned.accountId, (err) => log.error(
+      { err, tenantId: request.tenantId, campaignId: request.params.id },
+      'agency call export fields: account settings resolve failed — failing closed',
+    ));
+
+    const result = await callCore({
+      method: 'GET',
+      path: `/agency-campaigns/${request.params.id}/call-log/export-fields`,
+      query: { ...query, ...(source ? { source } : {}), ...(grants.analytics ? { include_analysis: '1' } : {}) },
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+      // No `provenCampaignId`: one call, so the handler repeats its gate and ownership check.
+    });
+    // Non-2xx bodies pass through untouched, as on the Call log.
+    if (result.status < 200 || result.status >= 300) return reply.code(result.status).send(result.body);
+    const read = asCallExportFieldsRead(result.body);
+    if (!read) {
+      return reply.code(502).send({
+        error: 'Bad Gateway',
+        code: 'call_export_fields_unreadable',
+        message: 'The fields that can be exported could not be read. Try again.',
+      });
+    }
+    return reply.send(toCallExportFieldsResponse(read, grants.analytics));
   });
 
   app.get<{ Params: { id: string } }>('/campaigns/:id/contacts.csv', {

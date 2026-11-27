@@ -354,6 +354,16 @@ describe('agency route table — the agent invariant', () => {
     }
   });
 
+  it('the campaign call export and what Export with fields can add are on the table and refuse an agent (agency.supervise)', async () => {
+    const keys = ['GET /proxy/agency/campaigns/:id/attempts.csv', 'GET /proxy/agency/campaigns/:id/call-log/export-fields'];
+    const onTable = new Set(agencyRoutes().map((r) => r.key));
+    for (const key of keys) {
+      expect(onTable.has(key), key).toBe(true);
+      const [method, url] = key.split(' ') as [string, string];
+      expect(refusedByGuards(await callAsAgent(method, url)), key).toBe(true);
+    }
+  });
+
   it('the token-only ring routes answer a caller with no session and no ring the uniform 404 ring_not_offered', async () => {
     const tokenOnly = agencyRoutes().filter((r) => TOKEN_ONLY_ROUTES.includes(r.key)).map((r) => r.key).sort();
     expect(tokenOnly).toEqual([...TOKEN_ONLY_ROUTES].sort());

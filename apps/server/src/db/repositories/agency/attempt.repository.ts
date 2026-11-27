@@ -52,6 +52,19 @@ import type {
   CampaignInboundLogRow,
 } from '../../../agency/campaign-call-log.js';
 import type { AgencyCallLogCounts, AgencyCallLogInboundOutcomeFilter } from '@magick-agency/contracts/api/agency/call-log';
+import {
+  AGENCY_CALL_EXPORT_ANALYSIS_FIELDS,
+  AGENCY_CALL_EXPORT_KEY_PATTERN,
+  type AgencyCallExportAnalysisFieldInfo,
+} from '@magick-agency/contracts/api/agency/call-export-fields';
+import {
+  toCallExportCallFields,
+  toCallExportDimensions,
+  type CallExportFieldsRead,
+  type CallExportLegAnalysis,
+  type RawCallExportCallField,
+  type RawCallExportDimension,
+} from '../../../agency/call-export-fields.js';
 import { inboundCampaignRowConditions, inboundMissedOpenSql } from './sql-fragments.js';
 import { INBOUND_LOG_SELECT_SQL } from './inbound-log-sql.js';
 import { SOFTPHONE_PLACED_SQL, softphoneStatusSql, type SoftphoneCallStatus } from './softphone-campaign-sql.js';
@@ -337,6 +350,22 @@ function scopedInboundConditions(
     [...answeredBase, `i.answered_by_user_id = ${me()}`, ...inboundLogFilterConditions(mine, q.inboundOutcomes, bind)],
     openMissed,
   ];
+}
+
+/**
+ * Whether a jsonb value would be a non-empty cell of the export (`callExportCell`): not NULL (the
+ * caller turns JSON `null` into NULL), not `""` and not `[]`.
+ */
+function hasCellValueSql(value: string): string {
+  return `(${value} IS NOT NULL AND ${value} <> '""'::jsonb AND ${value} <> '[]'::jsonb)`;
+}
+
+/** The analysis's common fields with their counts (`analysis_status` always has a value: every call). */
+function analysisFieldInfos(counts: Record<string, number | string> | null, calls: number): AgencyCallExportAnalysisFieldInfo[] {
+  return AGENCY_CALL_EXPORT_ANALYSIS_FIELDS.map((name) => ({
+    name,
+    calls: name === 'analysis_status' ? calls : Number(counts?.[name] ?? 0),
+  }));
 }
 
 /** A row of the call log's union → its source's projection. */
@@ -1247,6 +1276,244 @@ export class AgencyAttemptRepository {
       inbound: inboundCount,
       to_follow_up: Number(rows[0]?.to_follow_up ?? 0),
     };
+  }
+
+  /**
+   * What can be added to the campaign call export of the rows {@link listCallLogForCampaign}
+   * would list with these filters and `source` (`docs/call-log.md` §10, CL45): how many there
+   * are (every listed row, a soft-phone call that never dialled included, unlike the chips'
+   * {@link countCallLog}), and, only with `includeAnalysis`, the analysis groups. Set-based, one
+   * statement, by the list's own branch rules and WHERE builders, so the set is exactly the rows
+   * the file would hold; no keyset, no limit.
+   *
+   *  - The media legs: each listed row's `webrtc_call_id` in `agency_calls` (its primary key),
+   *    **scoped to the tenant AND the account** (the campaign's), so a leg of another account or
+   *    tenant is never read, whatever id a row carries. An erased leg (`deleted`) has no result.
+   *  - The dimensions (CL45): the union of the keys in the dimension copies each leg's analysis
+   *    job ran with (`dialer_analysis_jobs.profile_snapshot -> 'custom_dimensions'`, by the
+   *    unique `call_id`) and the keys in the stored results (`custom`, legacy `custom_dimensions`).
+   *    The copies are grouped by version first (a campaign's thousands of calls share a handful),
+   *    then per key: its types, oldest version first; a choice's options, first seen; the newest
+   *    version's description; how many listed rows carry a value; on which call types.
+   *  - The call details: the keys in the listed soft-phone rows' `fields` with a value, labelled
+   *    from the account's soft-phone settings as they are now.
+   *
+   * A key that does not match `AGENCY_CALL_EXPORT_KEY_PATTERN` is not offered: the export could
+   * not be asked for it. "A value" is what the file would write as a non-empty cell: not null,
+   * not `""`, not `[]`.
+   */
+  async callExportFieldsForCampaign(input: {
+    campaignId: string;
+    tenantId: string;
+    accountId: string;
+    filters: AgencyAttemptFilters;
+    source: CampaignCallLogSourceFilter | null;
+    softphoneStatus?: SoftphoneCallStatus;
+    inboundOutcomes?: readonly AgencyCallLogInboundOutcomeFilter[];
+    includeAnalysis: boolean;
+  }): Promise<CallExportFieldsRead> {
+    const scope: CallLogScope = { kind: 'campaign', campaignId: input.campaignId, tenantId: input.tenantId };
+    const bind = params();
+    const inboundOutcomes = input.inboundOutcomes ?? [];
+    const outbound = outboundMatches(input.filters, inboundOutcomes);
+    // The list's branch rules (`listCallLog`), each branch reduced to what the field list reads.
+    const branches: string[] = [];
+    if ((input.source === null || input.source === 'dialler') && !input.softphoneStatus && outbound) {
+      const conditions = scopedAttemptConditions(scope, input.filters, bind);
+      if (conditions) {
+        branches.push(`SELECT 'dialler'::text AS source, a.webrtc_call_id AS call_id, NULL::jsonb AS fields
+           FROM agency_call_attempts a
+           ${input.filters.phone ? ATTEMPT_CONTACT_JOIN_SQL : ''}
+          WHERE ${conditions.join(' AND ')}`);
+      }
+    }
+    if ((input.source === null || input.source === 'soft_phone') && outbound) {
+      const conditions = scopedSoftphoneConditions(scope, input.filters, bind);
+      if (input.softphoneStatus) conditions.push(softphoneStatusSql(input.softphoneStatus));
+      branches.push(`SELECT 'soft_phone'::text AS source, m.webrtc_call_id AS call_id, m.fields
+           FROM agency_manual_calls m
+          WHERE ${conditions.join(' AND ')}`);
+    }
+    if ((input.source === null || input.source === 'inbound' || input.source === 'to_follow_up') && !input.softphoneStatus) {
+      const sets = scopedInboundConditions(scope, {
+        filters: input.filters, inboundOutcomes, toFollowUp: input.source === 'to_follow_up',
+      }, bind);
+      for (const conditions of sets) {
+        branches.push(`SELECT 'inbound'::text AS source, i.webrtc_call_id AS call_id, NULL::jsonb AS fields
+           FROM agency_inbound_calls i
+          WHERE ${conditions.join(' AND ')}`);
+      }
+    }
+    if (branches.length === 0) {
+      return {
+        calls: 0,
+        analysis: input.includeAnalysis ? { analysed: 0, fields: analysisFieldInfos(null, 0), dimensions: [] } : null,
+        call_fields: [],
+      };
+    }
+    const tenant = `${bind.add(input.tenantId)}::uuid`;
+    const account = `${bind.add(input.accountId)}::uuid`;
+    const keyPattern = `${bind.add(AGENCY_CALL_EXPORT_KEY_PATTERN.source)}::text`;
+    const analysisCtes = input.includeAnalysis ? `,
+      legs AS MATERIALIZED (
+        SELECT l.source, c.id AS call_id, c.analysis_status,
+               CASE WHEN c.analysis_status = 'deleted' THEN NULL ELSE c.call_analysis END AS result
+          FROM listed l
+          JOIN agency_calls c ON c.id = l.call_id
+         WHERE l.call_id IS NOT NULL AND c.tenant_id = ${tenant} AND c.account_id = ${account}
+      ),
+      versions AS (
+        SELECT j.profile_snapshot -> 'custom_dimensions' AS dims,
+               min(j.created_at) AS first_at, max(j.created_at) AS last_at
+          FROM (SELECT DISTINCT call_id FROM legs) g
+          JOIN dialer_analysis_jobs j ON j.call_id = g.call_id
+         WHERE jsonb_typeof(j.profile_snapshot -> 'custom_dimensions') = 'array'
+         GROUP BY 1
+      ),
+      declared AS (
+        SELECT d.value ->> 'key' AS key, d.value ->> 'type' AS type, d.value ->> 'description' AS description,
+               CASE WHEN jsonb_typeof(d.value -> 'options') = 'array' THEN d.value -> 'options' END AS options,
+               v.first_at, v.last_at, d.pos
+          FROM versions v
+          CROSS JOIN LATERAL jsonb_array_elements(v.dims) WITH ORDINALITY AS d(value, pos)
+         WHERE jsonb_typeof(d.value) = 'object' AND (d.value ->> 'key') ~ ${keyPattern}
+      ),
+      stored AS (
+        SELECT g.source, k.key,
+               COALESCE(NULLIF(g.result -> 'custom' -> k.key, 'null'::jsonb),
+                        NULLIF(g.result -> 'custom_dimensions' -> k.key, 'null'::jsonb)) AS value
+          FROM legs g
+          CROSS JOIN LATERAL (
+            SELECT jsonb_object_keys(CASE WHEN jsonb_typeof(g.result -> 'custom') = 'object'
+                                          THEN g.result -> 'custom' ELSE '{}'::jsonb END)
+            UNION
+            SELECT jsonb_object_keys(CASE WHEN jsonb_typeof(g.result -> 'custom_dimensions') = 'object'
+                                          THEN g.result -> 'custom_dimensions' ELSE '{}'::jsonb END)
+          ) AS k(key)
+         WHERE k.key ~ ${keyPattern}
+      ),
+      dim_keys AS (SELECT key FROM declared UNION SELECT key FROM stored),
+      dim_types AS (
+        SELECT key, jsonb_agg(type ORDER BY first_seen, type) AS types
+          FROM (SELECT key, type, min(first_at) AS first_seen FROM declared
+                 WHERE type IN ('boolean', 'string', 'number', 'enum') GROUP BY key, type) t
+         GROUP BY key
+      ),
+      dim_options AS (
+        SELECT key, jsonb_agg(opt ORDER BY first_at, dpos, opos) AS options
+          FROM (SELECT DISTINCT ON (d.key, o.opt) d.key, o.opt, d.first_at, d.pos AS dpos, o.pos AS opos
+                  FROM declared d
+                  CROSS JOIN LATERAL jsonb_array_elements_text(d.options) WITH ORDINALITY AS o(opt, pos)
+                 WHERE d.type = 'enum' AND o.opt IS NOT NULL
+                 ORDER BY d.key, o.opt, d.first_at, d.pos, o.pos) firsts
+         GROUP BY key
+      ),
+      dim_descriptions AS (
+        SELECT DISTINCT ON (key) key, description FROM declared
+         WHERE description IS NOT NULL AND btrim(description) <> ''
+         ORDER BY key, last_at DESC, first_at DESC, pos
+      ),
+      dim_calls AS (
+        SELECT key, count(*) AS calls, array_agg(DISTINCT source) AS sources
+          FROM stored WHERE ${hasCellValueSql('value')}
+         GROUP BY key
+      )` : '';
+    const has = (current: string, legacy: string) => hasCellValueSql(
+      `COALESCE(NULLIF(result #> '${current}', 'null'::jsonb), NULLIF(result #> '${legacy}', 'null'::jsonb))`,
+    );
+    const analysisColumns = input.includeAnalysis ? `,
+      (SELECT jsonb_build_object(
+                'analysed', count(*) FILTER (WHERE analysis_status = 'completed'),
+                'ai_summary', count(*) FILTER (WHERE ${has('{common,summary}', '{summary}')}),
+                'ai_sentiment', count(*) FILTER (WHERE ${has('{common,overall_sentiment,label}', '{overall_sentiment,label}')}),
+                'ai_sentiment_score', count(*) FILTER (WHERE ${has('{common,overall_sentiment,score}', '{overall_sentiment,score}')}),
+                'ai_key_topics', count(*) FILTER (WHERE ${has('{common,key_topics}', '{key_topics}')}))
+         FROM legs) AS analysis,
+      (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                'key', k.key, 'types', COALESCE(t.types, '[]'::jsonb), 'options', COALESCE(o.options, '[]'::jsonb),
+                'description', ds.description, 'calls', COALESCE(dc.calls, 0), 'sources', COALESCE(to_jsonb(dc.sources), '[]'::jsonb))),
+                '[]'::jsonb)
+         FROM dim_keys k
+         LEFT JOIN dim_types t ON t.key = k.key
+         LEFT JOIN dim_options o ON o.key = k.key
+         LEFT JOIN dim_descriptions ds ON ds.key = k.key
+         LEFT JOIN dim_calls dc ON dc.key = k.key) AS dimensions` : '';
+    const sql = `
+      WITH listed AS MATERIALIZED (
+        ${branches.join('\n        UNION ALL\n        ')}
+      )${analysisCtes},
+      call_field_keys AS (
+        SELECT f.key, count(*) AS calls
+          FROM listed l
+          CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(l.fields) = 'object' THEN l.fields ELSE '{}'::jsonb END) AS f(key, value)
+         WHERE l.source = 'soft_phone' AND f.key ~ ${keyPattern} AND ${hasCellValueSql(`NULLIF(f.value, 'null'::jsonb)`)}
+         GROUP BY f.key
+      ),
+      call_field_defs AS (
+        SELECT DISTINCT ON (d.value ->> 'key') d.value ->> 'key' AS key, d.value ->> 'label' AS label, d.value ->> 'type' AS type
+          FROM agency_softphone_settings s
+          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.call_fields) = 'array' THEN s.call_fields ELSE '[]'::jsonb END)
+               WITH ORDINALITY AS d(value, pos)
+         WHERE s.tenant_id = ${tenant} AND s.account_id = ${account} AND jsonb_typeof(d.value) = 'object'
+         ORDER BY d.value ->> 'key', d.pos
+      )
+      SELECT (SELECT count(*) FROM listed)::int AS calls,
+             (SELECT COALESCE(jsonb_agg(jsonb_build_object('key', k.key, 'calls', k.calls, 'label', d.label, 'type', d.type)), '[]'::jsonb)
+                FROM call_field_keys k LEFT JOIN call_field_defs d ON d.key = k.key) AS call_fields${analysisColumns}`;
+
+    const { rows } = await getPool().query<{
+      calls: number;
+      call_fields: RawCallExportCallField[];
+      analysis?: Record<string, number | string>;
+      dimensions?: RawCallExportDimension[];
+    }>(sql, bind.values);
+    const row = rows[0];
+    const calls = Number(row?.calls ?? 0);
+    return {
+      calls,
+      analysis: input.includeAnalysis
+        ? {
+          analysed: Number(row?.analysis?.['analysed'] ?? 0),
+          fields: analysisFieldInfos(row?.analysis ?? null, calls),
+          dimensions: toCallExportDimensions(row?.dimensions ?? []),
+        }
+        : null,
+      call_fields: toCallExportCallFields(row?.call_fields ?? []),
+    };
+  }
+
+  /**
+   * The export's extras for one page of the call log (`include=analysis`, CL47): each media leg's
+   * analysis status and stored result, read by primary key in ONE statement, **scoped to the
+   * tenant AND the account** (the campaign's): a leg of another account or tenant is not read,
+   * whatever id a row carries. An erased leg (`deleted`) answers its status and no result.
+   */
+  async callExportLegAnalyses(tenantId: string, accountId: string, callIds: readonly string[]): Promise<Map<string, CallExportLegAnalysis>> {
+    const ids = [...new Set(callIds)];
+    if (ids.length === 0) return new Map();
+    const { rows } = await getPool().query<{ id: string; analysis_status: string | null; call_analysis: unknown }>(
+      `SELECT id, analysis_status,
+              CASE WHEN analysis_status = 'deleted' THEN NULL ELSE call_analysis END AS call_analysis
+         FROM agency_calls
+        WHERE id = ANY($1::uuid[]) AND tenant_id = $2::uuid AND account_id = $3::uuid`,
+      [ids, tenantId, accountId],
+    );
+    return new Map(rows.map((r) => [r.id, { analysis_status: r.analysis_status, call_analysis: r.call_analysis }]));
+  }
+
+  /**
+   * The export's extras for one page (`include=call_fields`): the call details the agent entered
+   * on each soft-phone call, by id in ONE statement, scoped to the tenant and the account.
+   */
+  async callExportCallFields(tenantId: string, accountId: string, manualCallIds: readonly string[]): Promise<Map<string, Record<string, unknown>>> {
+    const ids = [...new Set(manualCallIds)];
+    if (ids.length === 0) return new Map();
+    const { rows } = await getPool().query<{ id: string; fields: Record<string, unknown> }>(
+      `SELECT id, fields FROM agency_manual_calls
+        WHERE id = ANY($1::uuid[]) AND tenant_id = $2::uuid AND account_id = $3::uuid`,
+      [ids, tenantId, accountId],
+    );
+    return new Map(rows.map((r) => [r.id, r.fields]));
   }
 
   /**

@@ -34,7 +34,13 @@ import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { campaignOf, gate, ownedCampaign, requireOwned } from './guards.js';
-import { inboundJourney, type CampaignInboundLogRow } from '../../../agency/campaign-call-log.js';
+import { inboundJourney, type CampaignCallLogRow, type CampaignInboundLogRow } from '../../../agency/campaign-call-log.js';
+import {
+  CALL_LOG_INCLUDES,
+  attachCallExportExtras,
+  parseCallLogInclude,
+  type CallLogInclude,
+} from '../../../agency/call-export-fields.js';
 import { parseCallLogQuery } from '../../../agency/call-lists.js';
 
 /*
@@ -173,13 +179,17 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     const parsedQuery = parseCallLogQuery(query);
     if (!parsedQuery.ok) return replyValidationFailed(reply, parsedQuery.issues);
     const { filters, source, includeCounts, ...narrowed } = parsedQuery.value;
+    const included = parseCallLogInclude(query['include']);
+    if (!included.ok) {
+      return replyValidationFailed(reply, [{ param: 'include', message: `must be one of: ${CALL_LOG_INCLUDES.join(', ')}` }]);
+    }
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
     // The counts are of the whole filtered log (no cursor, no source), by the page's own WHERE
     // terms; the two reads run side by side.
     const tenantId = getTenantId(request);
-    const [page, counts] = await Promise.all([
+    const [listed, counts] = await Promise.all([
       agencyAttemptRepository.listCallLogForCampaign({
         campaignId: owned.id,
         tenantId,
@@ -195,7 +205,70 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         })
         : Promise.resolve(null),
     ]);
+    const page = included.include.size > 0
+      ? { ...listed, rows: await withExportExtras(request, listed.rows, included.include) }
+      : listed;
     return reply.send(counts === null ? page : { ...page, counts });
+  });
+
+  /**
+   * `include=analysis,call_fields` (the campaign call export with fields, `docs/call-log.md` §10):
+   * after the page is read, ONE lookup per kind asked for, by the page's own ids (the media legs by
+   * `webrtc_call_id`, the soft-phone calls by id), each scoped to the tenant AND the account. The
+   * account is the request's, which both paths here have proved is the campaign's: `requireOwned`
+   * matches it, and the export's proof (`spinePageCampaign`) was made under it. The main statement
+   * is not touched; without `include` this is never called and the page is as it always was.
+   */
+  async function withExportExtras(
+    request: FastifyRequest,
+    rows: readonly CampaignCallLogRow[],
+    include: ReadonlySet<CallLogInclude>,
+  ) {
+    const tenantId = getTenantId(request);
+    const accountId = getAccountId(request);
+    const [legs, callFields] = await Promise.all([
+      include.has('analysis')
+        ? agencyAttemptRepository.callExportLegAnalyses(
+          tenantId, accountId, rows.map((r) => r.webrtc_call_id).filter((id): id is string => typeof id === 'string'),
+        )
+        : Promise.resolve(null),
+      include.has('call_fields')
+        ? agencyAttemptRepository.callExportCallFields(tenantId, accountId, rows.filter((r) => r.source === 'soft_phone').map((r) => r.id))
+        : Promise.resolve(null),
+    ]);
+    return attachCallExportExtras(rows, legs, callFields);
+  }
+
+  // ── GET /api/v1/agency-campaigns/:id/call-log/export-fields ─────────────
+  //
+  // What can be added to the campaign call export of the calls these filters match (CL45): the
+  // call log's own query (`parseCallLogQuery`: its filters, `source`, `status`, both outcome
+  // vocabularies; `cursor`, `limit` and `include_counts` mean nothing here and are ignored), and
+  // `include_analysis=1` for the analysis groups, which the public route sends only with the
+  // campaign's account's analytics setting. The same ownership step as the page reads, the
+  // export's proof included (the export reads its dimensions' descriptions here).
+  app.get<{ Params: { id: string } }>('/:id/call-log/export-fields', async (request, reply) => {
+    const owned = await spinePageCampaign(request, reply);
+    if (!owned) return reply;
+
+    const query = (request.query ?? {}) as Record<string, unknown>;
+    const parsedQuery = parseCallLogQuery(query);
+    if (!parsedQuery.ok) return replyValidationFailed(reply, parsedQuery.issues);
+    const issues: FilterIssue[] = [];
+    const includeAnalysis = parseFlagParam('include_analysis', query['include_analysis'], issues) === true;
+    if (issues.length > 0) return replyValidationFailed(reply, issues);
+    const { filters, source, includeCounts: _counts, ...narrowed } = parsedQuery.value;
+    void _counts;
+
+    return reply.send(await agencyAttemptRepository.callExportFieldsForCampaign({
+      campaignId: owned.id,
+      tenantId: getTenantId(request),
+      accountId: getAccountId(request),
+      filters,
+      source,
+      ...narrowed,
+      includeAnalysis,
+    }));
   });
 
   // ── GET /api/v1/agency-campaigns/:id/call-log/inbound/:callId ───────────

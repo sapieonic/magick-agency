@@ -339,6 +339,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/call-log/export-fields",
+      "source": "apps/console/src/api/agencySpine.ts",
+      "status": "served",
+      "reason": "what Export with fields can add to the campaign call export, read when its dialog opens (docs/call-log.md §10, decision B16)"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/campaigns/:id/contacts",
       "source": "apps/console/src/api/agencySpine.ts",
       "status": "served",
