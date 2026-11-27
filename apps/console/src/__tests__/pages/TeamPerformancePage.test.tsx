@@ -1,0 +1,411 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import type { AgencyTeamPerformance, AgencyTeamPerformanceQuery } from '@magick-agency/contracts/api/agency/team-performance';
+import { ApiError } from '../../api/client';
+import { TEAM_ALL_CAMPAIGNS, TEAM_EMPTY, TEAM_ONE_CAMPAIGN, TEAM_AGENT } from '../helpers/teamRecorded';
+
+/**
+ * The Team performance page (`docs/team-performance.md` §2), against the recorded answers
+ * (`helpers/teamRecorded.ts`): supervisors only, behind its flag; the filters in the URL and the
+ * read they ask; the tiles, the charts and the table from the answer; Worth a look only with one
+ * campaign (TP7); up to three picks and Compare picked (TP18); the refusals' words and Try again
+ * only where it can help; the empty period; the last answer kept while the next loads; Download
+ * Excel opening the existing export on the page's dates (TP19).
+ */
+
+const CAMPAIGN = TEAM_ONE_CAMPAIGN.campaign_id!;
+
+const mocks = vi.hoisted(() => ({
+  useTenant: vi.fn(),
+  flags: {} as Record<string, boolean>,
+  listAgencyCampaigns: vi.fn(),
+  listArchivedAgencyCampaigns: vi.fn(),
+  getTeamPerformance: vi.fn(),
+}));
+
+vi.mock('firebase/auth', () => ({ getAuth: () => ({ currentUser: null }) }));
+vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'sup-1', display_name: 'Anitha N', email: 'a@x' } }) }));
+vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
+  useFeatureFlagEnabled: (flag: string) => mocks.flags[flag] === true,
+}));
+vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
+  useToast: () => ({ showToast: vi.fn(), showErrorToast: vi.fn() }),
+}));
+vi.mock('../../components/common/CapabilityUnavailable', () => ({
+  CapabilityUnavailable: () => <div data-testid="capability-unavailable" />,
+}));
+vi.mock('../../api/agencyCampaigns', () => ({
+  listAgencyCampaigns: mocks.listAgencyCampaigns,
+  listArchivedAgencyCampaigns: mocks.listArchivedAgencyCampaigns,
+}));
+vi.mock('../../api/teamPerformance', async () => {
+  const actual = await vi.importActual<typeof import('../../api/teamPerformance')>('../../api/teamPerformance');
+  return { ...actual, getTeamPerformance: mocks.getTeamPerformance };
+});
+
+import TeamPerformancePage, { TeamPerformanceView } from '../../pages/agency/TeamPerformancePage';
+
+const NOW = new Date('2026-11-17T08:50:00.000Z');
+const ALL_FLAGS = { agency_team_performance_enabled: true, agency_compare_enabled: true, agency_reports_enabled: true };
+
+function Where() {
+  const l = useLocation();
+  return <div data-testid="where">{`${l.pathname}${l.search}`}</div>;
+}
+
+const where = () => screen.getByTestId('where').textContent!;
+const params = () => new URLSearchParams(where().split('?')[1] ?? '');
+
+function renderView(search = '', canCompare = true) {
+  return render(
+    <MemoryRouter initialEntries={[`/agency/team-performance${search}`]}>
+      <Where />
+      <Routes>
+        <Route
+          path="/agency/team-performance"
+          element={<TeamPerformanceView tenantId="t-1" accountId="a-1" accountName="North" canCompare={canCompare} now={NOW} settleMs={10} />}
+        />
+        <Route path="/agency/compare" element={<p>compare page</p>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+function tenant(role: string) {
+  mocks.useTenant.mockReturnValue({ role, tenantId: 't-1', accountId: 'a-1', accounts: [{ id: 'a-1', name: 'North' }], accountResolution: 'ready' });
+}
+
+/** As the real server: the one-campaign answer for a campaign, the all-campaigns one without. */
+function answerFor(q: AgencyTeamPerformanceQuery): AgencyTeamPerformance {
+  const base = q.campaign_id ? { ...TEAM_ONE_CAMPAIGN, campaign_id: q.campaign_id } : TEAM_ALL_CAMPAIGNS;
+  return { ...base, from: q.from, to: q.to, timezone: q.timezone };
+}
+
+const lastQuery = (): AgencyTeamPerformanceQuery => mocks.getTeamPerformance.mock.calls.at(-1)![0];
+const refusal = (status: number, code: string) => new ApiError(status, { error: 'refused', code, message: 'fallback' });
+const rowNames = () => screen.getAllByTestId('team-row').map((r) => within(r).getByRole('rowheader').textContent);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.flags = { ...ALL_FLAGS };
+  tenant('account_admin');
+  mocks.listAgencyCampaigns.mockResolvedValue([
+    { id: CAMPAIGN, name: 'Nov dues', status: 'running', default_timezone: 'Asia/Kolkata' },
+    { id: 'camp-2', name: 'Old batch', status: 'completed' },
+  ]);
+  mocks.listArchivedAgencyCampaigns.mockResolvedValue([]);
+  mocks.getTeamPerformance.mockImplementation(async (q: AgencyTeamPerformanceQuery) => answerFor(q));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('who sees it', () => {
+  function renderPage() {
+    return render(
+      <MemoryRouter initialEntries={['/agency/team-performance']}>
+        <TeamPerformancePage />
+      </MemoryRouter>,
+    );
+  }
+
+  it('is unavailable with the flag off, and reads nothing', () => {
+    mocks.flags = { agency_compare_enabled: true };
+    renderPage();
+    expect(screen.getByTestId('capability-unavailable')).toBeTruthy();
+    expect(mocks.getTeamPerformance).not.toHaveBeenCalled();
+  });
+
+  it('is for supervisors only (TP3): a viewer, an operator or an agent reads nothing', () => {
+    for (const role of ['viewer', 'operator', 'agent']) {
+      tenant(role);
+      const { unmount } = renderPage();
+      expect(screen.getByTestId('capability-unavailable')).toBeTruthy();
+      unmount();
+    }
+    expect(mocks.listAgencyCampaigns).not.toHaveBeenCalled();
+    expect(mocks.getTeamPerformance).not.toHaveBeenCalled();
+  });
+
+  it('opens for a supervisor with the flag on', async () => {
+    renderPage();
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalled());
+  });
+});
+
+describe('the filters', () => {
+  it('opens on All campaigns and Today, in the browser’s zone, with no campaign in the read', async () => {
+    renderView();
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1));
+    expect(lastQuery()).toEqual({ from: '2026-11-17', to: '2026-11-17', timezone: 'UTC' });
+    expect(mocks.getTeamPerformance.mock.calls[0]!.slice(1, 3)).toEqual(['t-1', 'a-1']);
+    expect((screen.getByTestId('team-campaign') as HTMLSelectElement).value).toBe('');
+    expect(screen.getByText('Everything below follows these two filters.')).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('team-summary').textContent).toBe('Today, up to 8:45 AM'));
+  });
+
+  it('writes the campaign, the window and the sort into the URL, and reads what they say', async () => {
+    renderView();
+    await screen.findByTestId('team-tiles');
+    fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: CAMPAIGN } });
+    await waitFor(() => expect(lastQuery()).toEqual({ from: '2026-11-17', to: '2026-11-17', timezone: 'UTC', campaign_id: CAMPAIGN }));
+    expect(params().get('campaign')).toBe(CAMPAIGN);
+    fireEvent.change(screen.getByTestId('team-when'), { target: { value: 'last_7_days' } });
+    await waitFor(() => expect(lastQuery()).toMatchObject({ from: '2026-11-11', to: '2026-11-17' }));
+    expect(params().get('when')).toBe('7d');
+    fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: '' } });
+    await waitFor(() => expect(lastQuery().campaign_id).toBeUndefined());
+    expect(params().get('campaign')).toBeNull();
+  });
+
+  it('asks nothing for a custom window that breaks the reports’ rule, and says why', async () => {
+    renderView('?when=custom&from=2026-09-01&to=2026-11-17');
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toMatch(/at most 30 days/);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(mocks.getTeamPerformance).not.toHaveBeenCalled();
+  });
+});
+
+describe('the figures', () => {
+  it('shows the five tiles from the answer', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    const tiles = await screen.findByTestId('team-tiles');
+    const tile = (id: string) => within(tiles).getByTestId(`team-tile-${id}`).textContent;
+    expect(tile('calls')).toBe('Calls handled360by 10 agents');
+    expect(tile('main')).toBe('Will pay9827% of calls handled');
+    expect(tile('avg')).toBe('Average call2:57min:sec of talking');
+    expect(tile('choose')).toBe('Time to choose outcome0:19average · 30 s allowed');
+    expect(tile('callbacks')).toBe('Call-backs on time21 of 28due so far today');
+  });
+
+  it('says the soft-phone and inbound calls in the rate, and allowed time that differs, with All campaigns', async () => {
+    renderView();
+    const tiles = await screen.findByTestId('team-tiles');
+    expect(within(tiles).getByTestId('team-tile-main').textContent).toContain('26% will-pay rate · counts 12 soft-phone and inbound calls');
+    expect(within(tiles).getByTestId('team-tile-choose').textContent).toContain('allowed time differs by campaign');
+  });
+
+  it('draws the main outcome per working day as an image with words, and its numbers in a table', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    const chart = await screen.findByTestId('team-trend-chart');
+    expect(chart.getAttribute('role')).toBe('img');
+    expect(chart.getAttribute('aria-label')).toBe('Will pay per day over 7 working days, from 74 to 106; 98 on 17 Nov.');
+    expect(screen.getByTestId('team-trend-last').textContent).toBe('98');
+    expect(within(screen.getByTestId('team-trend-table')).getAllByRole('row')).toHaveLength(8);
+    expect(screen.getByText('· whole team, last 7 working days')).toBeTruthy();
+  });
+
+  it('lists what happened on the calls, folds past the seventh, and footnotes a main bar that differs from its tile', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    const outcomes = await screen.findByTestId('team-outcomes');
+    expect(within(outcomes).getByRole('heading').textContent).toBe('What happened on today’s 360 calls');
+    expect(within(outcomes).getAllByTestId('team-outcome')[0]!.textContent).toBe('Will pay96');
+    expect(within(outcomes).getByText('Bars share one colour on purpose: this compares sizes, not outcome types.')).toBeTruthy();
+    // 96 conversations ended in Will pay; the tile counts 98 promises recorded.
+    expect(within(outcomes).getByTestId('team-outcomes-footnote').textContent).toMatch(/96.*98/);
+    fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: '' } });
+    await waitFor(() => expect(within(screen.getByTestId('team-outcomes')).getAllByTestId('team-outcome')).toHaveLength(8));
+    expect(within(screen.getByTestId('team-outcomes')).getAllByTestId('team-outcome').at(-1)!.textContent).toBe('Other outcomes22');
+  });
+});
+
+describe('the agents', () => {
+  it('lists every row, sorted by the rate, with departed agents marked and thin ones in words', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    const names = rowNames();
+    expect(names).toHaveLength(10);
+    expect(names[0]).toContain('Lakshmi P');
+    expect(names.find((n) => n?.includes('Pooja M'))).toContain('Pooja M (left)');
+    const pooja = screen.getAllByTestId('team-row').find((r) => r.textContent!.includes('Pooja M'))!;
+    expect(pooja.textContent).toContain('Too few calls (17; needs 20)');
+    expect(within(screen.getByTestId('team-agents')).getByRole('columnheader', { name: 'Will pay' })).toBeTruthy();
+  });
+
+  it('sorts with toggle pills, into the URL', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    expect(screen.getByTestId('team-sort-rate').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('team-sort-rate').textContent).toBe('Will-pay rate');
+    fireEvent.click(screen.getByTestId('team-sort-shortest'));
+    expect(screen.getByTestId('team-sort-shortest').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('team-sort-rate').getAttribute('aria-pressed')).toBe('false');
+    expect(params().get('sort')).toBe('shortest');
+    expect(rowNames()[0]).toContain('Lakshmi P');
+    fireEvent.click(screen.getByTestId('team-sort-calls'));
+    expect(rowNames().slice(0, 3).map((n) => n!.replace(/^\d+[A-Z]{2}/, ''))).toEqual(['Lakshmi P', 'Swapna K', 'Arjun T']);
+  });
+
+  it('marks who is worth a look with one campaign (TP15)', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    const row = (name: string) => screen.getAllByTestId('team-row').find((r) => r.textContent!.includes(name))!;
+    expect(within(row('Lakshmi P')).getAllByTestId('team-badge').map((b) => b.textContent)).toEqual(['Stands out']);
+    expect(within(row('Mahesh B')).getAllByTestId('team-badge').map((b) => b.textContent)).toEqual(['Low will-pay rate', 'Slow to choose outcome']);
+    expect(within(row('Swapna K')).queryAllByTestId('team-badge')).toHaveLength(0);
+    expect(screen.queryByTestId('team-choose-one')).toBeNull();
+  });
+
+  it('marks nobody with All campaigns, and says to choose one (TP7)', async () => {
+    // Even an answer that carried findings is not drawn when it is not comparable: the rule is the console's too.
+    mocks.getTeamPerformance.mockResolvedValue({ ...TEAM_ALL_CAMPAIGNS, findings: TEAM_ONE_CAMPAIGN.findings });
+    renderView();
+    await screen.findByTestId('team-agents');
+    expect(screen.queryAllByTestId('team-badge')).toHaveLength(0);
+    const note = screen.getByTestId('team-choose-one');
+    expect(note.textContent).toBe('Choose one campaign to see who’s worth a look and to compare agents.');
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    const button = screen.getByTestId('team-compare-picked') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    // The note is the button's description.
+    expect(button.getAttribute('aria-describedby')).toBe(note.id);
+  });
+});
+
+describe('picking for Compare agents (TP18)', () => {
+  it('picks up to three, says how many to a screen reader, and opens Compare with the campaign, the window and the picks', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    expect(screen.getByTestId('team-picks').textContent).toBe('0 of 3 picked');
+    expect(screen.getByTestId('team-picks').getAttribute('aria-live')).toBe('polite');
+    expect((screen.getByTestId('team-compare-picked') as HTMLButtonElement).disabled).toBe(true);
+    for (const name of ['Lakshmi P', 'Mahesh B', 'Ravi Kumar']) fireEvent.click(screen.getByRole('checkbox', { name: `Pick ${name} to compare` }));
+    expect(screen.getByTestId('team-picks').textContent).toBe('3 of 3 picked');
+    const fourth = screen.getByRole('checkbox', { name: 'Pick Swapna K to compare' }) as HTMLInputElement;
+    expect(fourth.disabled).toBe(true);
+    fireEvent.click(fourth);
+    expect(screen.getByTestId('team-picks').textContent).toBe('3 of 3 picked');
+    fireEvent.click(screen.getByTestId('team-compare-picked'));
+    await screen.findByText('compare page');
+    const to = new URLSearchParams(where().split('?')[1]);
+    expect(where().startsWith('/agency/compare?')).toBe(true);
+    expect(to.get('campaign')).toBe(CAMPAIGN);
+    expect(to.get('when')).toBe('today');
+    expect(to.get('agents')).toBe([TEAM_AGENT['Lakshmi P'], TEAM_AGENT['Mahesh B'], TEAM_AGENT['Ravi Kumar']].join(','));
+  });
+
+  it('clears the picks when a filter changes, but not when the sort does', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Pick Lakshmi P to compare' }));
+    fireEvent.click(screen.getByTestId('team-sort-calls'));
+    expect(screen.getByTestId('team-picks').textContent).toBe('1 of 3 picked');
+    fireEvent.change(screen.getByTestId('team-when'), { target: { value: 'this_week' } });
+    expect(screen.getByTestId('team-picks').textContent).toBe('0 of 3 picked');
+  });
+
+  it('offers no picking without Compare agents', async () => {
+    renderView(`?campaign=${CAMPAIGN}`, false);
+    await screen.findByTestId('team-agents');
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.queryByTestId('team-compare-picked')).toBeNull();
+    fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: '' } });
+    await waitFor(() => expect(screen.getByTestId('team-choose-one').textContent).toBe('Choose one campaign to see who’s worth a look.'));
+  });
+});
+
+describe('the states', () => {
+  it('shows skeleton tiles until the first answer', async () => {
+    let answer: (a: AgencyTeamPerformance) => void = () => {};
+    mocks.getTeamPerformance.mockImplementation(() => new Promise((r) => (answer = r)));
+    renderView();
+    expect(await screen.findByTestId('team-tiles-skeleton')).toBeTruthy();
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalled());
+    act(() => answer(TEAM_ALL_CAMPAIGNS));
+    await screen.findByTestId('team-tiles');
+    expect(screen.queryByTestId('team-tiles-skeleton')).toBeNull();
+  });
+
+  it('keeps the last answer up, marked Updating…, while a new filter’s read loads', async () => {
+    renderView();
+    await screen.findByTestId('team-tiles');
+    mocks.getTeamPerformance.mockImplementation(() => new Promise(() => {}));
+    fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: CAMPAIGN } });
+    expect(await screen.findByTestId('team-updating')).toBeTruthy();
+    expect(screen.getByTestId('team-tiles')).toBeTruthy();
+  });
+
+  it('says there were no calls, and offers the last 7 days', async () => {
+    mocks.getTeamPerformance.mockResolvedValue(TEAM_EMPTY);
+    renderView();
+    expect(await screen.findByText('No calls in this period')).toBeTruthy();
+    expect(screen.queryByTestId('team-tiles')).toBeNull();
+    fireEvent.click(screen.getByTestId('team-try-7-days'));
+    expect(params().get('when')).toBe('7d');
+  });
+
+  it('words a timed-out read and offers Try again, which reads again', async () => {
+    mocks.getTeamPerformance.mockRejectedValueOnce(refusal(503, 'team_timed_out'));
+    renderView();
+    const error = await screen.findByTestId('team-error');
+    expect(error.textContent).toContain('Too much to read at once. Try a shorter period.');
+    fireEvent.click(within(error).getByTestId('team-retry'));
+    await screen.findByTestId('team-tiles');
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId('team-error')).toBeNull();
+  });
+
+  it('offers no Try again for a refusal that asking again would only repeat', async () => {
+    mocks.getTeamPerformance.mockRejectedValue(refusal(404, 'team_campaign_not_found'));
+    renderView(`?campaign=${CAMPAIGN}`);
+    const error = await screen.findByTestId('team-error');
+    expect(error.textContent).toContain('That campaign isn’t one of this account’s.');
+    expect(within(error).queryByTestId('team-retry')).toBeNull();
+  });
+
+  it('reads a window that holds today again every minute, and a past one never', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const { unmount } = renderView();
+    await screen.findByTestId('team-tiles');
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2));
+    // A quiet refresh: the same question, so no "Updating…".
+    expect(screen.queryByTestId('team-updating')).toBeNull();
+    unmount();
+    mocks.getTeamPerformance.mockClear();
+    renderView('?when=custom&from=2026-11-01&to=2026-11-07');
+    await screen.findByTestId('team-tiles');
+    act(() => {
+      vi.advanceTimersByTime(180_000);
+    });
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Download Excel (TP19)', () => {
+  it('opens the campaign report on the page’s dates with only the workbook chosen', async () => {
+    renderView(`?campaign=${CAMPAIGN}&when=7d`);
+    await screen.findByTestId('team-tiles');
+    const button = await screen.findByTestId('report-entry-team_performance');
+    expect(button.textContent).toBe('Download Excel');
+    fireEvent.click(button);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Export campaign report')).toBeTruthy();
+    expect((within(dialog).getByLabelText('Custom') as HTMLInputElement).checked).toBe(true);
+    expect((within(dialog).getByLabelText('From') as HTMLInputElement).value).toBe('2026-11-11');
+    expect((within(dialog).getByLabelText('To') as HTMLInputElement).value).toBe('2026-11-17');
+    expect((within(dialog).getByLabelText('Excel') as HTMLInputElement).checked).toBe(true);
+    expect((within(dialog).getByLabelText('PDF') as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('opens the account report with All campaigns', async () => {
+    renderView();
+    await screen.findByTestId('team-tiles');
+    fireEvent.click(await screen.findByTestId('report-entry-team_performance'));
+    expect(within(await screen.findByRole('dialog')).getByText('Export account report')).toBeTruthy();
+  });
+
+  it('is not offered with reports off', async () => {
+    mocks.flags = { agency_team_performance_enabled: true, agency_compare_enabled: true };
+    renderView();
+    await screen.findByTestId('team-tiles');
+    expect(screen.queryByTestId('report-entry-team_performance')).toBeNull();
+  });
+});

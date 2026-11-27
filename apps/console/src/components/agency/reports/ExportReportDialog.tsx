@@ -34,6 +34,16 @@ export interface ExportReportTarget {
   selfAudience?: boolean;
 }
 
+/**
+ * What the dialog opens on, for an entry point whose page already has a window (Team
+ * performance's Download Excel): its dates as a custom window, and the formats chosen.
+ */
+export interface ExportReportInitial {
+  from: string;
+  to: string;
+  formats: Record<ReportFormat, boolean>;
+}
+
 export interface ExportReportDialogProps {
   open: boolean;
   onClose: () => void;
@@ -42,6 +52,8 @@ export interface ExportReportDialogProps {
   entry: ReportEntry;
   /** Injectable for tests: the clock the presets and "today" are read from. */
   now?: Date;
+  /** Opens on these dates and formats instead of the defaults (Last 7 days, both formats). */
+  initial?: ExportReportInitial;
 }
 
 /** A campaign whose own time zone the reports cannot use (Postgres lacks it). */
@@ -68,7 +80,7 @@ export function ExportReportDialog(props: ExportReportDialogProps) {
   return <OpenExportReportDialog {...props} />;
 }
 
-function OpenExportReportDialog({ onClose, target, entry, now }: ExportReportDialogProps) {
+function OpenExportReportDialog({ onClose, target, entry, now, initial }: ExportReportDialogProps) {
   const { tenantId, accountId, role } = useTenant();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -79,7 +91,7 @@ function OpenExportReportDialog({ onClose, target, entry, now }: ExportReportDia
   const submitErrorId = `${ids}-submit-error`;
 
   const isCampaign = target.kind === 'campaign';
-  const [preset, setPreset] = useState<ReportWindowPreset>('last_7_days');
+  const [preset, setPreset] = useState<ReportWindowPreset>(initial ? 'custom' : 'last_7_days');
   const [zone, setZone] = useState<string>(() => browserZone());
   // A campaign whose zone this page does not know yet bounds its dates by the browser's zone;
   // the server cuts the days in the campaign's own zone either way (RP3).
@@ -87,9 +99,9 @@ function OpenExportReportDialog({ onClose, target, entry, now }: ExportReportDia
   const reportZone = campaignZone ?? zone;
   const [clock] = useState<Date>(() => now ?? new Date());
   const today = todayIn(reportZone, clock);
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
-  const [formats, setFormats] = useState<Record<ReportFormat, boolean>>({ pdf: true, xlsx: true });
+  const [customFrom, setCustomFrom] = useState(initial?.from ?? '');
+  const [customTo, setCustomTo] = useState(initial?.to ?? '');
+  const [formats, setFormats] = useState<Record<ReportFormat, boolean>>(() => (initial ? { ...initial.formats } : { pdf: true, xlsx: true }));
   const [emailMe, setEmailMe] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);

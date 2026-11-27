@@ -13,7 +13,14 @@ import { resolve } from 'node:path';
 vi.mock('../../contexts/TenantContext', () => ({
   useTenant: () => ({ tenantId: 't-1', accountId: 'a-1', role: 'account_admin' }),
 }));
+/** The reader's flags: the dialer on (an account admin in the shell), Team performance as each case sets it. */
+const flags = vi.hoisted(() => ({ on: new Set<string>(['agency_dialer_enabled']) }));
+vi.mock('../../hooks/useGateReaders', () => ({
+  useGateReaders: () => ({ isFlagEnabled: (f: string) => flags.on.has(f), isCapabilityEnabled: () => true }),
+}));
 vi.mock('../../components/layout/ProfileMenu', () => ({ ProfileMenu: () => null }));
+// With the dialer on the menu button carries Live floor's badges: none to read here.
+vi.mock('../../hooks/useHomeBoard', () => ({ useHomeBadgeCount: () => 0, useCallbacksBadgeCount: () => 0 }));
 
 import { ConsoleTopBar } from '../../components/layout/ConsoleTopBar';
 import { PageCrumbsProvider, usePageCrumbs } from '../../components/layout/PageCrumbs';
@@ -53,7 +60,10 @@ function renderAt(path: string, phone: boolean) {
 
 const back = () => screen.queryByTestId('console-back');
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  flags.on = new Set(['agency_dialer_enabled']);
+});
 
 describe('the phone’s back arrow', () => {
   it('goes to the crumb above the page, named for a screen reader', () => {
@@ -90,13 +100,26 @@ describe('the phone’s back arrow', () => {
     expect(back()!.getAttribute('href')).toBe('/agency/campaigns/c-1');
   });
 
-  it('is not there on Analytics, the first page of Reports, whose crumb is not a link either', () => {
+  it('is not there on Analytics, the first page of Reports for a reader without Team performance, whose crumb is not a link either', () => {
     renderAt('/agency/analytics', true);
     expect(back()).toBeNull();
     cleanup();
     renderAt('/agency/analytics', false);
     expect(screen.queryByRole('link', { name: 'Reports' })).toBeNull();
     expect(screen.getByTestId('console-breadcrumb').textContent).toContain('Reports');
+  });
+
+  it('goes from Analytics to Team performance when the reader may open it, Reports’ first tab (TP1), and is not there on it', () => {
+    flags.on = new Set(['agency_dialer_enabled', 'agency_team_performance_enabled']);
+    renderAt('/agency/analytics', true);
+    expect(back()!.getAttribute('aria-label')).toBe('Back to Reports');
+    expect(back()!.getAttribute('href')).toBe('/agency/team-performance');
+    cleanup();
+    renderAt('/agency/team-performance', true);
+    expect(back()).toBeNull();
+    cleanup();
+    renderAt('/agency/team-performance', false);
+    expect(screen.queryByRole('link', { name: 'Reports' })).toBeNull();
   });
 
   it('leaves the campaign’s name a plain name on its Overview, on a wider screen too', () => {

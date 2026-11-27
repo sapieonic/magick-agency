@@ -567,8 +567,11 @@ export function trackAgencyAssignmentRefused(props: EventCatalog['agency_assignm
   track('agency_assignment_refused', props);
 }
 
-/** Where an export was asked for (`docs/reports.md`, the four entry points and the Reports page). */
-export type ReportEntry = 'agent_record' | 'my_performance' | 'campaign_insights' | 'account_analytics' | 'reports_page';
+/**
+ * Where an export was asked for (`docs/reports.md`, the four entry points and the Reports page;
+ * `team_performance` is Team performance's Download Excel, `docs/team-performance.md` TP19).
+ */
+export type ReportEntry = 'agent_record' | 'my_performance' | 'campaign_insights' | 'account_analytics' | 'reports_page' | 'team_performance';
 
 /** An export was queued (the server answered 202). */
 export function trackAgencyReportRequested(props: EventCatalog['agency_report_requested']): void {

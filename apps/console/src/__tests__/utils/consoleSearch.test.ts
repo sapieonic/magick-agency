@@ -58,6 +58,7 @@ describe('the pages', () => {
       'Callbacks',
       'Missed calls',
       'Inbound summary',
+      'Team performance',
       'Analytics',
       'Compare agents',
       'Exports',
@@ -68,7 +69,16 @@ describe('the pages', () => {
   });
 
   it('offers a supervisor every page with everything on', () => {
-    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(15);
+    expect(titles(pageResults([], ALL_ON('account_admin')))).toHaveLength(16);
+  });
+
+  it('finds Team performance for a supervisor with its flag on, and never for a viewer or with it off', () => {
+    const keys = (q: string, gate: GateInput) => pageResults(searchTokens(q), gate).map((r) => r.key);
+    for (const q of ['team performance', 'how the team did', 'will pay', 'worth a look']) {
+      expect(keys(q, ALL_ON('account_admin')), q).toContain('page:reports:team');
+    }
+    expect(keys('team performance', ALL_ON('viewer'))).not.toContain('page:reports:team');
+    expect(keys('team performance', ALL_ON('account_admin', { isFlagEnabled: (f) => f !== 'agency_team_performance_enabled' }))).not.toContain('page:reports:team');
   });
 
   it('finds Compare agents for a supervisor with its flag on, and never for a viewer or with it off', () => {

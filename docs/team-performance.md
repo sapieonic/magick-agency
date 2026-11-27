@@ -185,7 +185,7 @@ Refusals are `{ error, code, message }` (`AgencyTeamPerformanceErrorResponse`) w
 |---|---|---|
 | A | The contract (`team-performance.ts`, the error codes in `errors.ts` §11), the flag in `flags.ts` and the server's registry, this doc | **Built** (2026-11-27) |
 | B | The server: the SQL, validate, read and assemble, the route and its guards, the metrics, the cost measured (§4) | Not started |
-| C | The console tab (§2), its nav entry, search entry and Download Excel | Not started |
+| C | The console tab (§2), its nav entry, search entry and Download Excel | **Built** (2026-11-27), against the contract and answers worked out by the shared domain rules (`__tests__/helpers/teamRecorded.ts`), to be replaced by answers recorded from the real route at D. The tabs read Team performance, Analytics, Compare agents, Exports: Analytics stays ahead of Compare agents so a supervisor with this flag off still lands on Analytics, not on Compare. The top bar's "Reports" crumb opens the first tab the reader may open, as the sidebar does, so a viewer's never points at this supervisor-only tab |
 | D | The docs around it (the doc map, modules, status, Compare's and Reports' docs, seams, operations) and a run end to end against the real route on a seeded database | Not started |
 
 ## 8. Tests

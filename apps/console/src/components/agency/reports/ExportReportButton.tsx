@@ -3,7 +3,7 @@ import { FileDown } from 'lucide-react';
 import type { ReportKind } from '@magick-agency/contracts/api/agency/reports';
 import { useReportsAccess, type ReportsAccess } from '../../../hooks/useReportsAccess';
 import type { ReportEntry } from '../../../analytics/events';
-import { ExportReportDialog, type ExportReportTarget } from './ExportReportDialog';
+import { ExportReportDialog, type ExportReportInitial, type ExportReportTarget } from './ExportReportDialog';
 
 /**
  * What an entry point asks to export: a subject it names (a supervisor's export of an
@@ -36,15 +36,22 @@ const BUTTON_LABELS: Record<ReportKind, string> = {
  * An export entry point: a button that opens the export dialog with its kind and
  * subject preset. Renders nothing for someone {@link mayExport} refuses, so a page
  * can place it unconditionally.
+ *
+ * `label` names the button for a page that says it differently (Team performance's
+ * "Download Excel"); `initial` opens the dialog on the page's own dates and formats.
  */
 export function ExportReportButton({
   target,
   entry,
   className = 'btn-secondary',
+  label: labelOverride,
+  initial,
 }: {
   target: ExportEntryTarget;
   entry: ReportEntry;
   className?: string;
+  label?: string;
+  initial?: ExportReportInitial;
 }) {
   const access = useReportsAccess();
   const [open, setOpen] = useState(false);
@@ -60,7 +67,7 @@ export function ExportReportButton({
       }
     : { kind: target.kind, subject: target.subject, campaignTimezone: target.campaignTimezone ?? null };
 
-  const label = target.self ? 'Export my review' : BUTTON_LABELS[target.kind];
+  const label = labelOverride ?? (target.self ? 'Export my review' : BUTTON_LABELS[target.kind]);
 
   return (
     <>
@@ -73,7 +80,13 @@ export function ExportReportButton({
         <FileDown size={14} aria-hidden="true" />
         {label}
       </button>
-      <ExportReportDialog open={open} onClose={() => setOpen(false)} target={dialogTarget} entry={entry} />
+      <ExportReportDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        target={dialogTarget}
+        entry={entry}
+        {...(initial ? { initial } : {})}
+      />
     </>
   );
 }

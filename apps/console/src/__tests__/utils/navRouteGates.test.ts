@@ -42,6 +42,7 @@ const FLAGS = [
   'agency_contact_assignment_enabled',
   'agency_live_listen_enabled',
   'agency_compare_enabled',
+  'agency_team_performance_enabled',
   'agency_campaign_templates_enabled',
 ] as const;
 const CAPABILITIES = ['agency', 'agency.analytics'] as const;
@@ -126,6 +127,8 @@ const ROUTES: RouteRule[] = [
   [/^\/agency\/analytics$/, (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   // `CompareAgentsPage` checks `agency.supervise` (CP3) under `RequireFlag agency_compare_enabled`.
   [/^\/agency\/compare$/, (r) => dialer(r) && r.flags.has('agency_compare_enabled') && can(r, 'agency.supervise')],
+  // `TeamPerformancePage` checks `agency.supervise` (TP3) under `RequireFlag agency_team_performance_enabled`.
+  [/^\/agency\/team-performance$/, (r) => dialer(r) && r.flags.has('agency_team_performance_enabled') && can(r, 'agency.supervise')],
   // `ReportsPage` sends a dedicated agent to `/dialer/reports`.
   [/^\/agency\/reports$/, (r) => dialer(r) && r.flags.has('agency_reports_enabled') && can(r, 'agency.campaigns.read') && !isDedicatedAgent(r.role)],
   [/^\/agency\/dnc$/, (r) => dialer(r) && can(r, 'agency.dnc.read')],
@@ -266,7 +269,7 @@ describe('every offer passes the gate of the route it opens', () => {
     const targets = new Set(all.flatMap((r) => offers(r).map((o) => o.to.split('#')[0])));
     for (const path of [
       '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/calls', '/agency/inbound/missed',
-      '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
+      '/agency/inbound/summary', '/agency/team-performance', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
       '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/attempts?type=soft_phone',
       '/agency/campaigns/c-1/settings', '/agency/live', '/agency/listening-history', '/agency/campaigns/c-1/calls/live', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',
       '/settings/call-summaries', '/settings/listening', '/settings/team', '/settings/accounts',
@@ -297,7 +300,7 @@ describe('every offer passes the gate of the route it opens', () => {
     const declared = declaredPaths();
     for (const path of [
       '/agency/home', '/agency/callbacks', '/agency/calls', '/agency/listening-history', '/agency/live', '/agency/inbound/missed',
-      '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
+      '/agency/inbound/summary', '/agency/team-performance', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
       '/agency/campaigns/c-1/manual-calls', '/agency/softphone', '/dialer', '/settings/calls', '/settings/listening',
     ]) {
       expect(isDeclared(path, declared), path).toBe(true);

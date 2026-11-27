@@ -47,9 +47,9 @@ const ALL_ON = new Set([
 
 function input(
   role: Role | undefined,
-  over: { flagsOff?: string[]; capsOff?: string[]; missed?: boolean } = {},
+  over: { flagsOff?: string[]; flagsOn?: string[]; capsOff?: string[]; missed?: boolean } = {},
 ): GateInput {
-  const flags = new Set([...ALL_ON].filter((f) => !(over.flagsOff ?? []).includes(f)));
+  const flags = new Set([...ALL_ON, ...(over.flagsOn ?? [])].filter((f) => !(over.flagsOff ?? []).includes(f)));
   return {
     role,
     isFlagEnabled: (f) => flags.has(f),
@@ -105,6 +105,15 @@ describe('the work sections', () => {
     expect(sectionIds(input('account_admin', { missed: false }))).toEqual(['home', 'campaigns', 'callbacks', 'reports', 'dnc']);
   });
 
+  it('opens Reports on Team performance for a supervisor with its flag on (TP1), and on Analytics for anyone else', () => {
+    const reportsHref = (i: GateInput) => visibleSections(i).find((s) => s.section.id === 'reports')?.href;
+    expect(reportsHref(input('account_admin', { flagsOn: ['agency_team_performance_enabled'] }))).toBe('/agency/team-performance');
+    expect(reportsHref(input('account_admin'))).toBe('/agency/analytics');
+    for (const role of ['viewer', 'operator'] as const) {
+      expect(reportsHref(input(role, { flagsOn: ['agency_team_performance_enabled'] })), role).toBe('/agency/analytics');
+    }
+  });
+
   it('keeps Reports on Analytics alone with the reports flag off', () => {
     const reports = visibleSections(input('account_admin', { flagsOff: ['agency_reports_enabled'] }))
       .find((s) => s.section.id === 'reports');
@@ -148,6 +157,15 @@ describe('the tab bar of a grouped page', () => {
     expect(tabBarFor('/agency/analytics', input('account_admin', { flagsOff: ['agency_reports_enabled'] }))).toBeNull();
     // Do Not Call is one page.
     expect(tabBarFor('/agency/dnc', input('account_admin'))).toBeNull();
+  });
+
+  it('puts Team performance first in Reports, for a supervisor with its flag on (TP1)', () => {
+    const on = input('account_admin', { flagsOn: ['agency_team_performance_enabled', 'agency_compare_enabled'] });
+    expect(tabBarFor('/agency/team-performance', on)?.tabs.map((t) => t.label)).toEqual(['Team performance', 'Analytics', 'Compare agents', 'Exports']);
+    expect(tabBarFor('/agency/team-performance', on)?.activeId).toBe('team');
+    expect(tabBarFor('/agency/analytics', input('account_admin'))?.tabs.map((t) => t.id)).not.toContain('team');
+    expect(tabBarFor('/agency/analytics', input('viewer', { flagsOn: ['agency_team_performance_enabled'] }))?.tabs.map((t) => t.id)).not.toContain('team');
+    expect(activeNavId('/agency/team-performance')).toBe('reports');
   });
 
   it('groups Missed calls with Summary, and Analytics with Exports (the Reports section)', () => {
@@ -259,11 +277,13 @@ describe('the breadcrumb', () => {
 
   it('puts a tab between the section and a sub-page when the tab is not the section', () => {
     expect(breadcrumbFor('/agency/reports/run-1')).toEqual([
-      { label: 'Reports', to: '/agency/analytics' },
+      { label: 'Reports', to: '/agency/team-performance' },
       { label: 'Exports', to: '/agency/reports' },
       { label: 'Report' },
     ]);
-    expect(breadcrumbFor('/agency/reports')).toEqual([{ label: 'Reports', to: '/agency/analytics' }, { label: 'Exports' }]);
+    expect(breadcrumbFor('/agency/reports')).toEqual([{ label: 'Reports', to: '/agency/team-performance' }, { label: 'Exports' }]);
+    // With the reader's gates, the section opens the first tab they may open, as the sidebar does.
+    expect(breadcrumbFor('/agency/reports', null, 'viewer', input('viewer'))[0]).toEqual({ label: 'Reports', to: '/agency/analytics' });
     // A soft-phone call's page kept its URL when its list became All calls (CL34): still that tab's sub-page.
     expect(breadcrumbFor('/agency/softphone/calls/x')).toEqual([
       { label: 'Campaigns', to: '/agency/campaigns' },
@@ -319,13 +339,21 @@ describe('crumbs that would land on the page itself', () => {
     expect(landingPathFor('/agency/reports#x', 'account_admin')).toBe('/agency/reports');
   });
 
-  it('leave a section’s first tab unlinked when the tab is not named for the section: Reports on Analytics', () => {
-    expect(breadcrumbFor('/agency/analytics')).toEqual([{ label: 'Reports' }, { label: 'Analytics' }]);
-    expect(backCrumb(breadcrumbFor('/agency/analytics'))).toBeNull();
+  it('leave a section’s first tab unlinked when the tab is not named for the section: Reports on Team performance, or on Analytics for whoever lands there', () => {
+    expect(breadcrumbFor('/agency/team-performance')).toEqual([{ label: 'Reports' }, { label: 'Team performance' }]);
+    expect(backCrumb(breadcrumbFor('/agency/team-performance'))).toBeNull();
+    // A viewer (or a supervisor without Team performance) lands on Analytics: no link to itself there.
+    for (const reader of [input('viewer'), input('account_admin')]) {
+      expect(breadcrumbFor('/agency/analytics', null, reader.role, reader)).toEqual([{ label: 'Reports' }, { label: 'Analytics' }]);
+      expect(backCrumb(breadcrumbFor('/agency/analytics', null, reader.role, reader))).toBeNull();
+    }
+    // A supervisor with it on goes back from Analytics to Team performance.
+    const on = input('account_admin', { flagsOn: ['agency_team_performance_enabled'] });
+    expect(backCrumb(breadcrumbFor('/agency/analytics', null, on.role, on))).toEqual({ label: 'Reports', to: '/agency/team-performance' });
     expect(breadcrumbFor('/agency/inbound/missed')).toEqual([{ label: 'Inbound' }, { label: 'Missed calls' }]);
     expect(backCrumb(breadcrumbFor('/agency/inbound/missed'))).toBeNull();
     // On the section's other tab the section still links to its first.
-    expect(breadcrumbFor('/agency/reports')[0]).toEqual({ label: 'Reports', to: '/agency/analytics' });
+    expect(breadcrumbFor('/agency/reports')[0]).toEqual({ label: 'Reports', to: '/agency/team-performance' });
   });
 
   it('leave a campaign’s name unlinked on the tab the campaign opens on, for each role', () => {
@@ -416,6 +444,7 @@ describe('a section root', () => {
     expect(sectionLandingPath(inbound, { ...input('account_admin'), missedAvailable: false })).toBe('/agency/inbound/missed');
     const reports = CONSOLE_SECTIONS.find((s) => s.id === 'reports')!;
     expect(sectionLandingPath(reports, input('account_admin'))).toBe('/agency/analytics');
+    expect(sectionLandingPath(reports, input('account_admin', { flagsOn: ['agency_team_performance_enabled'] }))).toBe('/agency/team-performance');
   });
 });
 
