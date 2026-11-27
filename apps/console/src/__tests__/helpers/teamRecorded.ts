@@ -29,7 +29,8 @@ export const TEAM_ONE_CAMPAIGN: AgencyTeamPerformance = {
     codes: [
       'will_pay'
     ],
-    label: 'Will pay'
+    label: 'Will pay',
+    mixed: false
   },
   totals: {
     agents: 10,
@@ -495,7 +496,8 @@ export const TEAM_ALL_CAMPAIGNS: AgencyTeamPerformance = {
       'promise_to_pay',
       'will_pay'
     ],
-    label: null
+    label: null,
+    mixed: false
   },
   totals: {
     agents: 10,

@@ -20,10 +20,12 @@
  *    identical read already running is joined. A cached or joined answer takes no slot and is not
  *    timed.
  *
- * The snapshot, in this order: the scope's campaigns (and from them the main outcome, TP8), the
- * roster's attempt aggregate for the scope (`rosterAttemptTotals`, the cohort: who dialled in the
- * window, TP5), its occupancy for the whole cohort (the break column), the rollup by code over the
- * window and by day over the chart's range (TP12, TP13), the promises and the promises per day
+ * The snapshot, in this order: the scope's campaigns, the rollup by code over the window, the
+ * campaigns with promises in it (All campaigns only, and only when a campaign of the scope records
+ * promises); from those the main outcome, decided over the campaigns worked in the window (TP8);
+ * the roster's attempt aggregate for the scope (`rosterAttemptTotals`, the cohort: who dialled in the
+ * window, TP5), its occupancy for the whole cohort (the break column), the rollup by day over the
+ * chart's range (TP12, TP13), the promises and the promises per day
  * (promises only), the call-backs. Then, on the pool (a read never holds two connections), the
  * membership filter (`filterRowsByMembership`, a departed member kept and flagged, an id with no
  * membership in the tenant dropped, as the roster route does) and the cohort's names.
@@ -69,7 +71,15 @@ import {
   type CompareReadDeps,
   type ReadDeadline,
 } from '../compare/read.js';
-import { assembleTeamPerformance, mainOutcomeFor, teamTrendRange, type TeamAgentSources, type TeamCampaign } from './assemble.js';
+import {
+  assembleTeamPerformance,
+  mainOutcomeFor,
+  recordsPromises,
+  teamTrendRange,
+  workedCampaigns,
+  type TeamAgentSources,
+  type TeamCampaign,
+} from './assemble.js';
 
 /** A guard's refusal: the route answers it with the code's status and the reviewed body. */
 export class TeamRefusal extends Error {
@@ -110,7 +120,7 @@ export const defaultTeamReadDeps = (): TeamReadDeps => ({
 });
 
 /** Answers held at once: far above the team pages a process's supervisors open in 30 s. */
-export const TEAM_PERFORMANCE_CACHE_MAX_ENTRIES = 500;
+const TEAM_PERFORMANCE_CACHE_MAX_ENTRIES = 500;
 
 /** The cache key: the tenant, the account, the campaign (or all), the window and the zone. */
 export function teamPerformanceCacheKey(q: TeamPerformanceRead): string {
@@ -282,13 +292,18 @@ export class TeamPerformanceReads {
     const read = await this.snapshot(async (db) => {
       const campaigns: TeamCampaign[] = (await repo.scopeCampaigns(db, { ...tenancy, scope, range: { from: trendStart, to: window.end } }))
         .map((c) => ({ id: c.id, wrapup_seconds: c.wrapup_seconds, catalog: effectiveCatalog(c.disposition_catalog), rollup_as_of: c.rollup_as_of }));
-      const main = mainOutcomeFor(campaigns);
+      const campaignIds = campaigns.map((c) => c.id);
+      const rollupCodes = await repo.rollupCodes(db, { ...tenancy, campaignIds, from: window.start, to: window.end });
+      // The main outcome is decided over the campaigns worked in the window (TP8). Promises can tip
+      // it only across the account, and only when some campaign of the scope records them.
+      const promiseCampaigns = scope.kind === 'account' && campaigns.some(recordsPromises)
+        ? await repo.promiseCampaigns(db, { ...tenancy, scope, from: window.start, to: window.end })
+        : [];
+      const main = mainOutcomeFor(campaigns, workedCampaigns(rollupCodes, promiseCampaigns));
       const attempts = await rosterAttemptTotals(tenancy, params, db);
       const agentIds = attempts.map((r) => r.agent_user_id);
       const occupancy = agentIds.length === 0 ? [] : await rosterOccupancyTotals(tenancy, params, agentIds, db);
       const cohort = { ...tenancy, scope, from: window.start, to: window.end, agentIds };
-      const campaignIds = campaigns.map((c) => c.id);
-      const rollupCodes = await repo.rollupCodes(db, { ...tenancy, campaignIds, from: window.start, to: window.end });
       const rollupDays = await repo.rollupDays(db, { ...tenancy, campaignIds, from: trendStart, to: window.end, timezone: q.databaseTimezone });
       const promises = main.kind === 'promises' ? await repo.promises(db, cohort) : null;
       const promiseDays = main.kind === 'promises'

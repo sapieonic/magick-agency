@@ -12,6 +12,7 @@ import {
   TEAM_ROLLUP_CODES_SQL,
   TEAM_ROLLUP_DAYS_SQL,
   teamCallbacksSql,
+  teamPromiseCampaignsSql,
   teamPromiseDaysSql,
   teamPromisesSql,
   teamScopeCampaignsSql,
@@ -50,6 +51,7 @@ function nameOf(text: string): string {
   if (t === TEAM_ROLLUP_DAYS_SQL.trim()) return 'rollup days';
   if (is(teamPromisesSql)) return 'promises';
   if (is(teamPromiseDaysSql)) return 'promise days';
+  if (is(teamPromiseCampaignsSql)) return 'promise campaigns';
   if (is(teamCallbacksSql)) return 'callbacks';
   return `unknown: ${t.slice(0, 40)}`;
 }
@@ -106,11 +108,21 @@ describe('one snapshot', () => {
     const promise = fake();
     await promise.reads.read(Q);
     expect(promise.statements).toEqual([
-      'scope campaigns', 'roster attempts', 'roster occupancy', 'rollup codes', 'rollup days', 'promises', 'promise days', 'callbacks',
+      'scope campaigns', 'rollup codes', 'roster attempts', 'roster occupancy', 'rollup days', 'promises', 'promise days', 'callbacks',
     ]);
     const success = fake({ catalog: [{ code: 'sale', label: 'Sale', is_success: true }] });
     await success.reads.read(Q);
-    expect(success.statements).toEqual(['scope campaigns', 'roster attempts', 'roster occupancy', 'rollup codes', 'rollup days', 'callbacks']);
+    expect(success.statements).toEqual(['scope campaigns', 'rollup codes', 'roster attempts', 'roster occupancy', 'rollup days', 'callbacks']);
+  });
+
+  it('All campaigns asks which campaigns took promises in the window (TP8), only when a campaign records them', async () => {
+    const all = { ...Q, campaignId: null };
+    const promise = fake();
+    await promise.reads.read(all);
+    expect(promise.statements.slice(0, 3)).toEqual(['scope campaigns', 'rollup codes', 'promise campaigns']);
+    const success = fake({ catalog: [{ code: 'sale', label: 'Sale', is_success: true }] });
+    await success.reads.read(all);
+    expect(success.statements).not.toContain('promise campaigns');
   });
 
   it('keeps a departed member, flagged; drops an id with no membership in the tenant', async () => {

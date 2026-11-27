@@ -7,6 +7,7 @@ import {
   teamAgentRow,
   teamTrend,
   teamTrendRange,
+  workedCampaigns,
   wrapupAllowed,
   type TeamAgentSources,
   type TeamAssembleInput,
@@ -47,20 +48,41 @@ function input(o: Partial<TeamAssembleInput> = {}): TeamAssembleInput {
 }
 
 describe('the main outcome (TP8)', () => {
-  it('is promises when any campaign of the scope records them, a mixed scope too', () => {
-    expect(mainOutcomeFor([campaign('a', [SALE]), campaign('b', [SALE, WILL_PAY])])).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay' });
+  const calls = (...ids: string[]) => ids.map((campaign_id) => ({ campaign_id, disposition_code: 'x', conversations: 3 }));
+
+  it('is promises when any campaign worked in the window records them; a mixed scope is mixed', () => {
+    const cs = [campaign('a', [SALE]), campaign('b', [SALE, WILL_PAY])];
+    expect(mainOutcomeFor(cs, workedCampaigns(calls('a', 'b'), []))).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: true });
+    expect(mainOutcomeFor(cs, workedCampaigns(calls('b'), []))).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false });
+  });
+
+  it('an idle promise campaign does not make a successes day promises (only what was worked decides)', () => {
+    const cs = [campaign('idle', [WILL_PAY]), campaign('dialled', [SALE])];
+    expect(mainOutcomeFor(cs, workedCampaigns(calls('dialled'), []))).toEqual({ kind: 'successes', codes: ['sale'], label: 'Sale', mixed: false });
+    // A promise recorded in the window on it (a soft-phone or inbound call) is work: promises, and mixed.
+    expect(mainOutcomeFor(cs, workedCampaigns(calls('dialled'), ['idle']))).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: true });
+    // Only promises on it, no dialler conversation on the success campaign: not mixed.
+    expect(mainOutcomeFor(cs, workedCampaigns([], ['idle'])).mixed).toBe(false);
+  });
+
+  it('nothing worked in the window: decided over the whole scope, never mixed', () => {
+    const cs = [campaign('a', [SALE]), campaign('b', [SALE, WILL_PAY])];
+    expect(mainOutcomeFor(cs)).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false });
+    expect(mainOutcomeFor(cs, workedCampaigns([], []))).toEqual(mainOutcomeFor(cs));
+    // A rollup row with no conversations is no work.
+    expect(mainOutcomeFor(cs, workedCampaigns([{ campaign_id: 'a', disposition_code: 'x', conversations: 0 }], []))).toEqual(mainOutcomeFor(cs));
   });
 
   it('else successes, with their codes sorted and distinct', () => {
     const won = { code: 'won', label: 'Sale', is_success: true };
-    expect(mainOutcomeFor([campaign('a', [SALE, won]), campaign('b', [SALE])])).toEqual({ kind: 'successes', codes: ['sale', 'won'], label: 'Sale' });
+    expect(mainOutcomeFor([campaign('a', [SALE, won]), campaign('b', [SALE])])).toEqual({ kind: 'successes', codes: ['sale', 'won'], label: 'Sale', mixed: false });
   });
 
   it('sends the label only when the codes carry exactly one', () => {
     const promised = { code: 'promised', label: 'Promised', requires_promise: true };
     expect(mainOutcomeFor([campaign('a', [WILL_PAY]), campaign('b', [promised])]).label).toBeNull();
     expect(mainOutcomeFor([]).label).toBeNull();
-    expect(mainOutcomeFor([])).toEqual({ kind: 'successes', codes: [], label: null });
+    expect(mainOutcomeFor([])).toEqual({ kind: 'successes', codes: [], label: null, mixed: false });
   });
 });
 
@@ -173,10 +195,20 @@ describe('rows and sums (Compare\'s figures, TP2)', () => {
     expect(s.totals.main).toMatchObject({ numerator: 30, denominator: 100, value: 0.3 });
   });
 
-  it('rollup_as_of is the oldest of the scope\'s campaigns that have one', () => {
-    const cs = [campaign('a', [], { rollup_as_of: '2026-11-07T09:58:00.000Z' }), campaign('b', [], { rollup_as_of: '2026-11-07T09:50:00.000Z' }), campaign('c', [])];
-    expect(assembleTeamPerformance(input({ campaigns: cs })).rollup_as_of).toBe('2026-11-07T09:50:00.000Z');
-    expect(assembleTeamPerformance(input({ campaigns: [campaign('c', [])] })).rollup_as_of).toBeNull();
+  it('rollup_as_of is the newest of the campaigns with conversations in the window; an idle one never holds it back', () => {
+    const calls = (...ids: string[]) => ids.map((campaign_id) => ({ campaign_id, disposition_code: 'x', conversations: 2 }));
+    const cs = [
+      campaign('a', [], { rollup_as_of: '2026-11-07T09:58:00.000Z' }),
+      campaign('b', [], { rollup_as_of: '2026-11-07T09:50:00.000Z' }),
+      // Paused weeks ago: its rollup is as old as its last call.
+      campaign('idle', [], { rollup_as_of: '2026-10-12T16:00:00.000Z' }),
+      campaign('c', []),
+    ];
+    expect(assembleTeamPerformance(input({ campaigns: cs, rollupCodes: calls('a', 'b', 'c') })).rollup_as_of).toBe('2026-11-07T09:58:00.000Z');
+    expect(assembleTeamPerformance(input({ campaigns: cs, rollupCodes: calls('b') })).rollup_as_of).toBe('2026-11-07T09:50:00.000Z');
+    // No conversations in the window: no bars, nothing to date.
+    expect(assembleTeamPerformance(input({ campaigns: cs, rollupCodes: [] })).rollup_as_of).toBeNull();
+    expect(assembleTeamPerformance(input({ campaigns: [campaign('c', [])], rollupCodes: calls('c') })).rollup_as_of).toBeNull();
   });
 });
 
@@ -197,6 +229,20 @@ describe('worth a look (TP7, TP15)', () => {
       ['clear_gap', 'slow', 'choose_time'],
     ]);
     expect(a.findings.every((f) => f.code === 'clear_gap' || f.code === 'stands_out')).toBe(true);
+  });
+
+  it('every gap and every praise of a large team, past Compare\'s cap of 5 in all (TP15)', () => {
+    // 30 agents: 20 at the team's rate, 8 far below it, 2 far above it.
+    const team = [
+      ...Array.from({ length: 20 }, (_, i) => agent(`m${String(i).padStart(2, '0')}`, { connected: 400, successes: 120 })),
+      ...Array.from({ length: 8 }, (_, i) => agent(`weak${i}`, { connected: 400, successes: 40 + i })),
+      ...Array.from({ length: 2 }, (_, i) => agent(`strong${i}`, { connected: 400, successes: 220 + i })),
+    ];
+    const a = assembleTeamPerformance(input({ agents: team }));
+    const named = (code: string) => a.findings.filter((f) => f.code === code && f.metric === 'success_rate').map((f) => f.agent_user_id).sort();
+    expect(named('clear_gap')).toEqual(Array.from({ length: 8 }, (_, i) => `weak${i}`));
+    expect(named('stands_out')).toEqual(['strong0', 'strong1']);
+    expect(a.findings).toHaveLength(10);
   });
 
   it('All campaigns compares nobody: no findings, whatever the figures', () => {

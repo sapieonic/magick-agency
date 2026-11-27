@@ -154,7 +154,10 @@ export interface AgencyTeamPerformanceQuery {
   from: string;
   /** Last local date, `YYYY-MM-DD`, inclusive; not after today in `timezone`. */
   to: string;
-  /** IANA zone the dates are in (the browser's). A legacy alias is answered as its current name. */
+  /**
+   * IANA zone the dates are in (the browser's). A legacy alias is accepted: the answer echoes the
+   * zone as sent, and the server cuts the days in Postgres's current name for it.
+   */
   timezone: string;
   /** One campaign of the account; absent: every campaign of the account. */
   campaign_id?: string;
@@ -196,7 +199,11 @@ export interface AgencyTeamAgentRow {
   shift_seconds: number;
 }
 
-/** The scope's main outcome (TP8). */
+/**
+ * The scope's main outcome (TP8), decided over the campaigns WORKED in the window: those with
+ * dialler conversations in it (the rollup) or promises recorded in it. With none (nothing dialled
+ * yet), over every campaign of the scope.
+ */
 export interface AgencyTeamMainOutcome {
   kind: AgencyTeamMainOutcomeKind;
   /**
@@ -211,6 +218,13 @@ export interface AgencyTeamMainOutcome {
    * Columns and the sort pill read "{label} rate".
    */
   label: string | null;
+  /**
+   * True when `kind` is `promises` and at least one campaign of the scope with dialler
+   * conversations in the window records no promises (no `requires_promise` entry): its calls are
+   * in the rate's denominator but can add nothing to its count. The console notes it (TP8). Always
+   * false for `successes`, and with no conversations in the window.
+   */
+  mixed: boolean;
 }
 
 /**
@@ -328,14 +342,15 @@ export interface AgencyTeamPerformance {
   campaign_id: string | null;
   from: string;
   to: string;
-  /** The zone the answer is in (a legacy alias answered as its current name). */
+  /** The request's zone, echoed as sent (a legacy alias too; the days are cut in its current name). */
   timezone: string;
   /** When the figures were read (ISO instant). "Today, up to 2:15 PM" is written from it. */
   as_of: string;
   /**
-   * How fresh the rollup behind `outcomes` and the successes trend is: the oldest of the scope's
-   * campaigns' newest folded attempt change (ISO instant). Null when the rollup holds nothing for
-   * the scope.
+   * How fresh the rollup behind `outcomes` and the successes trend is: the newest folded attempt
+   * change (ISO instant) of the scope's campaigns with dialler conversations in the window. A
+   * campaign idle in the window does not hold it back. Null when no campaign had conversations in
+   * the window (no bars to date).
    */
   rollup_as_of: string | null;
   main_outcome: AgencyTeamMainOutcome;
@@ -353,8 +368,10 @@ export interface AgencyTeamPerformance {
   /** One campaign is selected (`campaign_id !== null`): only then are agents compared (TP7, CP8). */
   comparable: boolean;
   /**
-   * `compareFindings` over the main outcome rate and `choose_time`, every row picked, keeping only
-   * {@link TEAM_FINDING_CODES}; `not_clear` is not sent. Always `[]` when not `comparable`.
+   * `compareFindings` over the main outcome rate and `choose_time`, every row picked, with no cap
+   * in all (Compare's `COMPARE_FINDINGS_MAX` is for its three picks; `COMPARE_FINDINGS_PER_AGENT`
+   * still holds), keeping only {@link TEAM_FINDING_CODES}; `not_clear` is not sent. Always `[]`
+   * when not `comparable`.
    */
   findings: AgencyCompareFinding[];
 }

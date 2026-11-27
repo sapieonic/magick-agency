@@ -352,7 +352,9 @@ read (`AgencyTeamPerformanceQuery`, `AgencyTeamPerformance` and its parts), its 
 (`AgencyTeamMainOutcomeKind`, `AgencyTeamTrendSpan`) and its limits are served by the public API
 layer itself and have no dialer counterpart. It embeds Compare's console shapes unchanged
 (`AgencyCompareValue`, `AgencyCompareFinding`, keyed by `COMPARE_BUILTIN_METRICS` keys) and reads one
-dialer-contract name unchanged, `AgencyTileIcon`, on an outcome bar.
+dialer-contract name unchanged, `AgencyTileIcon`, on an outcome bar. `AgencyTeamMainOutcome.mixed`
+(a promises scope with a worked campaign that records none, TP8) is this read's own, with no
+Compare or dialer counterpart.
 `AgencyTeamPerformanceErrorCode` / `AGENCY_TEAM_PERFORMANCE_ERROR_CODES` /
 `AGENCY_TEAM_PERFORMANCE_ERROR_STATUS` are declared in `../../errors.ts` (§11) and re-exported.
 

@@ -29,6 +29,8 @@
  *    (`idx_*_promise_written`); beside them the soft-phone conversations (`SOFTPHONE_CONNECTED_SQL`,
  *    `created_at`) and the answered inbound calls (`arrived_at`) the rate is over. Per cohort agent
  *    over the window; per local day, the team's, over the chart's range.
+ *  - **The campaigns with promises** ({@link teamPromiseCampaignsSql}) in the window: with the
+ *    rollup's conversations, the campaigns worked in it, which decide the main outcome (TP8).
  *  - **Call-backs** ({@link teamCallbacksSql}): IN4's classes of the call-backs each cohort agent
  *    booked whose booked time is in the window, `COMPARE_CALLBACKS_SQL`'s columns and CASE.
  *
@@ -254,6 +256,36 @@ export function teamPromiseDaysSql(scope: TeamScope): string {
 }
 
 /**
+ * The campaigns in scope with a promise recorded (`dispositioned_at`) in `[$3, $4)` on any of the
+ * three call tables, tenant `$1` and account `$2`, `$5` the campaign when the scope is one: what
+ * decides the main outcome beside the rollup's conversations (TP8). Each table on its 0050 index
+ * (`idx_*_promise_written`); a call on no campaign is in no scope.
+ */
+export function teamPromiseCampaignsSql(scope: TeamScope): string {
+  return `
+  SELECT DISTINCT x.campaign_id
+    FROM (
+      SELECT p.campaign_id
+        FROM agency_call_attempts p
+       WHERE p.tenant_id = $1::uuid AND p.account_id = $2::uuid AND p.promise_date IS NOT NULL
+         AND p.dispositioned_at >= $3::timestamptz AND p.dispositioned_at < $4::timestamptz
+         AND ${onCampaign('p.campaign_id', scope, '$5')}
+      UNION ALL
+      SELECT m.campaign_id
+        FROM agency_manual_calls m
+       WHERE m.tenant_id = $1::uuid AND m.account_id = $2::uuid AND m.promise_date IS NOT NULL
+         AND m.dispositioned_at >= $3::timestamptz AND m.dispositioned_at < $4::timestamptz
+         AND ${onCampaign('m.campaign_id', scope, '$5')}
+      UNION ALL
+      SELECT i.matched_campaign_id
+        FROM agency_inbound_calls i
+       WHERE i.tenant_id = $1::uuid AND i.account_id = $2::uuid AND i.promise_date IS NOT NULL
+         AND i.dispositioned_at >= $3::timestamptz AND i.dispositioned_at < $4::timestamptz
+         AND ${onCampaign('i.matched_campaign_id', scope, '$5')}
+    ) x`;
+}
+
+/**
  * IN4's classes of the call-backs each cohort agent (`$5`) booked in scope whose booked time is in
  * `[$3, $4)`, as `COMPARE_CALLBACKS_SQL`: its columns, CASE (`$6` now, `$7` the on-time minutes)
  * and predicates. The campaign (`$8`), or every campaign of the account as an array (an index
@@ -334,6 +366,14 @@ export class AgencyTeamPerformanceReadRepository {
       teamPromiseDaysSql(q.scope), withCampaign([q.tenantId, q.accountId, q.from, q.to, q.timezone], q.scope),
     );
     return rows.map((r) => ({ date: r.date, promises: n(r.promises) }));
+  }
+
+  /** {@link teamPromiseCampaignsSql}: the ids, sorted. */
+  async promiseCampaigns(db: RosterQueryable, q: TeamReadScope & TeamInstantWindow): Promise<string[]> {
+    const { rows } = await db.query<{ campaign_id: string }>(
+      teamPromiseCampaignsSql(q.scope), withCampaign([q.tenantId, q.accountId, q.from, q.to], q.scope),
+    );
+    return rows.map((r) => r.campaign_id).sort();
   }
 
   /** {@link teamCallbacksSql}: per agent, the count in each IN4 class (Compare's shape). */

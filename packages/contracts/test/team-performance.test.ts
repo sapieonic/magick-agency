@@ -14,6 +14,7 @@ import {
   TEAM_TREND_WORKING_DAYS,
   teamWindowProblem,
   type AgencyTeamAgentRow,
+  type AgencyTeamMainOutcome,
   type AgencyTeamMainOutcomeKind,
   type AgencyTeamPerformance,
   type AgencyTeamTrendSpan,
@@ -32,9 +33,12 @@ const _rowChoose: Equals<AgencyTeamAgentRow['choose'], AgencyCompareValue> = tru
 const _totalsMain: Equals<AgencyTeamPerformance['totals']['main'], AgencyCompareValue> = true;
 const _findings: Equals<AgencyTeamPerformance['findings'], AgencyCompareFinding[]> = true;
 const _icon: Equals<AgencyTeamPerformance['outcomes'][number]['icon'], AgencyTileIcon | null> = true;
+// The main outcome's fields, exactly: `mixed` is required, so every answer says whether the note shows (TP8).
+const _mainKeys: Equals<keyof AgencyTeamMainOutcome, 'kind' | 'codes' | 'label' | 'mixed'> = true;
+const _mixed: Equals<AgencyTeamMainOutcome['mixed'], boolean> = true;
 // Reached through the AgencyApi namespace like its siblings.
 const _namespaced: Equals<AgencyApi.AgencyTeamPerformance, AgencyTeamPerformance> = true;
-void [_kinds, _spans, _rowMain, _rowChoose, _totalsMain, _findings, _icon, _namespaced];
+void [_kinds, _spans, _mainKeys, _mixed, _rowMain, _rowChoose, _totalsMain, _findings, _icon, _namespaced];
 
 describe('team performance vocabularies (SNAPSHOT, written out by hand)', () => {
   it('main outcome kinds and trend spans', () => {

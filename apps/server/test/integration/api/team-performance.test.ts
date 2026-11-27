@@ -14,8 +14,10 @@ import { randomUUID } from 'node:crypto';
  *  - every row equals the roster (`GET /agents/stats`, same scope and window) where both serve the
  *    number, and Compare (`POST /compare/query`, same campaign and window) for the main rate, the
  *    time to choose and the average call (TP2);
- *  - All campaigns: the mixed scope's main outcome is promises (TP8), every campaign's calls, no
- *    findings (TP7); one campaign: findings name the seeded gaps and praise, never a thin agent;
+ *  - All campaigns: the mixed scope's main outcome is promises and `mixed` (TP8), every campaign's
+ *    calls, no findings (TP7); the main outcome is decided over the campaigns worked in the window
+ *    (an idle promise campaign never makes a successes day promises; a promise recorded on it does);
+ *    one campaign: findings name the seeded gaps and praise, never a thin agent;
  *  - the per-day chart leaves the team's day off out and cuts days in the request's zone (a promise
  *    at 23:50 and one at 00:10 on their own local days, and on one day in UTC); a short window
  *    looks back 14 days for its working days, the team's whoever worked them;
@@ -23,6 +25,10 @@ import { randomUUID } from 'node:crypto';
  *    and another tenant's campaign catalog never in the main outcome;
  *  - the guards: RBAC, the flag, the statement timeout (503 through the error mask), the cache;
  *  - the promises statement plans on its 0050 indexes, on one campaign and across the account.
+ *
+ * `RECORD_TEAM_ANSWERS=<file>` (a path from this package's directory) also writes the one-campaign
+ * and All-campaigns answers to that file, as the console's recorded answers
+ * (docs/team-performance.md §8). Off by default.
  */
 
 const mocks = vi.hoisted(() => {
@@ -31,6 +37,8 @@ const mocks = vi.hoisted(() => {
 });
 vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyIdToken: mocks.verifyIdToken }));
 
+import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type pg from 'pg';
 import type { AgencyCompareResponse } from '@magick-agency/contracts/api/agency/compare';
 import type { AgencyTeamPerformance } from '@magick-agency/contracts/api/agency/team-performance';
@@ -53,7 +61,10 @@ const sup = () => floor.supervisors[0]!;
 const agent = (i: number) => floor.agents[i]!;
 
 const ZONE = 'Asia/Kolkata';
+/** The seed's anchor: today when the file loaded. The seed is laid out relative to it. */
 const TODAY = localDateOf(new Date(), ZONE);
+/** Today now, for a test about the window's end: the run can cross local midnight after the seed. */
+const today = () => localDateOf(new Date(), ZONE);
 function shiftDate(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -66,6 +77,9 @@ const FROM = T(5);
 const TO = T(1);
 /** A day before the window that a short window's chart still reaches (TP12). */
 const EARLIER = T(9);
+/** The other tenant's days with work on its success-only campaign alone (TP8, the campaigns worked decide). */
+const OTHER_SUCCESS_DAY = T(12);
+const OTHER_MIXED_DAY = T(11);
 function L(date: string, hhmm: string): Date {
   const [h, m, s] = hhmm.split(':').map(Number) as [number, number, number?];
   return localInstant(ZONE, date, h * 3600 + m * 60 + (s ?? 0));
@@ -260,6 +274,23 @@ function seed(): void {
   const o = other.agents[0]!.id;
   const osid = session(other, other.campaigns[0]!, o, L(day, '09:00'), L(day, '12:00'), null);
   for (let n = 0; n < 5; n++) conversation(other, other.campaigns[0]!, osid, { code: 'promised', dialed: plus(L(day, '10:00'), n * 300), talk: 40, measured: 20 });
+
+  // The other tenant's second campaign records no promises (the default catalog's codes). Its agent
+  // dials it alone on two days; on the second, a soft-phone promise is recorded on the promise
+  // campaign, which has no dialler call that day (TP8: the campaigns worked in the window decide).
+  const o1 = other.agents[1]!.id;
+  for (const d of [OTHER_SUCCESS_DAY, OTHER_MIXED_DAY]) {
+    const sid = session(other, other.campaigns[1]!, o1, L(d, '09:00'), L(d, '12:00'), null);
+    for (let n = 0; n < 4; n++) conversation(other, other.campaigns[1]!, sid, { code: n === 0 ? 'interested' : 'not_interested', dialed: plus(L(d, '10:00'), n * 300), talk: 40, measured: 20 });
+  }
+  const osp = randomUUID();
+  sessions.push({ id: osp, tenant_id: other.tenant, account_id: other.account, campaign_id: null, agent_user_id: o1, kind: 'softphone', state: 'offline', joined_at: L(OTHER_MIXED_DAY, '13:00'), left_at: L(OTHER_MIXED_DAY, '13:30') });
+  manual.push({
+    id: randomUUID(), tenant_id: other.tenant, account_id: other.account, session_id: osp, agent_user_id: o1, campaign_id: other.campaigns[0]!,
+    destination_e164: '+919811110002', caller_id: '+919000000001', state: 'ended', outcome: 'connected',
+    dialed_at: L(OTHER_MIXED_DAY, '13:05'), bridged_at: L(OTHER_MIXED_DAY, '13:05:10'), ended_at: L(OTHER_MIXED_DAY, '13:10'), created_at: L(OTHER_MIXED_DAY, '13:05'), settled_at: L(OTHER_MIXED_DAY, '13:11'),
+    disposition_code: 'promised', disposition_source: 'campaign', dispositioned_at: L(OTHER_MIXED_DAY, '13:11'), promise_date: OTHER_MIXED_DAY, promise_amount: 400,
+  });
 }
 
 /** The call-backs agent 2 booked on c0 (IN4): one kept on time, one missed, one overdue. */
@@ -371,7 +402,8 @@ describe('one campaign: every figure equals the seed, the roster and Compare', (
     expect(a.agents.filter((r) => r.departed).map((r) => r.agent_user_id)).toEqual([agent(4).id]);
     expect(rowOf(a, 0).agent_name).toBe('agent 0.0');
     expect(a).toMatchObject({ campaign_id: c0, from: FROM, to: TO, timezone: ZONE, comparable: true });
-    expect(a.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay' });
+    // One campaign recording promises: never mixed.
+    expect(a.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false });
     expect(a.totals.wrapup_allowed).toEqual({ seconds: 30, varies: false });
     expect(a.rollup_as_of).not.toBeNull();
   });
@@ -467,7 +499,7 @@ describe('one campaign: every figure equals the seed, the roster and Compare', (
 
   it('a campaign without promises is successes: Compare\'s success rate, no other conversations', async () => {
     const s = await team({ campaign_id: c1 });
-    expect(s.main_outcome).toEqual({ kind: 'successes', codes: ['interested'], label: 'Interested' });
+    expect(s.main_outcome).toEqual({ kind: 'successes', codes: ['interested'], label: 'Interested', mixed: false });
     expect(s.agents.map((r) => r.agent_user_id).sort()).toEqual([agent(1).id, agent(5).id].sort());
     const c = await compare(c1, [agent(1).id, agent(5).id], ['success_rate']);
     for (const ca of c.agents) expect(s.agents.find((r) => r.agent_user_id === ca.agent_user_id)!.main).toEqual(ca.values['success_rate']);
@@ -483,10 +515,22 @@ describe('All campaigns', () => {
   let a: AgencyTeamPerformance;
   beforeAll(async () => { a = await team(); });
 
-  it('a mixed scope is promises (TP8); the allowed time differs; nobody is compared (TP7)', () => {
+  it('a mixed scope is promises and says so (TP8); the allowed time differs; nobody is compared (TP7)', () => {
     expect(a).toMatchObject({ campaign_id: null, comparable: false, findings: [] });
-    expect(a.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay' });
+    // c1 had conversations in the window and records no promises: mixed.
+    expect(a.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: true });
     expect(a.totals.wrapup_allowed).toEqual({ seconds: null, varies: true });
+  });
+
+  it('the per-day chart is the team\'s promises by local day, this tenant\'s and account\'s only (TP12)', () => {
+    // The other tenant's promises fall on WORK[2] and on its own days: never here.
+    expect(a.trend).toEqual({ span: 'last_working_days', dates: [EARLIER, ...WORK], counts: [EARLIER, ...WORK].map((d) => promisesByDay.get(d) ?? 0) });
+  });
+
+  it('rollup_as_of is the newest rollup change of the campaigns with calls in the window', async () => {
+    const one = await Promise.all([team({ campaign_id: c0 }), team({ campaign_id: c1 })]);
+    const newest = one.map((x) => x.rollup_as_of!).sort().at(-1);
+    expect(a.rollup_as_of).toBe(newest);
   });
 
   it('each row is every campaign\'s work: the roster without a campaign, the promises over every conversation', async () => {
@@ -512,9 +556,35 @@ describe('All campaigns', () => {
   });
 
   it('a window holding today with nobody dialled yet: no rows, the team\'s last working days still drawn', async () => {
-    const today = await team({ from: TODAY, to: TODAY });
-    expect(today.agents).toEqual([]);
-    expect(today.trend).toMatchObject({ span: 'last_working_days', dates: [EARLIER, ...WORK] });
+    const now = await team({ from: today(), to: today() });
+    expect(now.agents).toEqual([]);
+    expect(now.trend).toMatchObject({ span: 'last_working_days', dates: [EARLIER, ...WORK] });
+    // Nothing worked today: the main outcome is the whole scope's (promises, c0's catalog), not
+    // mixed; and nothing to date the bars by.
+    expect(now.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false });
+    expect(now.outcomes).toEqual([]);
+    expect(now.rollup_as_of).toBeNull();
+  });
+
+  it('the campaigns worked in the window decide the main outcome, not every live one (TP8)', async () => {
+    const sup2 = other.supervisors[0]!;
+    // Only the success campaign dialled; the promise campaign is live but idle: successes.
+    const idle = await team({ from: OTHER_SUCCESS_DAY, to: OTHER_SUCCESS_DAY }, sup2, other);
+    expect(idle.main_outcome).toEqual({ kind: 'successes', codes: ['interested'], label: 'Interested', mixed: false });
+    expect(idle.agents.map((r) => r.agent_user_id)).toEqual([other.agents[1]!.id]);
+    expect(idle.agents[0]!.main).toMatchObject({ numerator: 1, denominator: 4 });
+    // A soft-phone promise recorded on the promise campaign is work on it: promises, and mixed,
+    // the success campaign's conversations in the rate's calls.
+    const mixed = await team({ from: OTHER_MIXED_DAY, to: OTHER_MIXED_DAY }, sup2, other);
+    expect(mixed.main_outcome).toEqual({ kind: 'promises', codes: ['promised'], label: 'Promised (other)', mixed: true });
+    expect(mixed.agents[0]!.main).toMatchObject({ numerator: 1, denominator: 5 });
+  });
+
+  it('a legacy zone name is answered as sent, its days cut in the current name', async () => {
+    const legacy = await team({ campaign_id: c0, timezone: 'Asia/Calcutta' });
+    expect(legacy.timezone).toBe('Asia/Calcutta');
+    const current = await team({ campaign_id: c0 });
+    expect(legacy.trend).toEqual(current.trend);
   });
 });
 
@@ -531,7 +601,7 @@ describe('isolation', () => {
     expect((await team()).main_outcome.codes).toEqual(['will_pay']);
     const theirs = await team({}, other.supervisors[0]!, other);
     expect(theirs.agents.map((r) => r.agent_user_id)).toEqual([other.agents[0]!.id]);
-    expect(theirs.main_outcome).toEqual({ kind: 'promises', codes: ['promised'], label: 'Promised (other)' });
+    expect(theirs.main_outcome).toEqual({ kind: 'promises', codes: ['promised'], label: 'Promised (other)', mixed: false });
     expect(foreignIdsIn(JSON.stringify(theirs), foreignIdsOf([floor, other, dark], other))).toEqual([]);
     const res = await call(loaded.app, 'GET', url({ campaign_id: other.campaigns[0]! }), sup(), floor);
     expect(res.statusCode).toBe(404);
@@ -547,6 +617,8 @@ describe('isolation', () => {
     expect(all.statusCode, all.body).toBe(200);
     expect((all.json() as AgencyTeamPerformance).agents).toEqual([]);
     expect((all.json() as AgencyTeamPerformance).outcomes).toEqual([]);
+    // Nor this account's promises in its per-day chart.
+    expect((all.json() as AgencyTeamPerformance).trend).toEqual({ span: 'last_working_days', dates: [], counts: [] });
     expect((await asB(url({ campaign_id: c0 }))).statusCode).toBe(404);
   });
 });
@@ -561,7 +633,8 @@ describe('refusals and guards', () => {
 
   it('the zone and the window', async () => {
     for (const [o, code] of [
-      [{ timezone: 'Mars/Olympus' }, 'team_timezone_invalid'], [{ to: shiftDate(TODAY, 1) }, 'team_window_invalid'],
+      // Two days ahead of today now: past today whichever side of local midnight the server reads it.
+      [{ timezone: 'Mars/Olympus' }, 'team_timezone_invalid'], [{ to: shiftDate(today(), 2) }, 'team_window_invalid'],
       [{ from: shiftDate(TO, -40) }, 'team_window_invalid'], [{ from: TO, to: FROM }, 'team_window_invalid'],
     ] as const) {
       const res = await call(loaded.app, 'GET', url(o), sup(), floor);
@@ -616,3 +689,53 @@ describe('the plans', () => {
     }
   });
 });
+
+// ── The console's recorded answers (opt-in) ──────────────────────────────────
+
+/** A value as one line of JSON with a space after each `:` and `,`, as the recorded file holds it. */
+function inline(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(inline).join(', ')}]`;
+  if (v !== null && typeof v === 'object') return `{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}: ${inline(x)}`).join(', ')}}`;
+  return JSON.stringify(v);
+}
+
+/** One answer as a TypeScript constant: a line per field, `totals` a line per figure, a line per outcome, row and finding. */
+function recorded(name: string, doc: string, a: AgencyTeamPerformance): string {
+  const lines = Object.entries(a).map(([k, v]) => {
+    if (k === 'totals') return `  ${k}: {\n${Object.entries(v as object).map(([t, x]) => `    ${t}: ${inline(x)},`).join('\n')}\n  },`;
+    if (Array.isArray(v) && v.length > 0 && typeof v[0] === 'object') return `  ${k}: [\n${v.map((x) => `    ${inline(x)},`).join('\n')}\n  ],`;
+    return `  ${k}: ${inline(v)},`;
+  });
+  return `/** ${doc} */\nexport const ${name}: AgencyTeamPerformance = {\n${lines.join('\n')}\n};\n`;
+}
+
+const RECORD_TO = process.env['RECORD_TEAM_ANSWERS'];
+if (RECORD_TO) {
+  describe('recording the console\'s answers (RECORD_TEAM_ANSWERS)', () => {
+    it('writes the one-campaign and All-campaigns answers over this seed', async () => {
+      const one = await team({ campaign_id: c0 });
+      const all = await team();
+      const header = `import type { AgencyTeamPerformance } from '@magick-agency/contracts/api/agency/team-performance';
+
+/**
+ * Team performance answers recorded from the real route (\`GET /proxy/agency/team-performance\`, the
+ * server over a seeded Postgres, ${localDateOf(new Date(), 'UTC')}), kept exactly as the server sent them. The seed is the
+ * server's integration test's (\`apps/server/test/integration/api/team-performance.test.ts\`): eight
+ * agents of one account over five local days in Asia/Kolkata with a day off, one campaign recording
+ * promises (Will pay) and one not, a departed agent, a thin one, soft-phone and inbound promises,
+ * and a supervisor's soft-phone promise with no row (TP14). Rewritten by that test with
+ * \`RECORD_TEAM_ANSWERS\` set (docs/team-performance.md §8); do not edit by hand.
+ *
+ * \`__tests__/utils/teamAnswer.test.ts\` holds these and the hand-made answers of \`teamRecorded.ts\`
+ * to the same rules, so the page's tests run on answers shaped and summed as the real read's.
+ */
+`;
+      const text = [
+        header,
+        recorded('TEAM_ROUTE_ONE_CAMPAIGN', 'One campaign (promises), comparable, with the seeded gaps and the one who stands out.', one),
+        recorded('TEAM_ROUTE_ALL_CAMPAIGNS', 'All campaigns: a mixed scope (promises, `mixed`), not comparable, allowed time differing by campaign.', all),
+      ].join('\n');
+      writeFileSync(resolve(process.cwd(), RECORD_TO), text);
+    });
+  });
+}

@@ -92,22 +92,50 @@ export function teamTrendRange(from: string, to: string): TeamTrendRange {
 }
 
 /** The distinct codes, sorted, and the one label they carry when they carry exactly one. */
-function outcomeOf(kind: AgencyTeamMainOutcomeKind, entries: readonly AgencyDisposition[]): AgencyTeamMainOutcome {
+function outcomeOf(kind: AgencyTeamMainOutcomeKind, entries: readonly AgencyDisposition[], mixed: boolean): AgencyTeamMainOutcome {
   const codes = [...new Set(entries.map((e) => e.code))].sort();
   const labels = new Set(entries.map((e) => e.label));
-  return { kind, codes, label: labels.size === 1 ? [...labels][0]! : null };
+  return { kind, codes, label: labels.size === 1 ? [...labels][0]! : null, mixed };
+}
+
+/** A campaign whose catalog records promises (an entry with `requires_promise`). */
+export const recordsPromises = (c: TeamCampaign): boolean => c.catalog.some((e) => e.requires_promise === true);
+
+/** The scope's campaigns worked in the window: with dialler conversations (the rollup), or with promises recorded. */
+export interface TeamWorkedCampaigns {
+  conversations: ReadonlySet<string>;
+  promises: ReadonlySet<string>;
+}
+
+/** Nothing worked in the window: the main outcome is decided over the whole scope. */
+export const NO_WORKED_CAMPAIGNS: TeamWorkedCampaigns = Object.freeze({ conversations: new Set<string>(), promises: new Set<string>() });
+
+/** The campaigns with dialler conversations in the window ({@link TeamRollupCodeRow}s) and those with promises in it. */
+export function workedCampaigns(codes: readonly TeamRollupCodeRow[], promiseCampaignIds: readonly string[]): TeamWorkedCampaigns {
+  return {
+    conversations: new Set([...conversationsByCampaign(codes)].filter(([, n]) => n > 0).map(([id]) => id)),
+    promises: new Set(promiseCampaignIds),
+  };
 }
 
 /**
- * The scope's main outcome (TP8, the Live floor's rule): promises when any campaign's catalog has a
- * `requires_promise` entry (a mixed scope too), else successes; the codes it counts across the
- * scope, and their label when they carry one.
+ * The scope's main outcome (TP8, the Live floor's rule), decided over the campaigns WORKED in the
+ * window ({@link TeamWorkedCampaigns}), or over the whole scope when none was: promises when any of
+ * them has a `requires_promise` entry (a mixed scope too), else successes; the codes it counts
+ * across them, and their label when they carry one. An idle campaign, or a live one nobody dialled,
+ * never turns a successes day into promises. `mixed`: promises, and a campaign with conversations
+ * in the window records none.
  */
-export function mainOutcomeFor(campaigns: readonly TeamCampaign[]): AgencyTeamMainOutcome {
-  const entries = campaigns.flatMap((c) => c.catalog);
+export function mainOutcomeFor(campaigns: readonly TeamCampaign[], worked: TeamWorkedCampaigns = NO_WORKED_CAMPAIGNS): AgencyTeamMainOutcome {
+  const active = campaigns.filter((c) => worked.conversations.has(c.id) || worked.promises.has(c.id));
+  const deciding = active.length > 0 ? active : campaigns;
+  const entries = deciding.flatMap((c) => c.catalog);
   const promises = entries.filter((e) => e.requires_promise === true);
-  if (promises.length > 0) return outcomeOf('promises', promises);
-  return outcomeOf('successes', entries.filter((e) => e.is_success === true));
+  if (promises.length > 0) {
+    const mixed = campaigns.some((c) => worked.conversations.has(c.id) && !recordsPromises(c));
+    return outcomeOf('promises', promises, mixed);
+  }
+  return outcomeOf('successes', entries.filter((e) => e.is_success === true), false);
 }
 
 /** A built-in Compare metric as the shared rules take it. */
@@ -292,7 +320,8 @@ export function teamTrend(
 
 /**
  * Worth a look (TP15): `compareFindings` on the main rate and `choose_time` over the whole cohort,
- * every row picked (in the rows' order), keeping `TEAM_FINDING_CODES` only. A row withheld on a
+ * every row picked (in the rows' order) with no cap in all (the per-agent cap holds), keeping
+ * `TEAM_FINDING_CODES` only. A row withheld on a
  * figure is out of that figure's cohort, as Compare leaves it out.
  */
 export function teamFindings(kind: AgencyTeamMainOutcomeKind, rows: readonly AgencyTeamAgentRow[]): AgencyCompareFinding[] {
@@ -301,15 +330,24 @@ export function teamFindings(kind: AgencyTeamMainOutcomeKind, rows: readonly Age
   const { findings } = compareFindings({
     metrics: [{ metric: MAIN_METRIC[kind], cohort: counted((r) => r.main) }, { metric: CHOOSE_TIME, cohort: counted((r) => r.choose) }],
     picked: rows.map((r) => r.agent_user_id),
+    // Compare's cap in all (`COMPARE_FINDINGS_MAX`) is for its three picks; here every row is picked.
+    max: Infinity,
   });
   const kept: ReadonlySet<string> = new Set(TEAM_FINDING_CODES);
   return findings.filter((f) => kept.has(f.code));
 }
 
-/** The oldest of the scope's campaigns' rollup freshness; null when the rollup holds nothing for any. */
-function oldestRollup(campaigns: readonly TeamCampaign[]): string | null {
-  const known = values(campaigns.map((c) => (c.rollup_as_of === null ? null : Date.parse(c.rollup_as_of))));
-  return known.length === 0 ? null : new Date(Math.min(...known)).toISOString();
+/**
+ * How fresh the bars are: the newest rollup change of the scope's campaigns with conversations in
+ * the window (the rollup's codes). A campaign idle in the window never holds it back; null when no
+ * campaign had conversations in it.
+ */
+export function rollupAsOf(campaigns: readonly TeamCampaign[], codes: readonly TeamRollupCodeRow[]): string | null {
+  const withCalls = conversationsByCampaign(codes);
+  const known = values(campaigns
+    .filter((c) => (withCalls.get(c.id) ?? 0) > 0)
+    .map((c) => (c.rollup_as_of === null ? null : Date.parse(c.rollup_as_of))));
+  return known.length === 0 ? null : new Date(Math.max(...known)).toISOString();
 }
 
 /** Everything {@link assembleTeamPerformance} needs. */
@@ -343,7 +381,7 @@ export function assembleTeamPerformance(input: TeamAssembleInput): AgencyTeamPer
     to: input.to,
     timezone: input.timezone,
     as_of: input.asOf.toISOString(),
-    rollup_as_of: oldestRollup(input.campaigns),
+    rollup_as_of: rollupAsOf(input.campaigns, input.rollupCodes),
     main_outcome: input.main,
     totals: teamTotals(kind, input.agents, wrapupAllowed(input.campaigns, input.rollupCodes)),
     medians: teamMedians(rows),
