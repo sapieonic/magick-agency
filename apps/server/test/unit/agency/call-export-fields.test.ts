@@ -10,6 +10,7 @@ import {
   callExportCsvRow,
   callExportFieldsInvalidBody,
   callExportFieldsNotPermittedBody,
+  callExportHasValue,
   callExportInclude,
   callExportPreambleLines,
   callExportValue,
@@ -23,6 +24,7 @@ import {
   type CallExportRow,
 } from '../../../src/agency/call-export-fields.js';
 import { ATTEMPT_CSV_COLUMNS, SPINE_EXPORT_MAX_ROWS, attemptCsvRow } from '../../../src/agency/agency-spine.js';
+import { csvNumberCell } from '../../../src/agency/agency-csv.js';
 
 /**
  * Export with fields (`docs/call-log.md` §10, CL43–CL52): the leaf module's rules, one by one.
@@ -69,7 +71,21 @@ describe('parseCallExportFields (CL52)', () => {
 
   it('refuses an item of any other shape, naming every bad one', () => {
     const parsed = parseCallExportFields('ai_summary,transcript,dim_,dim_Bad,field_1x,phone,dim_a-b');
-    expect(parsed).toEqual({ ok: false, invalid: ['transcript', 'dim_', 'dim_Bad', 'field_1x', 'phone', 'dim_a-b'], count: 7 });
+    expect(parsed).toEqual({ ok: false, invalid: ['transcript', 'dim_', 'dim_Bad', 'field_1x', 'phone', 'dim_a-b'], invalidCount: 6, count: 7 });
+  });
+
+  it('echoes at most ten bad items, and says how many there were in all', () => {
+    const bad = Array.from({ length: 40 }, (_, i) => `bad${i}${'z'.repeat(100)}`);
+    const parsed = parseCallExportFields(['ai_summary', ...bad]);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.invalid).toHaveLength(10);
+    expect(parsed.invalid[0]).toBe(`${bad[0]!.slice(0, 64)}…`);
+    expect(parsed).toMatchObject({ invalidCount: 40, count: 41 });
+    const body = callExportFieldsInvalidBody(parsed);
+    expect(body.details).toEqual({ invalid: parsed.invalid, invalid_count: 40, count: 41, max: 100 });
+    expect(body.message.endsWith(' and 30 more.')).toBe(true);
+    expect(body.message.length).toBeLessThan(1000);
   });
 
   it('accepts a 50-character key and refuses 51', () => {
@@ -88,16 +104,16 @@ describe('parseCallExportFields (CL52)', () => {
     expect(fieldsOf(many(AGENCY_CALL_EXPORT_MAX_FIELDS))).toHaveLength(AGENCY_CALL_EXPORT_MAX_FIELDS);
     expect(fieldsOf([...many(AGENCY_CALL_EXPORT_MAX_FIELDS), 'dim_k0'])).toHaveLength(AGENCY_CALL_EXPORT_MAX_FIELDS);
     expect(parseCallExportFields(many(AGENCY_CALL_EXPORT_MAX_FIELDS + 1)))
-      .toEqual({ ok: false, invalid: [], count: AGENCY_CALL_EXPORT_MAX_FIELDS + 1 });
+      .toEqual({ ok: false, invalid: [], invalidCount: 0, count: AGENCY_CALL_EXPORT_MAX_FIELDS + 1 });
   });
 
   it('the refusals say what is wrong in plain words, with the wire codes', () => {
-    expect(callExportFieldsInvalidBody({ invalid: ['transcript'], count: 1 })).toMatchObject({
+    expect(callExportFieldsInvalidBody({ invalid: ['transcript'], invalidCount: 1, count: 1 })).toMatchObject({
       code: 'export_fields_invalid',
       message: 'These fields cannot be added to the export: transcript.',
-      details: { invalid: ['transcript'], count: 1, max: 100 },
+      details: { invalid: ['transcript'], invalid_count: 1, count: 1, max: 100 },
     });
-    expect(callExportFieldsInvalidBody({ invalid: [], count: 101 }).message)
+    expect(callExportFieldsInvalidBody({ invalid: [], invalidCount: 0, count: 101 }).message)
       .toBe('At most 100 fields can be added to one export; 101 were asked for.');
     expect(callExportFieldsNotPermittedBody(['ai_summary', 'dim_x'])).toEqual({
       error: 'Forbidden',
@@ -125,7 +141,10 @@ describe('planCallExportFields: the grant, the extras and the ceiling (CL47, CL4
 
   it('asks the read for each kind of extra only when a field of that kind is chosen', () => {
     expect(callExportInclude(planCallExportFields(fieldsOf('field_a')))).toBe('call_fields');
-    expect(callExportInclude(planCallExportFields(fieldsOf('analysis_status')))).toBe('analysis');
+    // analysis_status alone reads the status, never the stored result.
+    expect(callExportInclude(planCallExportFields(fieldsOf('analysis_status')))).toBe('analysis_status');
+    expect(callExportInclude(planCallExportFields(fieldsOf('analysis_status,field_a')))).toBe('analysis_status,call_fields');
+    expect(callExportInclude(planCallExportFields(fieldsOf('analysis_status,ai_summary')))).toBe('analysis');
     expect(callExportInclude(planCallExportFields(fieldsOf('dim_x,field_a')))).toBe('analysis,call_fields');
     expect(callExportInclude(planCallExportFields([]))).toBeNull();
   });
@@ -136,6 +155,7 @@ describe('parseCallLogInclude (the internal read)', () => {
     expect(parseCallLogInclude(undefined)).toEqual({ ok: true, include: new Set() });
     expect(parseCallLogInclude('analysis,call_fields')).toEqual({ ok: true, include: new Set(['analysis', 'call_fields']) });
     expect(parseCallLogInclude(['call_fields'])).toEqual({ ok: true, include: new Set(['call_fields']) });
+    expect(parseCallLogInclude('analysis_status')).toEqual({ ok: true, include: new Set(['analysis_status']) });
     expect(parseCallLogInclude('analysis,transcript')).toEqual({ ok: false, unknown: ['transcript'] });
   });
 });
@@ -144,17 +164,36 @@ describe('callExportCell: how a value is written (CL49)', () => {
   it('every value type', () => {
     expect(callExportCell(true)).toBe('true');
     expect(callExportCell(false)).toBe('false');
-    expect(callExportCell(0)).toBe('0');
-    expect(callExportCell(0.85)).toBe('0.85');
-    expect(callExportCell(-3)).toBe('-3');
+    // A JSON number is a number cell: written as it is, never formula-guarded (CL49).
+    expect(callExportCell(0)).toEqual(csvNumberCell(0));
+    expect(callExportCell(0.85)).toEqual(csvNumberCell(0.85));
+    expect(callExportCell(-3)).toEqual(csvNumberCell(-3));
+    // JSON cannot carry these; were one to arrive it is nothing.
+    expect(callExportCell(Number.NaN)).toBe('');
+    expect(callExportCell(Number.POSITIVE_INFINITY)).toBe('');
+    // A string that looks like a number stays text, and text is guarded by the line writer.
+    expect(callExportCell('-1+2')).toBe('-1+2');
     expect(callExportCell('strong')).toBe('strong');
     expect(callExportCell('line one\nline two')).toBe('line one\nline two');
     expect(callExportCell(['emi', 'waiver'])).toBe('emi; waiver');
-    expect(callExportCell([1, true, null, { a: 1 }, ['x']])).toBe('1; true; ; {"a":1}; ["x"]');
+    // An item with no value is left out; an object or a list in a list is JSON, so a value.
+    expect(callExportCell([1, true, null, '', { a: 1 }, ['x'], []])).toBe('1; true; {"a":1}; ["x"]; []');
+    expect(callExportCell([-1, 2])).toBe('-1; 2');
     expect(callExportCell({ amount: 5000, date: '2026-12-01' })).toBe('{"amount":5000,"date":"2026-12-01"}');
     expect(callExportCell(null)).toBe('');
     expect(callExportCell(undefined)).toBe('');
     expect(callExportCell([])).toBe('');
+    expect(callExportCell([null])).toBe('');
+    expect(callExportCell(['', null])).toBe('');
+  });
+
+  it('callExportHasValue: a value is what is written as a non-empty cell', () => {
+    for (const value of [false, 0, -0.4, 'x', {}, [false], [0], [[]], [{}], ['', 'a'], { a: null }]) {
+      expect(callExportHasValue(value), JSON.stringify(value)).toBe(true);
+    }
+    for (const value of [null, undefined, '', [], [null], [''], ['', null]]) {
+      expect(callExportHasValue(value), JSON.stringify(value)).toBe(false);
+    }
   });
 });
 
@@ -246,6 +285,20 @@ describe('the file: header order and rows (CL43)', () => {
     }, fieldsOf('ai_summary'));
     expect(line.trimEnd().endsWith(',"\'=HYPERLINK(""http://evil"",""x"")"')).toBe(true);
     expect(line).not.toContain("''=");
+  });
+
+  it('a negative number is written as a number, unguarded; a numeric-looking string and a phone stay guarded', () => {
+    const line = callExportCsvRow({
+      ...ROW,
+      source: 'soft_phone',
+      export_extras: {
+        analysis_status: 'completed',
+        call_analysis: { common: { overall_sentiment: { label: '-1+2', score: -0.4 } }, custom: { n: -5e-7, s: '=1', l: [-1, 2] } },
+        call_fields: { phone: '+919876500001', amount: -1500 },
+      },
+    }, fieldsOf('ai_sentiment_score,ai_sentiment,dim_n,dim_s,dim_l,field_phone,field_amount'));
+    const plain = attemptCsvRow({ ...ROW, source: 'soft_phone' }).trimEnd();
+    expect(line).toBe(`${plain},-0.4,'-1+2,-5e-7,'=1,'-1; 2,'+919876500001,-1500\n`);
   });
 
   it('a summary with line breaks and commas stays one quoted cell', () => {

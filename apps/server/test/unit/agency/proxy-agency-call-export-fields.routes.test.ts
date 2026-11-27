@@ -115,6 +115,20 @@ describe('attempts.csv?fields: refusals, before anything is read', () => {
     await app.close();
   });
 
+  it('400 echoes at most ten bad items, each cut short, and counts them all', async () => {
+    const app = await buildApp();
+    const bad = Array.from({ length: 60 }, (_, i) => `bad_${i}_${'x'.repeat(200)}`).join(',');
+    const res = await app.inject({ method: 'GET', url: csv(bad) });
+    expect(res.statusCode).toBe(400);
+    const body = res.json();
+    expect(body).toMatchObject({ code: 'export_fields_invalid', details: { invalid_count: 60, count: 60, max: 100 } });
+    expect(body.details.invalid).toHaveLength(10);
+    for (const item of body.details.invalid as string[]) expect(item.length).toBeLessThanOrEqual(65);
+    expect(body.message).toContain(' and 50 more.');
+    expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('400 for more than 100 fields', async () => {
     const app = await buildApp();
     const many = Array.from({ length: 101 }, (_, i) => `field_k${i}`).join(',');
@@ -183,10 +197,13 @@ describe('attempts.csv?fields: the analytics setting (CL47)', () => {
 });
 
 describe('attempts.csv?fields: what is asked of the call log read', () => {
-  it('include=call_fields only for call details; include=analysis only for analysis; both for both', async () => {
+  it('include=call_fields only for call details; include=analysis only for analysis that reads the result; both for both', async () => {
     const cases: Array<[string, string | undefined]> = [
       ['field_loan_no', 'call_fields'],
-      ['analysis_status', 'analysis'],
+      // analysis_status alone: the status, never the stored result.
+      ['analysis_status', 'analysis_status'],
+      ['analysis_status,field_a', 'analysis_status,call_fields'],
+      ['analysis_status,dim_x', 'analysis'],
       ['ai_key_topics,field_a', 'analysis,call_fields'],
     ];
     for (const [fields, include] of cases) {
@@ -219,6 +236,16 @@ describe('attempts.csv?fields: what is asked of the call log read', () => {
     await app.close();
   });
 
+  it('no preamble, no field-list read: the descriptions are for the preamble alone', async () => {
+    mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(page([ROW]));
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: csv('dim_promise_strength', '&source=dialler&preamble=false') });
+    expect(res.statusCode).toBe(200);
+    expect(corePaths()).toEqual([`/agency-campaigns/${CAMPAIGN}`, `/agency-campaigns/${CAMPAIGN}/call-log`]);
+    expect(res.body.trimEnd().split('\n')[1]!.endsWith(',strong')).toBe(true);
+    await app.close();
+  });
+
   it('no dimension, no field-list read', async () => {
     mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(page([ROW]));
     const app = await buildApp();
@@ -240,7 +267,7 @@ describe('attempts.csv?fields: what is asked of the call log read', () => {
 
 describe('attempts.csv?fields: the file', () => {
   it('today\'s columns, then the chosen ones in the order asked, with their cells', async () => {
-    mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(FIELD_LIST).mockResolvedValueOnce(page([ROW, SOFT_ROW]));
+    mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(page([ROW, SOFT_ROW]));
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: csv('dim_promise_strength,ai_key_topics,field_loan_no,analysis_status', '&preamble=false') });
     const [header, dial, soft] = res.body.trimEnd().split('\n');

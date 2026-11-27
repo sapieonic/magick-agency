@@ -522,10 +522,13 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
    *  2. the campaign's ownership (`requireOwnedCampaign`, its own 404);
    *  3. an analysis or dimension field without the campaign's account's analytics setting: 403
    *     `export_fields_not_permitted`, never dropped (CL47); the setting is read only then;
-   *  4. a dimension chosen: its newest description, from the field list read with the file's own
-   *     filters (one extra internal call), for the preamble (CL51);
-   *  5. the drain, asking the call log read for `include=analysis` only when an analysis or
-   *     dimension field is chosen and `include=call_fields` only when a call detail is.
+   *  4. a dimension chosen and a preamble written: its newest description, from the field list
+   *     read with the file's own filters (one extra internal call), for the preamble (CL51); with
+   *     `preamble=false` it is not read;
+   *  5. the drain, asking the call log read for `include=analysis` only when an analysis field
+   *     other than `analysis_status`, or a dimension, is chosen, `include=analysis_status` (the
+   *     status alone, no result read) when `analysis_status` is the only one, and
+   *     `include=call_fields` only when a call detail is.
    *
    * With no `fields` none of 3–5 happens and the file is the plain export, byte for byte.
    */
@@ -561,7 +564,9 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     }
 
     try {
-      const descriptions = plan?.fields.some((f) => f.kind === 'dimension')
+      // The descriptions are for the preamble alone: without one (`preamble=false`) they are not read.
+      const preamble = wantsPreamble(request.query);
+      const descriptions = preamble && plan?.fields.some((f) => f.kind === 'dimension')
         ? await dimensionDescriptions(request, filters)
         : new Map<string, string | null>();
       const include = plan ? callExportInclude(plan) : null;
@@ -587,7 +592,7 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
       return sendSpineCsv(request, reply, {
         kind: 'attempts',
         ...drained,
-        preamble: wantsPreamble(request.query),
+        preamble,
         filters,
         campaignName: owned.name,
         // The campaign row's account (`requireOwnedCampaign`), always present.

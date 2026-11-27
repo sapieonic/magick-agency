@@ -584,13 +584,35 @@ describe('GET /:id/call-log?include: the export\'s extras (docs/call-log.md §10
     const res = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?include=analysis,call_fields', headers: HEADERS });
     expect(res.statusCode).toBe(200);
     expect(attempts.callExportLegAnalyses).toHaveBeenCalledTimes(1);
-    expect(attempts.callExportLegAnalyses).toHaveBeenCalledWith('t1', 'a1', [LEG]);
+    expect(attempts.callExportLegAnalyses).toHaveBeenCalledWith('t1', 'a1', [LEG], { withResult: true });
     expect(attempts.callExportCallFields).toHaveBeenCalledWith('t1', 'a1', [MANUAL]);
     expect(res.json().rows.map((r: { export_extras: unknown }) => r.export_extras)).toEqual([
       { analysis_status: 'completed', call_analysis: { custom: { a: 1 } }, call_fields: null },
       { analysis_status: null, call_analysis: null, call_fields: { loan_no: 'LN-1' } },
       { analysis_status: null, call_analysis: null, call_fields: null },
     ]);
+    await app.close();
+  });
+
+  it('analysis_status alone reads the legs\' status without their stored result', async () => {
+    attempts.listCallLogForCampaign.mockResolvedValue({ rows: ROWS, next_cursor: null, limit: 50 });
+    attempts.callExportLegAnalyses.mockResolvedValue(new Map([[LEG, { analysis_status: 'completed', call_analysis: null }]]));
+    const app = await makeApp();
+    const res = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?include=analysis_status', headers: HEADERS });
+    expect(res.statusCode).toBe(200);
+    expect(attempts.callExportLegAnalyses).toHaveBeenCalledWith('t1', 'a1', [LEG], { withResult: false });
+    expect(attempts.callExportCallFields).not.toHaveBeenCalled();
+    expect(res.json().rows[0].export_extras).toEqual({ analysis_status: 'completed', call_analysis: null, call_fields: null });
+    await app.close();
+  });
+
+  it('analysis beside analysis_status reads the result', async () => {
+    attempts.listCallLogForCampaign.mockResolvedValue({ rows: ROWS, next_cursor: null, limit: 50 });
+    attempts.callExportLegAnalyses.mockResolvedValue(new Map());
+    const app = await makeApp();
+    await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?include=analysis_status,analysis', headers: HEADERS });
+    expect(attempts.callExportLegAnalyses).toHaveBeenCalledTimes(1);
+    expect(attempts.callExportLegAnalyses).toHaveBeenCalledWith('t1', 'a1', [LEG], { withResult: true });
     await app.close();
   });
 
@@ -608,7 +630,7 @@ describe('GET /:id/call-log?include: the export\'s extras (docs/call-log.md §10
     const app = await makeApp();
     const res = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?include=analysis,transcript', headers: HEADERS });
     expect(res.statusCode).toBe(400);
-    expect(res.json().details).toEqual([{ param: 'include', message: 'must be one of: analysis, call_fields' }]);
+    expect(res.json().details).toEqual([{ param: 'include', message: 'must be one of: analysis, analysis_status, call_fields' }]);
     expect(attempts.listCallLogForCampaign).not.toHaveBeenCalled();
     await app.close();
   });

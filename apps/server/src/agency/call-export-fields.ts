@@ -10,9 +10,10 @@
  *  - {@link callExportPreambleLines}: what the preamble says about them (CL51).
  *  - {@link attachCallExportExtras}: the internal call log read's `export_extras` on each row.
  *
- * Every cell still goes through `toCsvLine` and its formula guard: an AI summary is model output
- * and is treated as untrusted text. Nothing here escapes a cell itself (a second escape would
- * double the apostrophe).
+ * Every text cell still goes through `toCsvLine` and its formula guard: an AI summary is model
+ * output and is treated as untrusted text. Only an added cell whose value is a JSON number is
+ * written as it is (`csvNumberCell`), so a negative score stays a number. Nothing here escapes a
+ * cell itself (a second escape would double the apostrophe).
  *
  * A LEAF module: types, constants and pure functions. No fastify, no db.
  */
@@ -33,7 +34,7 @@ import {
 import { ANALYTICS_DIMENSION_TYPES, type AnalyticsDimensionType } from '@magick-agency/contracts/api/agency/shared';
 import { AGENCY_CALL_LOG_TYPES } from '@magick-agency/contracts/api/agency/call-log';
 import { AGENCY_CALL_FIELD_TYPES, type AgencyCallFieldType } from '@magick-agency/contracts/agency';
-import { preambleLine, sanitizePreambleValue, toCsvLine } from './agency-csv.js';
+import { csvNumberCell, preambleLine, sanitizePreambleValue, toCsvLine, type CsvCell } from './agency-csv.js';
 import { ATTEMPT_CSV_COLUMNS, SPINE_EXPORT_MAX_ROWS, attemptCsvCells, type SpineAttemptRow } from './agency-spine.js';
 import { multiParam } from './spine-filters.js';
 
@@ -47,10 +48,20 @@ export type CallExportField =
 
 /** How much of a refused item the 400 echoes back: an item is a name, never this long. */
 const ECHOED_ITEM_MAX_CHARS = 64;
+/** How many refused items the 400 echoes back; `invalid_count` says how many there were. */
+export const ECHOED_INVALID_MAX_ITEMS = 10;
 
 export type CallExportFieldsParse =
   | { ok: true; fields: CallExportField[] }
-  | { ok: false; invalid: string[]; count: number };
+  | {
+    ok: false;
+    /** The first {@link ECHOED_INVALID_MAX_ITEMS} refused items, each cut to a name's length. */
+    invalid: string[];
+    /** How many items were refused, all of them. */
+    invalidCount: number;
+    /** How many distinct items were asked for. */
+    count: number;
+  };
 
 /** One `fields` item, or null when it is of no recognised shape. */
 function readField(item: string): CallExportField | null {
@@ -72,32 +83,37 @@ function readField(item: string): CallExportField | null {
  * multi-value param), each item trimmed, blanks dropped, a repeat keeping its first place. Each
  * item is an analysis field, or `dim_` / `field_` and a key matching
  * `AGENCY_CALL_EXPORT_KEY_PATTERN`. More than `AGENCY_CALL_EXPORT_MAX_FIELDS`, or an item of any
- * other shape, is refused with the items named (each cut to a name's length). Absent or blank:
+ * other shape, is refused with the items named (the first ten, each cut to a name's length, and
+ * how many there were in all). Absent or blank:
  * no fields, and the file is exactly the plain one.
  */
 export function parseCallExportFields(raw: unknown): CallExportFieldsParse {
   const items = [...new Set(multiParam(raw) ?? [])];
   const fields: CallExportField[] = [];
   const invalid: string[] = [];
+  let invalidCount = 0;
   for (const item of items) {
     const field = readField(item);
     if (field) fields.push(field);
-    else invalid.push(item.length > ECHOED_ITEM_MAX_CHARS ? `${item.slice(0, ECHOED_ITEM_MAX_CHARS)}…` : item);
+    else if (++invalidCount <= ECHOED_INVALID_MAX_ITEMS) {
+      invalid.push(item.length > ECHOED_ITEM_MAX_CHARS ? `${item.slice(0, ECHOED_ITEM_MAX_CHARS)}…` : item);
+    }
   }
-  if (invalid.length > 0 || items.length > AGENCY_CALL_EXPORT_MAX_FIELDS) {
-    return { ok: false, invalid, count: items.length };
+  if (invalidCount > 0 || items.length > AGENCY_CALL_EXPORT_MAX_FIELDS) {
+    return { ok: false, invalid, invalidCount, count: items.length };
   }
   return { ok: true, fields };
 }
 
 /** The 400 for a refused `fields` (`export_fields_invalid`), in plain words. */
-export function callExportFieldsInvalidBody(refused: { invalid: string[]; count: number }): {
+export function callExportFieldsInvalidBody(refused: { invalid: string[]; invalidCount: number; count: number }): {
   error: string; code: 'export_fields_invalid'; message: string;
-  details: { invalid: string[]; count: number; max: number };
+  details: { invalid: string[]; invalid_count: number; count: number; max: number };
 } {
   const parts: string[] = [];
   if (refused.invalid.length > 0) {
-    parts.push(`These fields cannot be added to the export: ${refused.invalid.join(', ')}.`);
+    const more = refused.invalidCount - refused.invalid.length;
+    parts.push(`These fields cannot be added to the export: ${refused.invalid.join(', ')}${more > 0 ? ` and ${more} more` : ''}.`);
   }
   if (refused.count > AGENCY_CALL_EXPORT_MAX_FIELDS) {
     parts.push(`At most ${AGENCY_CALL_EXPORT_MAX_FIELDS} fields can be added to one export; ${refused.count} were asked for.`);
@@ -106,7 +122,7 @@ export function callExportFieldsInvalidBody(refused: { invalid: string[]; count:
     error: 'Validation failed',
     code: 'export_fields_invalid',
     message: parts.join(' '),
-    details: { invalid: refused.invalid, count: refused.count, max: AGENCY_CALL_EXPORT_MAX_FIELDS },
+    details: { invalid: refused.invalid, invalid_count: refused.invalidCount, count: refused.count, max: AGENCY_CALL_EXPORT_MAX_FIELDS },
   };
 }
 
@@ -129,8 +145,17 @@ export interface CallExportFieldPlan {
   fields: CallExportField[];
   /** The analysis and dimension fields: behind the campaign's account's analytics setting (CL47). */
   needsAnalysisGrant: string[];
-  /** The call log read attaches the media leg's analysis (`include=analysis`). */
+  /**
+   * The call log read attaches the media leg's analysis status AND its stored result
+   * (`include=analysis`): an analysis field other than `analysis_status`, or a dimension, is chosen.
+   */
   includeAnalysis: boolean;
+  /**
+   * The call log read attaches the media leg's analysis status alone (`include=analysis_status`):
+   * `analysis_status` is chosen and nothing that needs the stored result, so no `call_analysis` is
+   * read. Still behind the analytics setting (`needsAnalysisGrant`).
+   */
+  includeAnalysisStatus: boolean;
   /** The call log read attaches the soft-phone call's details (`include=call_fields`). */
   includeCallFields: boolean;
   /** The file's row ceiling: 20,000 with an AI field (CL48), else the export's own 50,000. */
@@ -139,12 +164,15 @@ export interface CallExportFieldPlan {
 
 export function planCallExportFields(fields: readonly CallExportField[]): CallExportFieldPlan {
   const needsAnalysisGrant = fields.filter((f) => f.kind !== 'call_field').map((f) => f.name);
+  // The fields read from the stored result are exactly those that lower the ceiling (CL48).
+  const needsResult = fields.some((f) => lowersCallExportRowLimit(f.name));
   return {
     fields: [...fields],
     needsAnalysisGrant,
-    includeAnalysis: needsAnalysisGrant.length > 0,
+    includeAnalysis: needsResult,
+    includeAnalysisStatus: !needsResult && needsAnalysisGrant.length > 0,
     includeCallFields: fields.some((f) => f.kind === 'call_field'),
-    rowLimit: fields.some((f) => lowersCallExportRowLimit(f.name)) ? AGENCY_CALL_EXPORT_AI_ROW_LIMIT : SPINE_EXPORT_MAX_ROWS,
+    rowLimit: needsResult ? AGENCY_CALL_EXPORT_AI_ROW_LIMIT : SPINE_EXPORT_MAX_ROWS,
   };
 }
 
@@ -152,6 +180,7 @@ export function planCallExportFields(fields: readonly CallExportField[]): CallEx
 export function callExportInclude(plan: CallExportFieldPlan): string | null {
   const kinds = [
     ...(plan.includeAnalysis ? [CALL_LOG_INCLUDE_ANALYSIS] : []),
+    ...(plan.includeAnalysisStatus ? [CALL_LOG_INCLUDE_ANALYSIS_STATUS] : []),
     ...(plan.includeCallFields ? [CALL_LOG_INCLUDE_CALL_FIELDS] : []),
   ];
   return kinds.length > 0 ? kinds.join(',') : null;
@@ -159,10 +188,13 @@ export function callExportInclude(plan: CallExportFieldPlan): string | null {
 
 // ─── The internal read's extras ────────────────────────────────────────────
 
+/** The media leg's analysis status and stored result. */
 export const CALL_LOG_INCLUDE_ANALYSIS = 'analysis';
+/** The media leg's analysis status alone: `call_analysis` is not read. `analysis` covers it. */
+export const CALL_LOG_INCLUDE_ANALYSIS_STATUS = 'analysis_status';
 export const CALL_LOG_INCLUDE_CALL_FIELDS = 'call_fields';
 /** `?include=` on the internal call log read: what it attaches to each row as `export_extras`. */
-export const CALL_LOG_INCLUDES = [CALL_LOG_INCLUDE_ANALYSIS, CALL_LOG_INCLUDE_CALL_FIELDS] as const;
+export const CALL_LOG_INCLUDES = [CALL_LOG_INCLUDE_ANALYSIS, CALL_LOG_INCLUDE_ANALYSIS_STATUS, CALL_LOG_INCLUDE_CALL_FIELDS] as const;
 export type CallLogInclude = (typeof CALL_LOG_INCLUDES)[number];
 
 /**
@@ -178,7 +210,8 @@ export function parseCallLogInclude(raw: unknown): { ok: true; include: Set<Call
 
 /**
  * What the internal read attaches to a row with `include`: its media leg's analysis (status and
- * stored result, null when not asked for, the row has no leg, or the leg is not this account's)
+ * stored result, null when not asked for, the row has no leg, or the leg is not this account's;
+ * with `include=analysis_status` alone the result is null as it was never read)
  * and, on a soft-phone row, the call details the agent entered (null on any other row).
  */
 export interface CallExportExtras {
@@ -242,20 +275,47 @@ function firstPresent(result: unknown, current: readonly string[], legacy: reado
 }
 
 /**
- * One value as a cell (CL49): `true`/`false`, a number as written, text as it is (line breaks
- * kept: `toCsvLine` quotes them), a list joined with `; ` (each item the same way, an object in it
- * as JSON), any other object as JSON, nothing as an empty cell.
+ * One value as text (CL49): `true`/`false`, a number as written, text as it is (line breaks kept:
+ * `toCsvLine` quotes them), a list as its items joined with `; ` (an object or a list in it as
+ * JSON, an item with no value left out), any other object as JSON, nothing as an empty string.
  */
-export function callExportCell(value: unknown): string {
+function callExportText(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'boolean') return value ? 'true' : 'false';
-  if (typeof value === 'number') return String(value);
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) {
-    return value.map((item) => (item !== null && typeof item === 'object' ? JSON.stringify(item) : callExportCell(item))).join('; ');
+    return value
+      .map((item) => (item !== null && typeof item === 'object' ? JSON.stringify(item) : callExportText(item)))
+      .filter((text) => text !== '')
+      .join('; ');
   }
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
+}
+
+/**
+ * One value as a cell (CL49), as {@link callExportText} writes it, except a JSON number, which is
+ * a {@link csvNumberCell}: written as it is, with no formula guard, so `-0.4` stays a number in a
+ * spreadsheet. Everything else is a string cell and goes through `toCsvLine`'s guard, a string
+ * that merely looks like a number (`"-1+2"`) included, and so does a list (`-1; 2` is text). A
+ * number that is not finite (JSON cannot carry one) is an empty cell.
+ */
+export function callExportCell(value: unknown): CsvCell {
+  if (typeof value === 'number') return Number.isFinite(value) ? csvNumberCell(value) : '';
+  return callExportText(value);
+}
+
+/**
+ * Whether a value is written as a non-empty cell: what the field list counts as "a call carries a
+ * value". `hasCellValueSql` in the attempt repository is the same rule in SQL, and an integration
+ * test holds the two together. Not null, not `""`, not a list none of whose items is one (`[]`,
+ * `[null]`, `["", null]`); `false`, `0`, `{}` and a list holding `[]` or `{}` (written as JSON)
+ * are values.
+ */
+export function callExportHasValue(value: unknown): boolean {
+  const cell = callExportCell(value);
+  return typeof cell === 'string' ? cell !== '' : true;
 }
 
 /** The stored result, unless the leg's analysis was erased (`deleted`): an erasure leaves nothing to export. */

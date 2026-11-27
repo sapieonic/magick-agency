@@ -353,11 +353,17 @@ function scopedInboundConditions(
 }
 
 /**
- * Whether a jsonb value would be a non-empty cell of the export (`callExportCell`): not NULL (the
- * caller turns JSON `null` into NULL), not `""` and not `[]`.
+ * Whether a jsonb value would be a non-empty cell of the export: `callExportHasValue` in
+ * `call-export-fields.ts` is the same rule in JS, and an integration test holds the two together.
+ * Not NULL or JSON `null`, not `""`, and not a list none of whose items is a value: a list is
+ * written as its items with a value joined (`[null]`, `["", null]` and `[]` are empty cells), and
+ * an object or list inside it is written as JSON, so `[[]]` and `[{}]` are values. `value` is an
+ * expression and may be repeated: pass a column or a cheap path.
  */
-function hasCellValueSql(value: string): string {
-  return `(${value} IS NOT NULL AND ${value} <> '""'::jsonb AND ${value} <> '[]'::jsonb)`;
+export function hasCellValueSql(value: string): string {
+  return `(${value} IS NOT NULL AND ${value} <> 'null'::jsonb AND ${value} <> '""'::jsonb`
+    + ` AND (jsonb_typeof(${value}) <> 'array' OR EXISTS (SELECT 1 FROM jsonb_array_elements(${value}) AS item(v)`
+    + ` WHERE item.v <> 'null'::jsonb AND item.v <> '""'::jsonb)))`;
 }
 
 /** The analysis's common fields with their counts (`analysis_status` always has a value: every call). */
@@ -1299,8 +1305,11 @@ export class AgencyAttemptRepository {
    *    from the account's soft-phone settings as they are now.
    *
    * A key that does not match `AGENCY_CALL_EXPORT_KEY_PATTERN` is not offered: the export could
-   * not be asked for it. "A value" is what the file would write as a non-empty cell: not null,
-   * not `""`, not `[]`.
+   * not be asked for it. "A value" is what the file would write as a non-empty cell
+   * ({@link hasCellValueSql}): not null, not `""`, not a list with no item that is a value.
+   *
+   * Every listed row is counted (`calls` is the true total, never capped). Of each leg only the
+   * paths the fields read are carried (`legs`), and of each job only its dimension copy.
    */
   async callExportFieldsForCampaign(input: {
     campaignId: string;
@@ -1354,20 +1363,40 @@ export class AgencyAttemptRepository {
     const tenant = `${bind.add(input.tenantId)}::uuid`;
     const account = `${bind.add(input.accountId)}::uuid`;
     const keyPattern = `${bind.add(AGENCY_CALL_EXPORT_KEY_PATTERN.source)}::text`;
+    // `legs` carries only what is read of each result, never the whole `call_analysis` (its turns,
+    // conversation quality and the rest are large): the result is detoasted once per leg, by
+    // `jsonb_to_record` over its top-level keys, and each common field is taken current shape
+    // first, else the legacy flat one (`firstPresent` in `call-export-fields.ts`). `snapshots`
+    // keeps only each job's dimension copy, never the rest of its `profile_snapshot`.
     const analysisCtes = input.includeAnalysis ? `,
       legs AS MATERIALIZED (
         SELECT l.source, c.id AS call_id, c.analysis_status,
-               CASE WHEN c.analysis_status = 'deleted' THEN NULL ELSE c.call_analysis END AS result
+               COALESCE(NULLIF(r.common -> 'summary', 'null'::jsonb), NULLIF(r.summary, 'null'::jsonb)) AS ai_summary,
+               COALESCE(NULLIF(r.common #> '{overall_sentiment,label}', 'null'::jsonb),
+                        NULLIF(r.overall_sentiment -> 'label', 'null'::jsonb)) AS ai_sentiment,
+               COALESCE(NULLIF(r.common #> '{overall_sentiment,score}', 'null'::jsonb),
+                        NULLIF(r.overall_sentiment -> 'score', 'null'::jsonb)) AS ai_sentiment_score,
+               COALESCE(NULLIF(r.common -> 'key_topics', 'null'::jsonb), NULLIF(r.key_topics, 'null'::jsonb)) AS ai_key_topics,
+               CASE WHEN jsonb_typeof(r.custom) = 'object' THEN r.custom END AS custom,
+               CASE WHEN jsonb_typeof(r.custom_dimensions) = 'object' THEN r.custom_dimensions END AS custom_dimensions
           FROM listed l
           JOIN agency_calls c ON c.id = l.call_id
+          LEFT JOIN LATERAL jsonb_to_record(
+                 CASE WHEN c.analysis_status IS DISTINCT FROM 'deleted' AND jsonb_typeof(c.call_analysis) = 'object'
+                      THEN c.call_analysis END
+               ) AS r(common jsonb, summary jsonb, overall_sentiment jsonb, key_topics jsonb, custom jsonb, custom_dimensions jsonb)
+            ON true
          WHERE l.call_id IS NOT NULL AND c.tenant_id = ${tenant} AND c.account_id = ${account}
       ),
-      versions AS (
-        SELECT j.profile_snapshot -> 'custom_dimensions' AS dims,
-               min(j.created_at) AS first_at, max(j.created_at) AS last_at
+      snapshots AS MATERIALIZED (
+        SELECT j.profile_snapshot -> 'custom_dimensions' AS dims, j.created_at
           FROM (SELECT DISTINCT call_id FROM legs) g
           JOIN dialer_analysis_jobs j ON j.call_id = g.call_id
-         WHERE jsonb_typeof(j.profile_snapshot -> 'custom_dimensions') = 'array'
+      ),
+      versions AS (
+        SELECT dims, min(created_at) AS first_at, max(created_at) AS last_at
+          FROM snapshots
+         WHERE jsonb_typeof(dims) = 'array'
          GROUP BY 1
       ),
       declared AS (
@@ -1380,15 +1409,13 @@ export class AgencyAttemptRepository {
       ),
       stored AS (
         SELECT g.source, k.key,
-               COALESCE(NULLIF(g.result -> 'custom' -> k.key, 'null'::jsonb),
-                        NULLIF(g.result -> 'custom_dimensions' -> k.key, 'null'::jsonb)) AS value
+               COALESCE(NULLIF(g.custom -> k.key, 'null'::jsonb),
+                        NULLIF(g.custom_dimensions -> k.key, 'null'::jsonb)) AS value
           FROM legs g
           CROSS JOIN LATERAL (
-            SELECT jsonb_object_keys(CASE WHEN jsonb_typeof(g.result -> 'custom') = 'object'
-                                          THEN g.result -> 'custom' ELSE '{}'::jsonb END)
+            SELECT jsonb_object_keys(COALESCE(g.custom, '{}'::jsonb))
             UNION
-            SELECT jsonb_object_keys(CASE WHEN jsonb_typeof(g.result -> 'custom_dimensions') = 'object'
-                                          THEN g.result -> 'custom_dimensions' ELSE '{}'::jsonb END)
+            SELECT jsonb_object_keys(COALESCE(g.custom_dimensions, '{}'::jsonb))
           ) AS k(key)
          WHERE k.key ~ ${keyPattern}
       ),
@@ -1418,16 +1445,13 @@ export class AgencyAttemptRepository {
           FROM stored WHERE ${hasCellValueSql('value')}
          GROUP BY key
       )` : '';
-    const has = (current: string, legacy: string) => hasCellValueSql(
-      `COALESCE(NULLIF(result #> '${current}', 'null'::jsonb), NULLIF(result #> '${legacy}', 'null'::jsonb))`,
-    );
     const analysisColumns = input.includeAnalysis ? `,
       (SELECT jsonb_build_object(
                 'analysed', count(*) FILTER (WHERE analysis_status = 'completed'),
-                'ai_summary', count(*) FILTER (WHERE ${has('{common,summary}', '{summary}')}),
-                'ai_sentiment', count(*) FILTER (WHERE ${has('{common,overall_sentiment,label}', '{overall_sentiment,label}')}),
-                'ai_sentiment_score', count(*) FILTER (WHERE ${has('{common,overall_sentiment,score}', '{overall_sentiment,score}')}),
-                'ai_key_topics', count(*) FILTER (WHERE ${has('{common,key_topics}', '{key_topics}')}))
+                'ai_summary', count(*) FILTER (WHERE ${hasCellValueSql('ai_summary')}),
+                'ai_sentiment', count(*) FILTER (WHERE ${hasCellValueSql('ai_sentiment')}),
+                'ai_sentiment_score', count(*) FILTER (WHERE ${hasCellValueSql('ai_sentiment_score')}),
+                'ai_key_topics', count(*) FILTER (WHERE ${hasCellValueSql('ai_key_topics')}))
          FROM legs) AS analysis,
       (SELECT COALESCE(jsonb_agg(jsonb_build_object(
                 'key', k.key, 'types', COALESCE(t.types, '[]'::jsonb), 'options', COALESCE(o.options, '[]'::jsonb),
@@ -1487,13 +1511,19 @@ export class AgencyAttemptRepository {
    * analysis status and stored result, read by primary key in ONE statement, **scoped to the
    * tenant AND the account** (the campaign's): a leg of another account or tenant is not read,
    * whatever id a row carries. An erased leg (`deleted`) answers its status and no result.
+   * `withResult: false` (`include=analysis_status`, only `analysis_status` chosen) reads the
+   * status alone: `call_analysis` is not in the statement, so no result is detoasted.
    */
-  async callExportLegAnalyses(tenantId: string, accountId: string, callIds: readonly string[]): Promise<Map<string, CallExportLegAnalysis>> {
+  async callExportLegAnalyses(
+    tenantId: string, accountId: string, callIds: readonly string[], opts: { withResult: boolean } = { withResult: true },
+  ): Promise<Map<string, CallExportLegAnalysis>> {
     const ids = [...new Set(callIds)];
     if (ids.length === 0) return new Map();
+    const result = opts.withResult
+      ? `CASE WHEN analysis_status = 'deleted' THEN NULL ELSE call_analysis END`
+      : 'NULL::jsonb';
     const { rows } = await getPool().query<{ id: string; analysis_status: string | null; call_analysis: unknown }>(
-      `SELECT id, analysis_status,
-              CASE WHEN analysis_status = 'deleted' THEN NULL ELSE call_analysis END AS call_analysis
+      `SELECT id, analysis_status, ${result} AS call_analysis
          FROM agency_calls
         WHERE id = ANY($1::uuid[]) AND tenant_id = $2::uuid AND account_id = $3::uuid`,
       [ids, tenantId, accountId],

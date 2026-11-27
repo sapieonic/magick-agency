@@ -38,6 +38,8 @@ import { call, seedFloor, startLoadApp, stopLoadApp, verifyTestToken, type LoadA
 import { insertInboundCall } from '../../helpers/call-log-seed.js';
 import { ATTEMPT_CSV_COLUMNS } from '../../../src/agency/agency-spine.js';
 import { agencyAttemptRepository } from '../../../src/db/repositories/agency.repository.js';
+import { hasCellValueSql } from '../../../src/db/repositories/agency/attempt.repository.js';
+import { callExportHasValue } from '../../../src/agency/call-export-fields.js';
 import type { AgencyCallExportFieldsResponse } from '@magick-agency/contracts/api/agency/call-export-fields';
 
 let loaded: LoadApp;
@@ -314,6 +316,13 @@ describe('the call log read\'s extras (include)', () => {
     const legs = await agencyAttemptRepository.callExportLegAnalyses(floor.tenant, floor.account, [...leg.values()]);
     expect([...legs.keys()].sort()).toEqual(['d1', 'd2', 'd6', 's1', 'i1', 'i2'].map((l) => leg.get(l)!).sort());
     expect(legs.get(leg.get('d6')!)).toEqual({ analysis_status: 'deleted', call_analysis: null });
+    expect(legs.get(leg.get('d1')!)?.call_analysis).toMatchObject({ common: { summary: '=HYPERLINK("http://evil","click")' } });
+    // The status alone: no stored result is read.
+    const statuses = await agencyAttemptRepository.callExportLegAnalyses(floor.tenant, floor.account, [...leg.values()], { withResult: false });
+    expect([...statuses.keys()].sort()).toEqual([...legs.keys()].sort());
+    for (const [legId, analysis] of statuses) {
+      expect(analysis).toEqual({ analysis_status: legs.get(legId)!.analysis_status, call_analysis: null });
+    }
     const fields = await agencyAttemptRepository.callExportCallFields(other.tenant, other.account, [id.get('s1')!, id.get('s2')!]);
     expect(fields.size).toBe(0);
   });
@@ -332,8 +341,8 @@ describe('the export with fields, end to end', () => {
       ai_key_topics: 'emi; waiver', dim_promise_strength: 'strong', dim_amount: '5000', dim_new_dim: '', field_loan_no: '', field_visited: '', field_constructor: '',
     });
     expect(pick('d2')).toMatchObject({
-      // A negative score leads with `-`, so the formula guard marks it as text, as it does a phone's `+` (CL49).
-      analysis_status: 'completed', ai_summary: 'Legacy summary,\nsecond line', ai_sentiment: 'negative', ai_sentiment_score: '\'-0.4',
+      // A negative score is a JSON number, written as a number: no formula guard (CL49).
+      analysis_status: 'completed', ai_summary: 'Legacy summary,\nsecond line', ai_sentiment: 'negative', ai_sentiment_score: '-0.4',
       ai_key_topics: '', dim_promise_strength: 'weak', dim_amount: '5,000', dim_new_dim: 'false',
     });
     // Another tenant's and another account's leg: as if there were none.
@@ -370,6 +379,21 @@ describe('the export with fields, end to end', () => {
       expect(rows.get('s1')!['field_loan_no']).toBe('LN-1');
     } finally {
       await setAnalytics(true);
+    }
+  });
+
+  it('analysis_status alone: the right status on every row, read without the stored result', async () => {
+    const spy = vi.spyOn(agencyAttemptRepository, 'callExportLegAnalyses');
+    try {
+      const { rows } = await exportRows('analysis_status');
+      expect(Object.fromEntries([...rows].map(([label, row]) => [label, row['analysis_status']]))).toEqual({
+        d1: 'completed', d2: 'completed', d3: 'none', d4: 'none', d5: 'none', d6: 'deleted',
+        s1: 'completed', s2: 'none', i1: 'pending', i2: 'completed',
+      });
+      expect(spy).toHaveBeenCalled();
+      for (const args of spy.mock.calls) expect(args[3]).toEqual({ withResult: false });
+    } finally {
+      spy.mockRestore();
     }
   });
 
@@ -412,11 +436,98 @@ describe('the field list\'s statement: legs by primary key, jobs by their unique
     }
     const { rows } = await getTestPool().query<{ 'QUERY PLAN': string }>(`EXPLAIN ${statement.text}`, statement.values);
     const plan = rows.map((row) => row['QUERY PLAN']).join('\n');
-    expect(plan).toMatch(/Index Scan using \w+ on agency_calls c/);
+    expect(plan).toMatch(/Index Scan using agency_calls_pkey on agency_calls c/);
     expect(plan).not.toMatch(/Seq Scan on agency_calls/);
     expect(plan).toContain('uq_dialer_analysis_jobs_call');
     expect(plan).not.toMatch(/Seq Scan on dialer_analysis_jobs/);
+    // The materialised CTEs carry only the paths read: never a whole `call_analysis` or
+    // `profile_snapshot` (each node's Output is what its tuplestore holds).
+    const verbose = (await getTestPool().query<{ 'QUERY PLAN': string }>(`EXPLAIN (VERBOSE) ${statement.text}`, statement.values))
+      .rows.map((row) => row['QUERY PLAN']);
+    for (const cte of ['CTE legs', 'CTE snapshots']) {
+      const start = verbose.findIndex((line) => line.trim() === cte);
+      expect(start, cte).toBeGreaterThanOrEqual(0);
+      const output = verbose.slice(start + 1).find((line) => line.trim().startsWith('Output:'))!;
+      const rest = output.replace(`(j.profile_snapshot -> 'custom_dimensions'::text)`, '');
+      expect(rest, cte).not.toContain('call_analysis');
+      expect(rest, cte).not.toContain('profile_snapshot');
+    }
     // The answer is unchanged by the other calls: none of them is listed.
     expect((await fieldList()).calls).toBe(10);
+  });
+});
+
+describe('what counts as a value: the SQL and the cell writer agree', () => {
+  it('hasCellValueSql answers as callExportHasValue for every shape', async () => {
+    const values: unknown[] = [
+      null, '', 'x', ' ', 0, -0.4, false, true, {}, { a: null }, [], [null], [''], ['', null], [null, 'a'],
+      [false], [0], [[]], [{}], [[null]], 'null',
+    ];
+    for (const value of values) {
+      const { rows: [row] } = await q(
+        `SELECT ${hasCellValueSql('$1::jsonb')} AS has`, [value === null ? null : JSON.stringify(value)]);
+      expect(Boolean(row.has), JSON.stringify(value)).toBe(callExportHasValue(value));
+    }
+    // JSON null as a jsonb value (not SQL NULL) is no value either.
+    const { rows: [jsonNull] } = await q(`SELECT ${hasCellValueSql(`'null'::jsonb`)} AS has`);
+    expect(jsonNull.has).toBe(false);
+  });
+
+  it('a list of nothing is counted as no value in the field list, and written as an empty cell', async () => {
+    const legId = await mediaLeg('e1', {
+      status: 'completed', result: { common: { key_topics: [null, ''] }, custom: { amount: [null] } },
+    });
+    const contactRow = (await q(
+      `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, context, state)
+       VALUES ($1, $2, $3, '+919700000099', '{}'::jsonb, 'completed') RETURNING id`, [campaignId, floor.tenant, floor.account])).rows[0];
+    const { rows: [attemptRow] } = await q(
+      `INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id,
+              state, outcome, webrtc_call_id, dialed_at, ended_at, created_at)
+       VALUES ($1, $2, $3, $4, 1, '+919000000001', 'ended', 'connected', $5, $6, $6, $6) RETURNING id`,
+      [campaignId, contactRow.id, floor.tenant, floor.account, legId, at(40)]);
+    id.set('e1', attemptRow.id as string);
+    try {
+      const window = `&from=${encodeURIComponent(at(40).toISOString())}&to=${encodeURIComponent(at(40).toISOString())}`;
+      const list = await fieldList(`?${window.slice(1)}`);
+      expect(list.calls).toBe(1);
+      expect(list.analysis.find((f) => f.name === 'ai_key_topics')!.calls).toBe(0);
+      expect(list.dimensions.find((d) => d.key === 'amount')?.calls ?? 0).toBe(0);
+      const { rows } = await exportRows('ai_key_topics,dim_amount', window);
+      expect(rows.get('e1')).toMatchObject({ ai_key_topics: '', dim_amount: '' });
+    } finally {
+      await q('DELETE FROM agency_call_attempts WHERE id = $1', [id.get('e1')]);
+      await q('DELETE FROM agency_contacts WHERE id = $1', [contactRow.id]);
+      id.delete('e1');
+    }
+  });
+});
+
+describe('the field list counts exactly the rows the export writes', () => {
+  it('under every call type, the follow-ups and a soft-phone status', async () => {
+    // An open Missed row, so the follow-ups are not an empty set.
+    id.set('m1', await insertInboundCall('m1', {
+      tenantId: floor.tenant, accountId: floor.account, campaign: campaignId, from: '+919800000077', to: '+919000000009',
+      arrived: at(35), outcome: 'closed', closedCause: 'hours', followUp: { status: 'open', reason: 'closed' },
+    }));
+    const cases: Array<[string, string]> = [
+      ['', ''],
+      ['type=dialler', 'source=dialler'],
+      ['type=soft_phone', 'source=soft_phone'],
+      ['type=inbound', 'source=inbound'],
+      ['type=to_follow_up', 'source=to_follow_up'],
+      ['type=soft_phone&status=settled', 'source=soft_phone&status=settled'],
+      ['type=soft_phone&status=awaiting_outcome', 'source=soft_phone&status=awaiting_outcome'],
+    ];
+    const seen = new Set<number>();
+    for (const [listQuery, exportQuery] of cases) {
+      const list = await fieldList(listQuery ? `?${listQuery}` : '');
+      const res = await get(`/proxy/agency/campaigns/${campaignId}/attempts.csv?preamble=false&fields=analysis_status${exportQuery ? `&${exportQuery}` : ''}`);
+      expect(res.statusCode, exportQuery).toBe(200);
+      expect(res.headers['x-export-rows'], listQuery).toBe(String(list.calls));
+      expect(parseCsv(res.body).length - 1, listQuery).toBe(list.calls);
+      seen.add(list.calls);
+    }
+    // The cases are not all one number: each filter really narrows.
+    expect(seen.size).toBeGreaterThan(3);
   });
 });

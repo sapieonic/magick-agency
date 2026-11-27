@@ -214,7 +214,8 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
   /**
    * `include=analysis,call_fields` (the campaign call export with fields, `docs/call-log.md` §10):
    * after the page is read, ONE lookup per kind asked for, by the page's own ids (the media legs by
-   * `webrtc_call_id`, the soft-phone calls by id), each scoped to the tenant AND the account. The
+   * `webrtc_call_id`, the soft-phone calls by id), each scoped to the tenant AND the account.
+   * `analysis_status` instead of `analysis` reads the legs' status alone, never `call_analysis`. The
    * account is the request's, which both paths here have proved is the campaign's: `requireOwned`
    * matches it, and the export's proof (`spinePageCampaign`) was made under it. The main statement
    * is not touched; without `include` this is never called and the page is as it always was.
@@ -227,9 +228,10 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     const tenantId = getTenantId(request);
     const accountId = getAccountId(request);
     const [legs, callFields] = await Promise.all([
-      include.has('analysis')
+      include.has('analysis') || include.has('analysis_status')
         ? agencyAttemptRepository.callExportLegAnalyses(
           tenantId, accountId, rows.map((r) => r.webrtc_call_id).filter((id): id is string => typeof id === 'string'),
+          { withResult: include.has('analysis') },
         )
         : Promise.resolve(null),
       include.has('call_fields')
