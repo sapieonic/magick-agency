@@ -18,7 +18,13 @@ import '../core/auth/support/harness.dart';
 /// screens, routed as `router.dart` routes them: the same five branches in the
 /// same order, so the shell's branch indexes are the app's.
 
-Widget at(GoRouterState s) => Scaffold(body: Text('at ${s.uri}'));
+/// A stand-in screen: a Scaffold, as every tab's screen is, whose body fills it ([tabPage]).
+Widget at(GoRouterState s) => Scaffold(
+      body: SizedBox.expand(key: tabPage, child: Align(alignment: Alignment.topLeft, child: Text('at ${s.uri}'))),
+    );
+
+/// The body of each stand-in screen's Scaffold.
+const tabPage = Key('tab-page');
 
 const ready = GateReady(userId: 'u1', displayName: 'Meera', email: null, tenantId: 't1', accountId: 'a1', accountName: 'Chennai');
 

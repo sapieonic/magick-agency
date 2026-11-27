@@ -3,6 +3,8 @@ import 'package:agency_wire/agency_wire.dart' as wire;
 import '../inbound/inbound_call_rules.dart';
 import '../inbound/inbound_copy.dart';
 import '../lifecycle/lifecycle_policy.dart' show isCallPhase;
+import '../softphone/call_state.dart' show softphonePhase;
+import '../softphone/softphone_view.dart' show SoftphonePhase;
 
 import 'contact_context.dart';
 import 'server_clock.dart';
@@ -679,6 +681,12 @@ StationSignals signalsOf(StationView? view) {
     campaignId: view.campaignId,
   );
 }
+
+/// A soft-phone call arriving ([callArrivalProvider]): the session's call once it connects
+/// (answered or bridged), keyed by its id; null while it dials or rings (the agent placed it, and
+/// is watching it), once it ends and with none.
+String? softphoneCallArrivalOf(wire.ManualCall? call) =>
+    softphonePhase(call) == SoftphonePhase.onCall ? 'softphone:${call!.id}:connected' : null;
 
 /// The shell's facts for the hosted session of either kind, from the station
 /// state rather than the campaign view (a soft-phone session has none).

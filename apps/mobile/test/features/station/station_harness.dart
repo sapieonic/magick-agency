@@ -321,7 +321,7 @@ Future<void> finishWork(WidgetTester tester) async {
   await settle(tester);
 }
 
-/// [statusBar], [keyboard] and [shell] put the phone's own chrome around the
+/// [statusBar], [keyboard], [navBar] and [shell] put the phone's own chrome around the
 /// station: see `setPhoneInsets` and `ShellScaffold` in the soft-phone harness.
 Future<StationHarness> pumpStation(
   WidgetTester tester,
@@ -331,6 +331,7 @@ Future<StationHarness> pumpStation(
   Size size = const Size(390, 844),
   double statusBar = 0,
   double keyboard = 0,
+  double navBar = 0,
   bool shell = false,
   bool disableAnimations = false,
   bool supportsAnnounce = false,
@@ -355,7 +356,7 @@ Future<StationHarness> pumpStation(
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
-  setPhoneInsets(tester, statusBar: statusBar, keyboard: keyboard);
+  setPhoneInsets(tester, statusBar: statusBar, keyboard: keyboard, navBar: navBar);
   addTearDown(tester.view.reset);
 
   final platformCalls = <MethodCall>[];

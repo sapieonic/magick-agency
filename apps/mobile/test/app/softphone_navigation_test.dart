@@ -16,7 +16,7 @@ import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
-import 'package:magick_agency_agent/core/station/station_view.dart' show dismissSupervisorMessageProvider, supervisorMessagesProvider;
+import 'package:magick_agency_agent/core/station/station_view.dart' show callArrivalProvider, dismissSupervisorMessageProvider, supervisorMessagesProvider;
 import 'package:magick_agency_agent/features/missed/missed_access.dart';
 import 'package:magick_agency_agent/features/missed/missed_count_controller.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_checks.dart';
@@ -363,8 +363,8 @@ void main() {
       expect(origins, containsAll([stationRingProvider, ringSettingsProvider, ringServicesProvider, pushDeviceTeardownProvider]));
     });
 
-    test('floor assist is plugged in: a supervisor\'s messages and their dismissal reach the shell from the station core', () {
-      expect(origins, containsAll([supervisorMessagesProvider, dismissSupervisorMessageProvider]));
+    test('floor assist is plugged in: a supervisor\'s messages, their dismissal and a call arriving reach the shell from the station core', () {
+      expect(origins, containsAll([supervisorMessagesProvider, dismissSupervisorMessageProvider, callArrivalProvider]));
     });
 
     test('the station core hosts the soft phone, and the pre-flight checks the soft phone asks are provided', () {

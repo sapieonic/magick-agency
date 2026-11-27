@@ -146,7 +146,7 @@ Copy is exact. Sample data in the mock-ups: agent Sunita Yadav, work "Sahyadri F
 - **Shown:** big pulse, **"Next call is coming…"**, "Waiting: 0:25". **My day:** Calls today 42 / 120 with a bar, Talk time 1h 52m, Will pay 12. **My call-later list:** time chip + name, and "These calls will come to you on time." (see the copy rule in 6.6).
 - **Action:** **Take break**. Nothing else. No call buttons.
 - **Banners (`02b`):**
-  - Supervisor message: "Anitha N (supervisor) · 10:05 AM" / the message / **OK**. More than one: "2 more messages" after the text; OK shows the next.
+  - Supervisor message: "Anitha N (supervisor) · 10:05 AM" / the message / **OK**. More than one: "2 more messages" after the text; OK shows the next. *(2026-11-26: the app now differs: "Show 2 more messages" opens every queued message, each with its own Dismiss, and "Dismiss all"; see LF36's addendum in `docs/decisions.md`. This line stays the console's spec.)*
   - **"The last call did not connect. You do not need to do anything."** Shows for 6 seconds or until the next call. This is how "did not connect / customer cut before you spoke" is handled: a banner, not a screen, because the agent has nothing to do.
   - A call-later due within 5 minutes is marked in the list: filled time chip and **"in 2 min"**.
   - After several unanswered dials (today's `dial_activity`): under the pulse, "No answer from the last 2 numbers." Plain text, no banner.

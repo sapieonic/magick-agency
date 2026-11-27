@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/softphone/softphone_view.dart';
 import '../../../core/station/station_view.dart';
+import '../../../ui/keyboard.dart';
 import '../../station/station_copy.dart';
 import '../softphone_copy.dart';
 
@@ -65,55 +66,59 @@ class _NotesSectionState extends ConsumerState<NotesSection> {
     final label = s.required ? SoftphoneCopy.notesRequired : SoftphoneCopy.notes;
     final enabled = s.enabled && status != NotesStatus.closed;
 
-    return Column(
-      key: const Key('softphone-notes'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: Space.sm,
-          children: [
-            Text(label, style: text.labelMedium),
-            Semantics(
-              liveRegion: status == NotesStatus.failed || status == NotesStatus.retrying,
-              child: Text(
-                enabled ? StationCopy.notesStatus(status) : (s.reason ?? StationCopy.notesStatus(NotesStatus.closed)),
-                key: const Key('softphone-notes-status'),
-                style: text.labelSmall!.copyWith(color: color, fontWeight: weight),
+    // While the agent types, the label and the status line stay in view with the box.
+    return RevealWhileTyping(
+      focusNode: _focus,
+      child: Column(
+        key: const Key('softphone-notes'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: Space.sm,
+            children: [
+              Text(label, style: text.labelMedium),
+              Semantics(
+                liveRegion: status == NotesStatus.failed || status == NotesStatus.retrying,
+                child: Text(
+                  enabled ? StationCopy.notesStatus(status) : (s.reason ?? StationCopy.notesStatus(NotesStatus.closed)),
+                  key: const Key('softphone-notes-status'),
+                  style: text.labelSmall!.copyWith(color: color, fontWeight: weight),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Space.xs),
+          Semantics(
+            label: label,
+            child: TextField(
+              key: const Key('softphone-notes-field'),
+              controller: _controller,
+              focusNode: _focus,
+              enabled: enabled,
+              minLines: 3,
+              maxLines: 6,
+              keyboardType: TextInputType.multiline,
+              textCapitalization: TextCapitalization.sentences,
+              onChanged: (value) => ref.read(softphoneActionsProvider).setNotes(value),
+              decoration: InputDecoration(
+                hintText: SoftphoneCopy.notesHint,
+                enabledBorder: s.required && _controller.text.trim().isEmpty
+                    ? OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(Radii.sm),
+                        borderSide: BorderSide(color: t.warning),
+                      )
+                    : null,
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: Space.xs),
-        Semantics(
-          label: label,
-          child: TextField(
-            key: const Key('softphone-notes-field'),
-            controller: _controller,
-            focusNode: _focus,
-            enabled: enabled,
-            minLines: 3,
-            maxLines: 6,
-            keyboardType: TextInputType.multiline,
-            textCapitalization: TextCapitalization.sentences,
-            onChanged: (value) => ref.read(softphoneActionsProvider).setNotes(value),
-            decoration: InputDecoration(
-              hintText: SoftphoneCopy.notesHint,
-              enabledBorder: s.required && _controller.text.trim().isEmpty
-                  ? OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(Radii.sm),
-                      borderSide: BorderSide(color: t.warning),
-                    )
-                  : null,
-            ),
           ),
-        ),
-        if (s.notes.changedElsewhere) ...[
-          const SizedBox(height: Space.xs),
-          Text(StationCopy.notesChangedElsewhere, style: text.labelSmall!.copyWith(color: t.warning)),
+          if (s.notes.changedElsewhere) ...[
+            const SizedBox(height: Space.xs),
+            Text(StationCopy.notesChangedElsewhere, style: text.labelSmall!.copyWith(color: t.warning)),
+          ],
         ],
-      ],
+      ),
     );
   }
 }

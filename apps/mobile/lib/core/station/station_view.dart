@@ -1375,6 +1375,28 @@ final supervisorMessagesProvider = Provider<List<SupervisorMessageView>>((ref) =
 /// Dismisses the message with that id. Overridden by the station core.
 final dismissSupervisorMessageProvider = Provider<void Function(String id)>((ref) => (_) {});
 
+/// A call coming to the agent on the campaign view [v], as a key that changes each time one does:
+/// the call on screen while it comes (a campaign call `reserved` for the agent, an inbound call
+/// offered), and again once it connects (on the call). Null otherwise: waiting, on a break, in
+/// wrap-up or owing an inbound call's outcome (the call is already on screen, nothing new arrives).
+String? callArrivalOf(StationView? v) {
+  final id = v?.callId;
+  if (id == null) return null;
+  return switch (v!.phase) {
+    AgentPhase.reserved => 'call:$id:coming',
+    AgentPhase.onCall => 'call:$id:connected',
+    _ => null,
+  };
+}
+
+/// A call arriving on the hosted session, as a key that changes each time one does (null with
+/// none): a campaign or inbound call as it comes and as it connects ([callArrivalOf]), or a
+/// soft-phone call as it connects (never while it dials or rings: the agent placed it). The
+/// supervisor's message banner closes its open list when this changes to a new call (LF36,
+/// decided 2026-11-26). Overridden by the station core, which adds the soft phone's; the default
+/// is the campaign view's, so a screen test that fakes only the view still sees it.
+final callArrivalProvider = Provider<String?>((ref) => ref.watch(stationViewProvider.select(callArrivalOf)));
+
 /// The agent's Need help on the hosted session, a campaign station or a soft-phone session alike
 /// (LF39: the Phone tab has no campaign view, so it reads this, not [StationView.help]). Overridden
 /// by the station core; the default is the campaign view's, so a screen test that fakes only the

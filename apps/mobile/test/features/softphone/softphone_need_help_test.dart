@@ -24,6 +24,25 @@ void main() {
       expect(h.actions.calls, isNot(contains('close')));
     });
 
+    testWidgets('answered with a message: the notice shows, and Need help is offered again, raising once', (tester) async {
+      // Messages are one-way (LF5): the agent answers a supervisor's message by asking again.
+      for (final view in [readyView(), callView(SoftphonePhase.onCall)]) {
+        final h = await pumpSoftphone(
+          tester,
+          view,
+          needHelp: true,
+          help: const HelpView(notice: 'Reshma Mohammad answered with a message.', noticeTone: HelpNoticeTone.success),
+        );
+        await settle(tester);
+        expect(find.text('Reshma Mohammad answered with a message.'), findsOneWidget, reason: view.phase.name);
+        expect(find.byKey(const Key('cancel-help')), findsNothing, reason: 'the request ended with the answer');
+        expect(tester.widget<OutlinedButton>(find.byKey(const Key('need-help'))).onPressed, isNotNull, reason: view.phase.name);
+        await tester.tap(find.byKey(const Key('need-help')));
+        await tester.pump();
+        expect(h.helpActions.count('raiseHelp'), 1, reason: view.phase.name);
+      }
+    });
+
     testWidgets('off for the account: no control and no card, even with news', (tester) async {
       await pumpSoftphone(tester, readyView(), help: const HelpView(notice: 'Anitha N answered with a message.', noticeTone: HelpNoticeTone.success));
       await settle(tester);

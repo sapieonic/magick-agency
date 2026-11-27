@@ -69,6 +69,8 @@ final List<Override> stationOverrides = [
   softphoneHostActionsProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier)),
   supervisorMessagesProvider.overrideWith((ref) => ref.watch(stationHostProvider.select((h) => h.messages))),
   dismissSupervisorMessageProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier).dismissSupervisorMessage),
+  // A call arriving, on either kind of session: the message banner closes its open list on it.
+  callArrivalProvider.overrideWith((ref) => ref.watch(stationHostProvider.select((h) => h.callArrival))),
   // Need help on either kind of session: the Phone tab's soft-phone session has no campaign view (LF39).
   sessionHelpProvider.overrideWith((ref) => ref.watch(stationHostProvider.select((h) => h.help))),
   sessionHelpActionsProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier)),
@@ -1230,6 +1232,10 @@ class StationController extends Notifier<StationView?>
                   softphone: _softphoneView(s),
                   messages: _supervisorMessages(),
                   help: _helpView(),
+                  // The campaign view's (a soft-phone session has none), else the soft phone's.
+                  callArrival: _terminal || _fatal != null
+                      ? null
+                      : (s.hosted.isSoftphone ? null : callArrivalOf(state)) ?? softphoneCallArrivalOf(_station.manualCall),
                 ),
         );
   }
