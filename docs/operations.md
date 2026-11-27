@@ -847,7 +847,11 @@ with `Retry-After`), a 30 s cache. An ordinary flag: no handling policy. `FF_AGE
 turns it on for every tenant (dev and staging). Turn it on in Super-admin console → the tenant →
 Feature flags → `agency_team_performance_enabled` → On, at tenant scope or for one account. Before
 turning it on for a busy tenant, read the measured cost (`team-performance.md` §4): All campaigns
-over a whole month sits at the budget there, an open decision with Manas.
+over a whole month sits at the budget there and answers `503 team_timed_out` about as often as
+not. Manas kept the live read for now (2026-11-27); the follow-up is a daily job that pre-processes
+the figures, with the live read only on a forced refresh (`team-performance.md` §7). The page reads
+a window again on its own only when it holds today and spans at most 7 days, so Last 30 days is
+read once per question.
 
 **What to watch** (the *Team performance* panels of the overview dashboard):
 
@@ -856,8 +860,7 @@ over a whole month sits at the budget there, an open decision with Manas.
   supervisors are reading long windows across every campaign.
 - `agency_team_performance_reads_refused_total{reason}`: `timed_out` is a window too heavy for the
   budget; `busy` is more team reads at once than the limits allow. Neither pages anyone; a steady
-  `timed_out` is the evidence for the open decision (a shorter default window, or the analytics
-  child).
+  `timed_out` is the case for bringing the daily pre-processing forward.
 
 To turn it off: Off for the tenant or account. Nothing is stored; the tab and its route go.
 

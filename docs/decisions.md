@@ -1067,6 +1067,25 @@ supervisor as sets of outcome codes, direction from the supervisor) are in
 [`compare-agents.md`](compare-agents.md) §1. CP1–CP7, CP17 and CP18 decided by Manas on
 2026-11-21; CP8–CP16 stand as recommended.
 
+## Team performance (TP)
+
+The rulings TP1–TP20 (the page at `/agency/team-performance` as Reports' first tab, one definition
+per number with Compare agents, supervisors only, Will pay as CP2, the cohort as who dialled, a flag
+of its own, All campaigns by default with agents compared only within one campaign, the main
+outcome by the Live floor's rule over the campaigns worked, "Stands out" not "Top performer",
+dialler-booked call-backs only, whole local days, working days on the per-day chart, What happened
+on the calls from the rollup, the tiles as the rows' sums, Worth a look as Compare's findings over
+the whole cohort, sorting in the browser, words written by the console, up to three picks into
+Compare agents, Download Excel as the existing reports, the read in the primary with its cost
+measured) are in [`team-performance.md`](team-performance.md) §1. All are decided by Manas on
+2026-11-27: the open questions' defaults accepted (TP1, TP4, TP6–TP11, TP13, TP16, TP19, TP20) and
+the design's recommendations ratified (TP2, TP3, TP5, TP12, TP14, TP15, TP17, TP18), TP14's
+wording (the tiles are the rows' sums; the per-day chart and the outcome bars the whole team's)
+included. TP1's tab order was amended at the build (Team performance, Analytics, Compare agents,
+Exports) and accepted. All campaigns over a whole month on a busy tenant reads at the 8 s budget
+(`team-performance.md` §4): Manas ruled to keep the live read for now, with daily pre-processing
+as the follow-up, the live read then running only on a forced refresh (§7).
+
 ## One call log per campaign (CL)
 
 A call is a call: its type (Dialler, Soft phone, Inbound) is a column, its campaign is a column,

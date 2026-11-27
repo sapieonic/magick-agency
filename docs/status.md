@@ -2952,16 +2952,21 @@ the real route on a seeded database; the test counts are in the PR.
 | Part | What |
 |---|---|
 | Wire | `api/agency/team-performance.ts` (the query, the answer, the limits), the team codes in `errors.ts`, the flag |
-| Server | `GET /proxy/agency/team-performance`; the read in the primary in one read-only snapshot under an 8 s budget, two reads per tenant and Compare's share of the pool per process, a 30 s cache; metrics `agency_team_performance_read_seconds`, `agency_team_performance_reads_refused_total`. No migration |
-| Console | The tab (Team performance, Analytics, Compare agents, Exports), its search entry, Download Excel (the existing campaign or account report with the page's dates), Compare picked (up to three rows into Compare agents) |
+| Server | `GET /proxy/agency/team-performance`; the read in the primary in one read-only snapshot under an 8 s budget, two reads per tenant and Compare's share of the pool per process, a 30 s cache; metrics `agency_team_performance_read_seconds`, `agency_team_performance_reads_refused_total`, with a Team performance row on the overview dashboard. No migration |
+| Console | The tab (Team performance, Analytics, Compare agents, Exports), its search entry, Download Excel (the existing campaign or account report with the page's dates), Compare picked (up to three rows into Compare agents); a window holding today and at most 7 days long read again every minute, quietly; a note when some campaigns in scope record no Will pay (TP8) |
 
 The tiles are the table's sums; the per-day chart and the outcome bars are the whole team's in
-scope (TP14). Not built: a team-performance report kind (TP19's later phase); clickable rows.
+scope (TP14). Reviewed by three independent reviewers on 2026-11-27 (server, console, docs) and
+their findings fixed: the main outcome and `rollup_as_of` from the campaigns worked in the window,
+`mixed`, Worth a look with no cap in all, refreshing only short live windows and never after a
+refusal or a timeout, a failed refresh said calmly, the picks held to the answer on screen, the
+export dialog's dates held to its own today, the bars aligned. Not built: a team-performance report
+kind (TP19's later phase); clickable rows; daily pre-processing ("Not built" below).
 Not verified: the screens have been looked at in a harness against the page's own answers, not
 against a deployed server; the mobile app's `dart test` was not run (no change to what it reads).
 All campaigns over a whole month on a busy account reads at the 8 s budget; Manas kept the live
 read for now (2026-11-27), with daily pre-processing as the follow-up (`team-performance.md` §4,
-§7). Every TP ruling is decided. Turning it on and what to watch:
+§7). Every TP ruling is decided ([`decisions.md`](decisions.md), "Team performance (TP)"). Turning it on and what to watch:
 [`operations.md`](operations.md), "Team performance".
 
 ## Not built
@@ -2977,6 +2982,12 @@ could be compiled in the build container ([`mobile.md`](mobile.md) "Not verified
 event names the console and the app share are typed by hand on each side, with no check that they
 match (the soft phone's and LF39's alike): a shared list in `packages/contracts`, carried to the app
 through `literals.json`, would guard them.
+
+**Team performance** ([`team-performance.md`](team-performance.md) §7): a daily job that
+pre-processes each day's figures per account and campaign, the page reading those and running the
+live read only on a forced refresh. Ruled by Manas on 2026-11-27 as the follow-up to keeping the
+live read, which on a tenant as busy as the cost seed reads All campaigns over a month at the 8 s
+budget (§4). Also not built: a team-performance report kind (TP19's later phase); clickable rows.
 
 **Launch work** (phase 10):
 
