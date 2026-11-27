@@ -2928,6 +2928,49 @@ Files: `lambda.ts`, `lambda/callback.ts`, `lambda/chromium.ts`, `lambda/s3-io.ts
 | `apps/report-renderer/test/build-lambda.test.ts` | 2 |
 | `apps/report-renderer/test/chromium-layer.test.ts` | 1 |
 
+## `apps/e2e`
+
+The golden end-to-end suite ([`e2e.md`](e2e.md)): Playwright over the real server and the built
+UIs, with every vendor simulated. On demand only (`pnpm e2e`, the manual `e2e.yml` workflow).
+Rules and gotchas: `apps/e2e/CLAUDE.md`.
+
+### `apps/e2e/src/`
+
+`run.ts` (the one command: infra, a fresh database, the UI builds, the first super-admin, the
+simulator, the server and the edge, then Playwright, then teardown; `--stack` keeps it up),
+`env.ts` (ports, the target guards, the server's whole environment, the UI build settings),
+`infra.ts` (Postgres and Redis: already up, docker compose or local binaries; the run's lock on its
+database; recreate and migrate the database), `edge.ts` (static `dist/` and the API prefixes, nginx's routing),
+`server-preload.mjs` (the server process's `fetch`: fixed vendor hosts to the simulator; any other
+outside host refused on `fetch` and on `node:http`/`https`).
+
+Files: `edge.ts`, `env.ts`, `infra.ts`, `run.ts`, `server-preload.mjs`
+
+### `apps/e2e/src/sim/`
+
+The simulator: `index.ts` (one HTTP server for every vendor and the `/_sim/*` control API),
+`voicelink.ts` (the server's VoiceLink mock driven by personas picked by the number's last two
+digits), `firebase-auth.ts` (identitytoolkit and securetoken for the browser SDK and
+firebase-admin's emulator-mode lookups), `s3.ts`, `vendors.ts` (the Mailjet mailbox, recordings,
+the OpenAI-compatible and Gemini endpoints), `audio.ts` (whether an A-law frame carries sound,
+for the carrier side and the station page alike).
+
+Files: `audio.ts`, `firebase-auth.ts`, `index.ts`, `s3.ts`, `vendors.ts`, `voicelink.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/e2e/test/firebase-auth.test.ts` | 2 |
+| `apps/e2e/test/s3.test.ts` | 1 |
+| `apps/e2e/test/personas-and-guards.test.ts` | 10 |
+
+### `apps/e2e/src/fixtures/`, `src/pages/`, `specs/`
+
+`fixtures/test.ts` (the suite's `test`: identity routing, `world`, `supervisorApi`,
+`newUserPage`, `signIn`, `scoped`, and every live call hung up after each test), `fixtures/world.ts` (a tenant per test over the super-admin
+API), `fixtures/console-api.ts` (the console API as a seeded user: a running campaign in seconds,
+`phoneWithPersona`), `fixtures/sim-client.ts` (the control API). Page helpers: `pages/station.ts`,
+`pages/campaign.ts`, `pages/super-admin.ts`. The specs and what each checks: [`e2e.md`](e2e.md) §4.
+
 ## `apps/mobile`
 
 The agent app (Flutter, Android and iOS); how it works is in [`mobile.md`](mobile.md). Dart

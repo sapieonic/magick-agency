@@ -29,9 +29,12 @@ describe('integration worker targets (tooling/test-env.ts)', () => {
     expect(workerTestTargets({ ...BASE, redisUrl: 'redis://localhost:6383/5' }, 4, 4).redisUrl).toBe('redis://localhost:6383/8');
   });
 
-  it('refuses a range that would pass db 15 rather than wrap onto another db', () => {
-    expect(() => workerTestTargets({ ...BASE, redisUrl: 'redis://localhost:6383/13' }, 1, 4)).toThrow(/dbs 13-16, past 15/);
-    expect(() => workerTestTargets({ ...BASE, redisUrl: 'redis://localhost:6383/12' }, 4, 4)).not.toThrow();
+  it('refuses a range that would pass db 14 rather than wrap onto another db', () => {
+    expect(() => workerTestTargets({ ...BASE, redisUrl: 'redis://localhost:6383/13' }, 1, 4)).toThrow(/dbs 13-16, past 14/);
+  });
+
+  it('keeps off db 15, the golden e2e run\'s (it flushes it)', () => {
+    expect(() => workerTestTargets({ ...BASE, redisUrl: 'redis://localhost:6383/12' }, 1, 4)).toThrow(/dbs 12-15, past 14/);
   });
 
   it('refuses a base name that ends like a worker copy: copies are dropped WITH (FORCE)', () => {
