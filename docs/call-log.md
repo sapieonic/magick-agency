@@ -10,7 +10,7 @@ what was left out are in one place: §9.
 The decisions are CL1–CL42 in [`decisions.md`](decisions.md) ("One call log per campaign (CL)"),
 all **default, pending Manas**: he accepted CL1–CL12 with the proposal as a whole, not one by one,
 CL13–CL16 are P2's build rulings, CL17–CL24 are P3's, CL25–CL30 are P4's, CL31–CL38 are P5's and
-CL39–CL42 are P6's.
+CL39–CL42 are P6's. Export with fields, added on 2026-11-27, is §10 (CL43–CL52).
 
 ## 1. The model
 
@@ -52,6 +52,7 @@ campaign's missed inbound calls that are still open (§4).
 | P4 | Reports and Insights by type: inbound figures, the Calls by type table, outcomes by type, "Outbound connect rate" | **Built 2026-11-22** (§6) |
 | P5 | The agent's My calls as one list (console and app), and the account's All calls in place of Soft-phone calls | **Built 2026-11-22** (§7) |
 | P6 | Inbound calls in customer history: the calls a number made to us in its timeline, filed under a campaign or not | **Built 2026-11-22** (§8) |
+| — | Export with fields: the call analysis, custom dimensions and the agent's call details added to the campaign call export. No migration | **Built 2026-11-27** (§10) |
 
 Not in any phase (needs Manas): filing old calls with no campaign under one by hand, and a
 "Customers reached" figure.
@@ -1347,6 +1348,10 @@ inbound calls with To follow up (§3, §4); the setting "Every call must belong 
 account's All calls (§7); inbound calls in customer history (§8). Five migrations: 0069 to
 0073.
 
+Export with fields, on 2026-11-27 (§10): the call analysis, custom dimensions and the agent's
+call details added to the campaign call export by choice. No migration. Nothing changes for an
+account until a supervisor uses it: the plain Export CSV is the same file.
+
 Not verified anywhere: nothing here has been used in a real browser or on a phone, and no real
 carrier call has gone through it. The tests are the evidence.
 
@@ -1499,7 +1504,7 @@ itself (CL8). Checked while building P5: agents did not see masked numbers in My
 on the console's Campaign calls tab, which masked in the browser from a number the server had
 sent in full (§7, CL32).
 
-## 10. Export with fields (being built)
+## 10. Export with fields (built)
 
 Manas approved Proposal A on 2026-11-27 ("Proposal A looks good to me … go ahead and build this
 end-to-end") with four rulings: no short label on a dimension, no transcript in the file, a
@@ -1530,8 +1535,10 @@ Names and limits are the contract's: `packages/contracts/src/api/agency/call-exp
   route's, and a profile edited midway (copy-on-write) leaves two versions. Each analysis job
   keeps a copy of the dimensions it ran with (`dialer_analysis_jobs.profile_snapshot.custom_dimensions`),
   so the list is the union of those copies and of the keys found in stored results, one entry per
-  key, with the types it was declared with (two when a version changed it), its options, the
-  newest description, how many calls carry a value, and on which call types.
+  key, with the types it was declared with (two when a version changed it, each placed by the
+  first job that declared it), a choice's options (first seen), the description of the newest
+  version, how many calls carry a value, and on which call types. A stored key that does not
+  match the key pattern is not offered: the export could not be asked for it.
 - **Names (CL44).** Fixed prefixes, so a dimension keyed `outcome` is `dim_outcome` and never a
   second `outcome`. Keys are never respelled. The dialog names a dimension from its key
   ("Promise strength" for `promise_strength`); there is no label to add (Manas: not needed). A
@@ -1541,20 +1548,31 @@ Names and limits are the contract's: `packages/contracts/src/api/agency/call-exp
 
 ### The file (CL43, CL48, CL49, CL51)
 
-- **Position (CL43).** The chosen columns come after `callback_of`, in the order asked. With no
+- **Position (CL43).** The chosen columns come after `callback_of`, in the order asked. The
+  dialog asks in its own display order: the call details first, then the analysis, then the
+  dimensions, each in the order listed, which is the order its column preview shows. With no
   `fields` the file is byte for byte what it was. The plain **Export CSV** never sends `fields`.
 - **The ceiling (CL48, Manas).** 20,000 rows (`AGENCY_CALL_EXPORT_AI_ROW_LIMIT`) when any
   analysis field other than `analysis_status`, or any dimension, is chosen; 50,000 otherwise.
   Call fields do not lower it. A file cut at the ceiling says so as today (`X-Export-Truncated`,
   `X-Export-Row-Limit` carrying the ceiling that applied, the preamble's Truncated line).
+  The audit row records the ceiling too (`details.row_limit`) when fields were chosen.
 - **Values (CL49).** Yes/no as `true`/`false`, numbers as written, a choice as its option, a list
   joined with `; `, any other object as JSON, nothing as an empty cell. Text keeps its line breaks
   inside quotes, and every cell goes through the export's formula guard (`escapeCsvValue`): an
-  AI summary is model output and is treated as untrusted. A blank analysis cell is explained by
-  `analysis_status`; a blank dimension on a `completed` call means that call's profile did not
+  AI summary is model output and is treated as untrusted. The guard also prefixes a negative
+  number (`'-0.4`), as it already does a phone number's `+`. A blank analysis cell is explained
+  by `analysis_status`; a blank dimension on a `completed` call means that call's profile did not
   have it.
+- **What counts as a value.** Not null, not `""`, not `[]`; `false`, `0` and `{}` are values.
+  Only a key's own entry is read (`constructor` is a key like any other). An analysis erased on
+  request (`deleted`) exports no result even if the stored result were still there, and a row
+  whose media leg belongs to another tenant or account is a row with no leg (`none`).
 - **The preamble (CL51)** lists the fields chosen, each dimension with its newest description,
-  the ceiling that applied, and that summaries and call details are customer content. The
+  the ceiling that applied, what an empty analysis cell means, and that summaries and call
+  details are customer content. With call details chosen, the line saying a soft-phone row's call
+  details are not in the file is reworded to say which are. All of this only when fields were
+  chosen. The
   export's audit row (`agency_attempts.exported`) records the field names in `details.fields`,
   never their values.
 
@@ -1588,7 +1606,22 @@ list still offers are ticked; the rest are dropped silently.
 
 | Route | Floor | What |
 |---|---|---|
-| `GET /proxy/agency/campaigns/:id/call-log/export-fields` | `agency.supervise` | `AgencyCallExportFieldsResponse` for the Call log's query (its filters, `type`, `status`). `calls` is the rows the file would hold (every listed row, a soft-phone call that never dialled included) |
-| `GET /proxy/agency/campaigns/:id/attempts.csv` | `agency.supervise` | takes `fields` |
+| `GET /proxy/agency/campaigns/:id/call-log/export-fields` | `agency.supervise` | `AgencyCallExportFieldsResponse` for the Call log's query: its filters, `type` (the chip, as the JSON Call log takes it; the export takes the same as `source`) and `status`; anything else is 400 `unknown_query_params`. `calls` is the rows the file would hold (every listed row, a soft-phone call that never dialled included) |
+| `GET /proxy/agency/campaigns/:id/attempts.csv` | `agency.supervise` | takes `fields`, read by the route and never forwarded. In order: 400 `export_fields_invalid` (before any read), the campaign's 404, 403 `export_fields_not_permitted` (the setting is read only when an analysis field or a dimension is asked), one read of the field list for the dimensions' descriptions when a dimension is chosen, then the drain |
 | internal `GET /agency-campaigns/:id/call-log/export-fields` | (behind `callCore`) | the same, over the call log's own WHERE terms; `include_analysis=1` reads the analysis groups, which the public route sends only with the grant |
 | internal `GET /agency-campaigns/:id/call-log` | (behind `callCore`) | `include=analysis,call_fields` attaches `export_extras` to each row from one lookup per page (the media leg by `webrtc_call_id`, scoped to the tenant and account; the soft-phone call's `fields`). The export asks for `analysis` only with the grant |
+
+### Tests and what was not run
+
+Server: the leaf module (`test/unit/agency/call-export-fields.test.ts`), the public routes
+(`test/unit/agency/proxy-agency-call-export-fields.routes.test.ts`), the internal routes
+(`test/unit/agency/spine-read-routes.test.ts`), the route table and agent reach, and on real
+Postgres `test/integration/api/agency-call-export-fields.test.ts` (the three call types, both
+analysis shapes, two profile versions with a key whose type changed, a key only in a stored
+result, another tenant's and account's legs never read, filters, type and status, the export end
+to end with the setting on and off, and the plan on the primary key and the job's unique index).
+Console: `__tests__/utils/callExportFields.test.ts`, `__tests__/components/ExportFieldsDialog.test.tsx`
+and cases in the Call log's and All calls' page tests. Contract: `test/call-export-fields.test.ts`.
+
+The dialog was rendered in a browser only against a mocked API. Nothing here has been used with a
+real server in a browser, or on a campaign with real analysed calls.
