@@ -29,16 +29,25 @@ import type { TeamWindowPreset } from './teamUrl';
 
 // ─── The main outcome (TP8) ─────────────────────────────────────────────────
 
+/** The console's own name for the successes outcome, when the catalogs give none (TP8). */
+export const SUCCESSES_FALLBACK_LABEL = 'Successes';
+
 /** The main outcome's name: the catalog's one label, else "Will pay" (promises) or "Successes". */
 export function mainLabel(main: Pick<AgencyTeamMainOutcome, 'kind' | 'label'>): string {
   const label = main.label?.trim();
   if (label) return label;
-  return main.kind === 'promises' ? 'Will pay' : 'Successes';
+  return main.kind === 'promises' ? 'Will pay' : SUCCESSES_FALLBACK_LABEL;
 }
 
-/** The label as a compound before "rate": "Will pay" → "Will-pay". An acronym or one word stays as it is. */
+/**
+ * The label as a compound before "rate": "Will pay" → "Will-pay". An acronym or one word stays as
+ * it is, except the plural fallback, which names the rate in the singular: "Success rate", never
+ * "Successes rate".
+ */
 function compound(label: string): string {
-  return label.trim().split(/\s+/).join('-');
+  const name = label.trim();
+  if (name === SUCCESSES_FALLBACK_LABEL) return 'Success';
+  return name.split(/\s+/).join('-');
 }
 
 /** The rate's name for a column and the sort pill: "Will-pay rate" ("{label} rate", TP8). */
@@ -149,14 +158,18 @@ const PRESET_WORDS: Readonly<Record<Exclude<TeamWindowPreset, 'custom'>, string>
   last_30_days: 'last 30 days',
 };
 
-/** The period in a heading's words: "today", "last 7 days", "11 Nov to 17 Nov". */
-export function periodWords(preset: TeamWindowPreset, dates: { from: string; to: string }): string {
-  if (preset !== 'custom') return PRESET_WORDS[preset];
+/** Dates in words: "11 Nov to 17 Nov", or "17 Nov" for one day. */
+export function datesWords(dates: { from: string; to: string }): string {
   return dates.from === dates.to ? formatReportDay(dates.from, false) : `${formatReportDay(dates.from, false)} to ${formatReportDay(dates.to, false)}`;
 }
 
+/** The period in a heading's words: "today", "last 7 days", "11 Nov to 17 Nov". */
+export function periodWords(preset: TeamWindowPreset, dates: { from: string; to: string }): string {
+  return preset === 'custom' ? datesWords(dates) : PRESET_WORDS[preset];
+}
+
 /** Capitalised: "Today", "Last 7 days". */
-function capitalise(text: string): string {
+export function capitalise(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
@@ -189,9 +202,17 @@ export function outcomeLabel(bar: { code: string | null; label: string | null })
   return bar.label?.trim() || bar.code;
 }
 
-/** How fresh the outcome bars are (TP13): "dialler calls only · as of 2:10 PM". */
+/** How fresh the outcome bars are (TP13), a line of its own: "Dialler calls only · as of 2:10 PM". */
 export function rollupLine(rollupAsOf: string | null): string {
-  return rollupAsOf ? `dialler calls only · as of ${clockTime(new Date(rollupAsOf))}` : 'dialler calls only';
+  return rollupAsOf ? `Dialler calls only · as of ${clockTime(new Date(rollupAsOf))}` : 'Dialler calls only';
+}
+
+/**
+ * A quiet refresh failed with the figures still on screen (§2 States): said calmly, not as an
+ * alert, with the time the figures on screen run to.
+ */
+export function refreshFailedWords(asOf: string): string {
+  return `Couldn’t refresh. Showing figures up to ${clockTime(new Date(asOf))}.`;
 }
 
 /**

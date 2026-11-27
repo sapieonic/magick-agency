@@ -33,7 +33,9 @@ export function OutcomeBreakdown({ data, label, preset }: { data: AgencyTeamPerf
           {outcomesTitle(preset, total)}
         </h2>
       </div>
-      <p className={styles.cardLine}>{capitalise(rollupLine(data.rollup_as_of))}</p>
+      <p className={styles.cardLine} data-testid="team-outcomes-line">
+        {rollupLine(data.rollup_as_of)}
+      </p>
       {bars.length === 0 ? (
         <p className={styles.emptyNote}>No dialler calls with an outcome in this period yet.</p>
       ) : (
@@ -64,8 +66,4 @@ export function OutcomeBreakdown({ data, label, preset }: { data: AgencyTeamPerf
       )}
     </section>
   );
-}
-
-function capitalise(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }

@@ -6,8 +6,8 @@ import type { AgencyTeamPerformance } from '@magick-agency/contracts/api/agency/
  * beside chunk B): every row, total, median and finding was worked out by the shared rules the
  * server's assembly uses (`compareValue`, `cohortPercentiles` and `compareFindings` of
  * `@magick-agency/domain/agent-compare`) over one campaign's ten agents, so the figures agree
- * with each other as the real read's do. Replace with answers recorded from the real route once
- * it runs end to end (chunk D).
+ * with each other as the real read's do. Kept at D beside the answers recorded from the real route
+ * (`teamRouteRecorded.ts`): `utils/teamAnswer.test.ts` holds both to the server's rules.
  *
  * - {@link TEAM_ONE_CAMPAIGN}: one campaign, Today in Asia/Kolkata, promises labelled "Will pay";
  *   a gap on Mahesh B's rate and on his time to choose an outcome, Lakshmi P standing out; Pooja M
