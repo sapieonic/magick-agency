@@ -3040,6 +3040,13 @@
     },
     {
       "method": "GET",
+      "path": "/proxy/agency/team-performance",
+      "source": "apps/console/src/api/teamPerformance.ts",
+      "status": "served",
+      "reason": "team performance route, served by the public API layer at the console path (contracts api/agency/team-performance.ts, docs/team-performance.md §4): the team's figures over a period, on one campaign or all"
+    },
+    {
+      "method": "GET",
       "path": "/proxy/agency/report-subscriptions",
       "source": "apps/console/src/api/reports.ts",
       "status": "served",

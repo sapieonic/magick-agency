@@ -105,9 +105,6 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['POST /super-admin/telephony-credentials/:_/revoke', 'carrier credential revoke (BYOC, B20)'],
   // The super-admin UI's "Sync numbers" action lands with the UI workstream (saRoutes.ts then lists it).
   ['POST /super-admin/telephony-credentials/:_/sync-numbers', 'carrier account number sync (BYOC, B18; audited)'],
-  // Team performance (docs/team-performance.md §7): the server is built before the console tab
-  // (`apps/console/src/api/teamPerformance.ts`); it moves to the console inventory when that lands.
-  ['GET /proxy/agency/team-performance', 'Team performance read, served before its console tab lands (TP1, chunk C)'],
   // Read by the console's campaign builder once its carrier choice lands (B18).
   ['GET /proxy/agency/carriers', 'carrier accounts a campaign may dial on (BYOC, B18)'],
   // The console's old `/proxy/feature-flags` path is not served. The flag map stays at
