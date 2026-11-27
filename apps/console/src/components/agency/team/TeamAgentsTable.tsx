@@ -135,7 +135,8 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
         </p>
       ) : null}
 
-      <div className={styles.tableWrap} tabIndex={0} role="region" aria-labelledby={titleId}>
+      {/* Its own name: the section around it already carries the heading's. */}
+      <div className={styles.tableWrap} tabIndex={0} role="region" aria-label="Agents table">
         {/* The roles restate the table's own: below 640px the rows are laid out as cards (CSS), and a
             browser drops a table's semantics once its parts are no longer displayed as one. */}
         <table className={styles.table} role="table">
@@ -172,9 +173,9 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
                       ) : null}
                       <span className={styles.rank}>{i + 1}</span>
                       <span className={styles.avatar} aria-hidden="true">
-                        {initialsFor(row.agent_name)}
+                        {initialsFor(rowName(row))}
                       </span>
-                      <span className={styles.agentName}>
+                      <span className={styles.agentName} title={rowName(row)}>
                         {rowName(row)}
                         {row.departed ? <span className={styles.left}> (left)</span> : null}
                       </span>
@@ -182,7 +183,7 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
                   </th>
                   <td role="cell" data-label="Calls handled">
                     <span className={styles.figure}>
-                      <span className={styles.num}>{formatCount(row.calls_handled)}</span>
+                      <span className={`${styles.num} ${styles.figureNum}`}>{formatCount(row.calls_handled)}</span>
                       <InlineBar share={inlineShare(row.calls_handled, callsScale)} median={inlineShare(data.medians.calls_handled, callsScale)} />
                     </span>
                   </td>
@@ -231,14 +232,14 @@ function MainCell({ row, floor, scale, median }: { row: AgencyTeamAgentRow; floo
   if (!main.reportable || main.value === null) {
     return (
       <span className={styles.figure}>
-        <span className={styles.num}>{formatCount(main.numerator)}</span>
+        <span className={`${styles.num} ${styles.figureNum}`}>{formatCount(main.numerator)}</span>
         <span className={styles.withheld}>{withheldWords(main, floor)}</span>
       </span>
     );
   }
   return (
     <span className={styles.figure}>
-      <span className={styles.num}>{formatCount(main.numerator)}</span>
+      <span className={`${styles.num} ${styles.figureNum}`}>{formatCount(main.numerator)}</span>
       <span className={styles.rate}>{percent(main.value)}</span>
       <InlineBar share={inlineShare(main.value, scale)} median={median} />
     </span>

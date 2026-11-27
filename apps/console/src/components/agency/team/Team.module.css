@@ -583,8 +583,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A count before a bar, and the rate between them, each in a box of one width, right-aligned, so
+   every row's bar (and the median's tick on it) starts at the same x whatever its digits. The
+   widths hold "9,999" and "100%"; a longer count only pushes its own row's bar along. */
+.figureNum {
+  display: inline-block;
+  min-width: 5ch;
+  text-align: right;
+}
+
 .rate {
-  min-width: 30px;
+  display: inline-block;
+  min-width: 4.5ch;
+  text-align: right;
   color: var(--text-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -780,6 +791,13 @@
   .figure {
     flex-wrap: wrap;
     gap: 2px 6px;
+  }
+
+  /* No bars here to line up: the figures sit at the start of their place. */
+  .figureNum,
+  .rate {
+    min-width: 0;
+    text-align: left;
   }
 
   .withheld {
