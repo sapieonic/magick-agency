@@ -1558,13 +1558,20 @@ Names and limits are the contract's: `packages/contracts/src/api/agency/call-exp
   `X-Export-Row-Limit` carrying the ceiling that applied, the preamble's Truncated line).
   The audit row records the ceiling too (`details.row_limit`) when fields were chosen.
 - **Values (CL49).** Yes/no as `true`/`false`, numbers as written, a choice as its option, a list
-  joined with `; `, any other object as JSON, nothing as an empty cell. Text keeps its line breaks
-  inside quotes, and every cell goes through the export's formula guard (`escapeCsvValue`): an
-  AI summary is model output and is treated as untrusted. The guard also prefixes a negative
-  number (`'-0.4`), as it already does a phone number's `+`. A blank analysis cell is explained
-  by `analysis_status`; a blank dimension on a `completed` call means that call's profile did not
-  have it.
-- **What counts as a value.** Not null, not `""`, not `[]`; `false`, `0` and `{}` are values.
+  as its items joined with `; ` (an item with no value left out), any other object as JSON,
+  nothing as an empty cell. Text keeps its line breaks inside quotes, and every text cell goes
+  through the export's formula guard (`escapeCsvValue`): an AI summary is model output and is
+  treated as untrusted. A JSON number is the one exception: it is written as it is, with no
+  guard (`csvNumberCell` in `agency-csv.ts`), so a negative score is `-0.4`, a number in a
+  spreadsheet. A string that only looks like a number (`"-1+2"`, `"=1"`) is text and is
+  guarded, as a phone number's `+` is; a list is text too. A number JSON cannot carry (`NaN`,
+  `Infinity`) would be an empty cell. The file's usual columns are written as they always were.
+  A blank analysis cell is explained by `analysis_status`; a blank dimension on a `completed`
+  call means that call's profile did not have it.
+- **What counts as a value.** What is written as a non-empty cell, by one rule in SQL
+  (`hasCellValueSql`) and in the cell writer (`callExportHasValue`), held together by a test:
+  not null, not `""`, not a list none of whose items is a value (`[]`, `[null]`, `["", null]`);
+  `false`, `0`, `{}` and a list holding `[]` or `{}` (written as JSON) are values.
   Only a key's own entry is read (`constructor` is a key like any other). An analysis erased on
   request (`deleted`) exports no result even if the stored result were still there, and a row
   whose media leg belongs to another tenant or account is a row with no leg (`none`).
@@ -1590,7 +1597,8 @@ behind it. A campaign of any status can be exported, as before.
 `fields` is comma-separated or repeated. Each item is an analysis field, or `dim_` / `field_`
 and a key matching `AGENCY_CALL_EXPORT_KEY_PATTERN`. A repeat keeps its first place; more than
 `AGENCY_CALL_EXPORT_MAX_FIELDS` (100), or an item of any other shape, is a 400
-`export_fields_invalid` naming the items, before anything is read. A well-formed key that no
+`export_fields_invalid` naming the items (the first ten, each cut to 64 characters, with
+`invalid_count` saying how many there were), before anything is read. A well-formed key that no
 call in view carries is allowed and is an empty column: a remembered choice may name a dimension
 the current dates do not hold.
 
@@ -1600,28 +1608,39 @@ The dialog's **Remember these fields for this campaign** (on by default) keeps t
 browser's storage under the user, tenant, account and campaign
 (`magick.callExport.fields.v1:<user>:<tenant>:<account>:<campaign>`), the way Home keeps its "Got
 it". It does not follow the person to another browser. On opening, the remembered fields that the
-list still offers are ticked; the rest are dropped silently.
+list offers are ticked. The others are not lost: a dimension the current dates do not hold comes
+back when a later view offers it. A Download with Remember on stores the fields chosen, then the
+remembered fields this view did not offer, at most `AGENCY_CALL_EXPORT_MAX_FIELDS`, the newest
+choice first. Unticking a field the view offers forgets it. **Download CSV** waits for at least
+one ticked field ("Tick at least one field, or use Export CSV for the usual file."), and while
+the file is prepared nothing closes the dialog. When it closes, focus goes back to the export
+arrow.
 
 ### The routes
 
 | Route | Floor | What |
 |---|---|---|
 | `GET /proxy/agency/campaigns/:id/call-log/export-fields` | `agency.supervise` | `AgencyCallExportFieldsResponse` for the Call log's query: its filters, `type` (the chip, as the JSON Call log takes it; the export takes the same as `source`) and `status`; anything else is 400 `unknown_query_params`. `calls` is the rows the file would hold (every listed row, a soft-phone call that never dialled included) |
-| `GET /proxy/agency/campaigns/:id/attempts.csv` | `agency.supervise` | takes `fields`, read by the route and never forwarded. In order: 400 `export_fields_invalid` (before any read), the campaign's 404, 403 `export_fields_not_permitted` (the setting is read only when an analysis field or a dimension is asked), one read of the field list for the dimensions' descriptions when a dimension is chosen, then the drain |
-| internal `GET /agency-campaigns/:id/call-log/export-fields` | (behind `callCore`) | the same, over the call log's own WHERE terms; `include_analysis=1` reads the analysis groups, which the public route sends only with the grant |
-| internal `GET /agency-campaigns/:id/call-log` | (behind `callCore`) | `include=analysis,call_fields` attaches `export_extras` to each row from one lookup per page (the media leg by `webrtc_call_id`, scoped to the tenant and account; the soft-phone call's `fields`). The export asks for `analysis` only with the grant |
+| `GET /proxy/agency/campaigns/:id/attempts.csv` | `agency.supervise` | takes `fields`, read by the route and never forwarded. In order: 400 `export_fields_invalid` (before any read), the campaign's 404, 403 `export_fields_not_permitted` (the setting is read only when an analysis field or a dimension is asked), one read of the field list for the dimensions' descriptions when a dimension is chosen and a preamble is written (not with `preamble=false`), then the drain |
+| internal `GET /agency-campaigns/:id/call-log/export-fields` | (behind `callCore`) | the same, over the call log's own WHERE terms; `include_analysis=1` reads the analysis groups, which the public route sends only with the grant. Every listed row is counted; of each media leg only the paths the fields read are carried, and of each analysis job only its dimension copy |
+| internal `GET /agency-campaigns/:id/call-log` | (behind `callCore`) | `include=analysis,call_fields` attaches `export_extras` to each row from one lookup per page (the media leg by `webrtc_call_id`, scoped to the tenant and account; the soft-phone call's `fields`). `include=analysis_status` reads the leg's status alone, never `call_analysis`: the export sends it when `analysis_status` is the only analysis field chosen. The export asks for either only with the grant |
 
 ### Tests and what was not run
 
 Server: the leaf module (`test/unit/agency/call-export-fields.test.ts`), the public routes
 (`test/unit/agency/proxy-agency-call-export-fields.routes.test.ts`), the internal routes
-(`test/unit/agency/spine-read-routes.test.ts`), the route table and agent reach, and on real
-Postgres `test/integration/api/agency-call-export-fields.test.ts` (the three call types, both
-analysis shapes, two profile versions with a key whose type changed, a key only in a stored
-result, another tenant's and account's legs never read, filters, type and status, the export end
-to end with the setting on and off, and the plan on the primary key and the job's unique index).
-Console: `__tests__/utils/callExportFields.test.ts`, `__tests__/components/ExportFieldsDialog.test.tsx`
-and cases in the Call log's and All calls' page tests. Contract: `test/call-export-fields.test.ts`.
+(`test/unit/agency/spine-read-routes.test.ts`), the number cell (`test/unit/agency/agency-csv.test.ts`),
+the route table and agent reach, and on real Postgres
+`test/integration/api/agency-call-export-fields.test.ts` (the three call types, both analysis
+shapes, two profile versions with a key whose type changed, a key only in a stored result,
+another tenant's and account's legs never read, filters, type and status, the export end to end
+with the setting on and off, `analysis_status` read without the result, the SQL and JS value
+rules agreeing, the field list's `calls` equal to `X-Export-Rows` under every type, the
+follow-ups and a soft-phone status, and the plan on the primary key and the job's unique index
+with the CTEs carrying no whole result or snapshot). Console:
+`__tests__/utils/callExportFields.test.ts`, `__tests__/components/ExportFieldsDialog.test.tsx`,
+`__tests__/components/ExportSplitButton.test.tsx` and cases in the Call log's and All calls' page
+tests. Contract: `test/call-export-fields.test.ts`.
 
 The dialog was rendered in a browser only against a mocked API. Nothing here has been used with a
 real server in a browser, or on a campaign with real analysed calls.
