@@ -292,6 +292,15 @@ describe('the agents', () => {
     expect(within(head('Swapna K')).getByTitle('Swapna K')).toBeTruthy();
   });
 
+  it('gives the figures before the bars one width per column, its longest, so every bar starts at the same x (C4)', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    const table = within(await screen.findByTestId('team-agents')).getByRole('table');
+    // The rows' longest: 51 calls, 24 promises, 47% (a "%" counts 2, a digit a little over 1).
+    expect(table.style.getPropertyValue('--team-calls-ch')).toBe('2.25ch');
+    expect(table.style.getPropertyValue('--team-main-ch')).toBe('2.25ch');
+    expect(table.style.getPropertyValue('--team-rate-ch')).toBe('4.25ch');
+  });
+
   it('names the scrolling table apart from its section (C10)', async () => {
     renderView(`?campaign=${CAMPAIGN}`);
     const section = await screen.findByTestId('team-agents');
