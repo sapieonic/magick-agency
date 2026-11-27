@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, type CSSProperties } from 'react';
 import { Check, TriangleAlert, Users } from 'lucide-react';
 import { COMPARE_PAGE_MAX_AGENTS } from '@magick-agency/contracts/api/agency/compare';
 import type { AgencyTeamAgentRow, AgencyTeamPerformance } from '@magick-agency/contracts/api/agency/team-performance';
@@ -64,6 +64,7 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
   const floor = mainFloor(data.main_outcome.kind);
   const callsScale = inlineScale(rows.map((r) => r.calls_handled), data.medians.calls_handled);
   const rateScale = inlineScale(rows.map((r) => (r.main.reportable ? r.main.value : null)), data.medians.main_rate);
+  const widths = figureWidths(rows);
   const full = picks.length >= COMPARE_PAGE_MAX_AGENTS;
   // Agents are picked only within one campaign (TP18, CP8): with All campaigns there are no boxes.
   const canPick = canCompare && data.comparable;
@@ -145,7 +146,7 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
       <div className={styles.tableWrap} tabIndex={0} role="region" aria-label="Agents table">
         {/* The roles restate the table's own: below 640px the rows are laid out as cards (CSS), and a
             browser drops a table's semantics once its parts are no longer displayed as one. */}
-        <table className={styles.table} role="table">
+        <table className={styles.table} role="table" style={widths}>
           <thead role="rowgroup">
             <tr role="row">
               <th scope="col" role="columnheader" className={styles.agentCol}>
@@ -189,7 +190,7 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
                   </th>
                   <td role="cell" data-label="Calls handled">
                     <span className={styles.figure}>
-                      <span className={`${styles.num} ${styles.figureNum}`}>{formatCount(row.calls_handled)}</span>
+                      <span className={`${styles.num} ${styles.callsNum}`}>{formatCount(row.calls_handled)}</span>
                       <InlineBar share={inlineShare(row.calls_handled, callsScale)} median={inlineShare(data.medians.calls_handled, callsScale)} />
                     </span>
                   </td>
@@ -232,20 +233,37 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
   );
 }
 
+/**
+ * The widths of the figures before the bars, each its column's longest (in `ch`, tabular digits),
+ * as CSS variables on the table: every row's count and rate then fill boxes of one width, so the
+ * bars (and the median tick on each) start at the same x in every row, with no room wasted when
+ * the counts are short. A tabular digit runs a little wider than `ch` (the plain "0"), hence the
+ * quarter of slack; a rate's `%` is wider still, so it counts as 2.
+ */
+function figureWidths(rows: readonly AgencyTeamAgentRow[]): CSSProperties {
+  const longest = (texts: string[]) => texts.reduce((n, t) => Math.max(n, t.length), 0);
+  const rates = rows.filter((r) => r.main.reportable && r.main.value !== null).map((r) => percent(r.main.value!).slice(0, -1));
+  return {
+    '--team-calls-ch': `${longest(rows.map((r) => formatCount(r.calls_handled))) + 0.25}ch`,
+    '--team-main-ch': `${longest(rows.map((r) => formatCount(r.main.numerator))) + 0.25}ch`,
+    '--team-rate-ch': `${longest(rates) + 2.25}ch`,
+  } as CSSProperties;
+}
+
 /** The main outcome: its count and rate, with a bar; under the floor, words and no bar. */
 function MainCell({ row, floor, scale, median }: { row: AgencyTeamAgentRow; floor: number; scale: number; median: number | null }) {
   const { main } = row;
   if (!main.reportable || main.value === null) {
     return (
       <span className={styles.figure}>
-        <span className={`${styles.num} ${styles.figureNum}`}>{formatCount(main.numerator)}</span>
+        <span className={`${styles.num} ${styles.mainNum}`}>{formatCount(main.numerator)}</span>
         <span className={styles.withheld}>{withheldWords(main, floor)}</span>
       </span>
     );
   }
   return (
     <span className={styles.figure}>
-      <span className={`${styles.num} ${styles.figureNum}`}>{formatCount(main.numerator)}</span>
+      <span className={`${styles.num} ${styles.mainNum}`}>{formatCount(main.numerator)}</span>
       <span className={styles.rate}>{percent(main.value)}</span>
       <InlineBar share={inlineShare(main.value, scale)} median={median} />
     </span>

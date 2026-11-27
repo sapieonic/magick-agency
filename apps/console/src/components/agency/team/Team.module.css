@@ -576,25 +576,33 @@
 .figure {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .num {
   font-variant-numeric: tabular-nums;
 }
 
-/* A count before a bar, and the rate between them, each in a box of one width, right-aligned, so
-   every row's bar (and the median's tick on it) starts at the same x whatever its digits. The
-   widths hold "9,999" and "100%"; a longer count only pushes its own row's bar along. */
-.figureNum {
+/* A count before a bar, and the rate between them, each in a box as wide as its column's longest
+   (the table's --team-*-ch, set from the rows), right-aligned, so every row's bar (and the
+   median's tick on it) starts at the same x whatever its digits. */
+.callsNum,
+.mainNum {
   display: inline-block;
-  min-width: 5ch;
   text-align: right;
+}
+
+.callsNum {
+  min-width: var(--team-calls-ch, 0);
+}
+
+.mainNum {
+  min-width: var(--team-main-ch, 0);
 }
 
 .rate {
   display: inline-block;
-  min-width: 4.5ch;
+  min-width: var(--team-rate-ch, 0);
   text-align: right;
   color: var(--text-muted);
   font-size: 12px;
@@ -794,7 +802,8 @@
   }
 
   /* No bars here to line up: the figures sit at the start of their place. */
-  .figureNum,
+  .callsNum,
+  .mainNum,
   .rate {
     min-width: 0;
     text-align: left;
