@@ -13,6 +13,7 @@ import {
   compareDisabledReason,
   findingBadge,
   mainFloor,
+  mixedNote,
   percent,
   pickLabel,
   picksLine,
@@ -139,6 +140,12 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
       ) : canCompare && reason ? (
         <p className={styles.hint} id={reasonId} data-testid="team-compare-reason">
           {reason}
+        </p>
+      ) : null}
+      {/* A mixed scope (TP8): the rate's column and its tile count calls that could add nothing to it. */}
+      {data.main_outcome.mixed ? (
+        <p className={styles.hint} data-testid="team-mixed">
+          {mixedNote(label)}
         </p>
       ) : null}
 

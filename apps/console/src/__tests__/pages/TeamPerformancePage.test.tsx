@@ -349,6 +349,30 @@ describe('the agents', () => {
   });
 });
 
+describe('a mixed scope (TP8, C14)', () => {
+  it('says once, calmly, that some campaigns record no Will pay when the answer is mixed', async () => {
+    renderView();
+    await screen.findByTestId('team-agents');
+    const note = screen.getByTestId('team-mixed');
+    expect(note.textContent).toBe('Some campaigns here don’t record Will pay; their calls still count in the will-pay rate.');
+    expect(note.getAttribute('role')).toBeNull();
+    expect(screen.getAllByTestId('team-mixed')).toHaveLength(1);
+  });
+
+  it('says nothing of it when the answer is not mixed', async () => {
+    mocks.getTeamPerformance.mockResolvedValue({ ...TEAM_ALL_CAMPAIGNS, main_outcome: { ...TEAM_ALL_CAMPAIGNS.main_outcome, mixed: false } });
+    renderView();
+    await screen.findByTestId('team-agents');
+    expect(screen.queryByTestId('team-mixed')).toBeNull();
+  });
+
+  it('says nothing of it with one campaign, which is never mixed', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    expect(screen.queryByTestId('team-mixed')).toBeNull();
+  });
+});
+
 describe('picking for Compare agents (TP18)', () => {
   it('picks up to three, says how many to a screen reader, and opens Compare with the campaign, the window and the picks', async () => {
     renderView(`?campaign=${CAMPAIGN}`);

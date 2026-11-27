@@ -51,6 +51,8 @@ function problems(a: AgencyTeamPerformance): string[] {
 
   check(AGENCY_TEAM_MAIN_OUTCOME_KINDS.includes(kind), 'main_outcome.kind');
   check(JSON.stringify(a.main_outcome.codes) === JSON.stringify([...new Set(a.main_outcome.codes)].sort()), 'main_outcome.codes sorted and distinct');
+  // A mixed scope is promises with a campaign worked that records none (TP8), so never successes.
+  check(!a.main_outcome.mixed || kind === 'promises', 'mixed only with promises');
   check(a.comparable === (a.campaign_id !== null), 'comparable is campaign_id !== null');
   check(a.from <= a.to, 'from <= to');
 
@@ -124,6 +126,8 @@ function problems(a: AgencyTeamPerformance): string[] {
     const expected = compareFindings({
       metrics: [{ metric: main, cohort: cohort((r) => r.main) }, { metric: choose, cohort: cohort((r) => r.choose) }],
       picked: rows.map((r) => r.agent_user_id),
+      // The whole cohort has no cap in all (TP15), as the server's teamFindings.
+      max: Infinity,
     }).findings.filter((f) => (TEAM_FINDING_CODES as readonly string[]).includes(f.code));
     const key = (f: { code: string; metric: string; agent_user_id: string }) => `${f.code} ${f.metric} ${f.agent_user_id}`;
     check(JSON.stringify(a.findings.map(key).sort()) === JSON.stringify(expected.map(key).sort()), 'findings are compareFindings over every row');

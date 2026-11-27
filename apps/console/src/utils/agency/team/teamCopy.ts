@@ -70,6 +70,15 @@ export function mainFloor(kind: AgencyTeamMainOutcome['kind']): number {
 /** The floor of the time to choose an outcome (`COMPARE_TIME_MIN_CALLS`, 20). */
 export const CHOOSE_FLOOR = COMPARE_BUILTIN_METRICS.choose_time.min_denominator ?? 0;
 
+/**
+ * A mixed scope (TP8, `main_outcome.mixed`): a campaign worked in the window records no promises,
+ * so its calls are in the rate's denominator and add nothing to its count. Said once, calmly:
+ * "Some campaigns here don’t record Will pay; their calls still count in the will-pay rate."
+ */
+export function mixedNote(label: string): string {
+  return `Some campaigns here don’t record ${label}; their calls still count in the ${rateWords(label)}.`;
+}
+
 // ─── Numbers ────────────────────────────────────────────────────────────────
 
 /** A fraction as a whole percentage: `0.272` → "27%". */

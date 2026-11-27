@@ -23,6 +23,7 @@ import {
   findingBadge,
   mainLabel,
   mainLine,
+  mixedNote,
   outcomeLabel,
   outcomesFootnote,
   outcomesTitle,
@@ -135,6 +136,11 @@ describe('the words (teamCopy)', () => {
     ).toBe('30% success rate · counts 4 soft-phone and inbound calls');
     // A catalog's own label keeps its words.
     expect(rateLabel('Sale made')).toBe('Sale-made rate');
+  });
+
+  it('says calmly that some campaigns record no promises, in the label’s words (TP8, C14)', () => {
+    expect(mixedNote('Will pay')).toBe('Some campaigns here don’t record Will pay; their calls still count in the will-pay rate.');
+    expect(mixedNote('PTP')).toBe('Some campaigns here don’t record PTP; their calls still count in the PTP rate.');
   });
 
   it('writes the tiles’ lines from the answer', () => {

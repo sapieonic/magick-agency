@@ -13,8 +13,9 @@ import type { AgencyTeamPerformance } from '@magick-agency/contracts/api/agency/
  *   a gap on Mahesh B's rate and on his time to choose an outcome, Lakshmi P standing out; Pooja M
  *   has left and, with Farhan A, is under the floor of 20 calls.
  * - {@link TEAM_ALL_CAMPAIGNS}: every campaign over a week: not comparable, no findings, the label
- *   left to the console (two promise codes), 12 soft-phone and inbound calls in the rate, allowed
- *   time differing by campaign, ten outcomes (three past the seventh, folded).
+ *   left to the console (two promise codes), a campaign worked that records no promises (`mixed`),
+ *   12 soft-phone and inbound calls in the rate, allowed time differing by campaign, ten outcomes
+ *   (three past the seventh, folded).
  */
 
 export const TEAM_ONE_CAMPAIGN: AgencyTeamPerformance = {
@@ -497,7 +498,7 @@ export const TEAM_ALL_CAMPAIGNS: AgencyTeamPerformance = {
       'will_pay'
     ],
     label: null,
-    mixed: false
+    mixed: true
   },
   totals: {
     agents: 10,
