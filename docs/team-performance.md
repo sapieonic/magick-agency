@@ -5,8 +5,8 @@ across every campaign of the account, as five tiles, the main outcome per workin
 happened on the calls, and one row per agent with the ones worth a look marked. It reuses Compare
 agents' definitions number for number (CP9): its read is Compare's sources for the whole cohort,
 team-level, optionally across every campaign. Designed 2026-11-27; rulings TP1–TP20 below. The
-contract and the flag `agency_team_performance_enabled` are in; the read, the route and the console
-tab are not built yet (§8).
+contract, the flag `agency_team_performance_enabled`, the server's read and its route are in; the
+console tab is not built yet (§7).
 
 This file is the design and the build contract. Where it and another doc disagree about this page,
 this file wins; where it reuses another area's read, that area's doc defines the number
@@ -127,9 +127,57 @@ campaign predicate is two SQL strings, never `$1 IS NULL OR`. Compare's SQL cons
 Metrics: `agency_team_performance_read_seconds{result}` and
 `agency_team_performance_reads_refused_total{reason}` (`packages/observability/src/metrics/agency.ts`).
 
-**Cost.** No migration is expected. Before the tab is turned on for a tenant, the read is planned
-with `EXPLAIN ANALYZE` for Today, 7 days and 31 days, account-wide and one campaign, and the result
-recorded here (TP20).
+**How the build reads the scope** (chunk B, where the rulings left a choice):
+
+- **All campaigns** is every campaign of the account: a promise, a soft-phone or an inbound call
+  counts when it is on a campaign (`campaign_id IS NOT NULL`), so a soft-phone call on no campaign
+  is in neither scope; a call-back on any campaign of the account. The scope's campaigns (the main
+  outcome's catalogs, the allowed time, the bars' labels, the rollup reads, `rollup_as_of`) are the
+  ones a report covers (`accountCoveredCampaignIds`' rule): live now, or with rollup dials between
+  the chart's first day and the window's end.
+- **The per-day chart and the bars are the team's, not only the window's cohort**: the rollup and
+  the promises per day are read for the whole scope, whoever worked them. A short window's earlier
+  days (TP12) are then the team's even when few of today's agents worked them, and a window holding
+  today with nobody dialled yet still draws them. Over the window itself every dialler conversation
+  is a cohort agent's; the promises per day can also hold the promises of an agent with no row
+  (TP14), so the chart's sum can pass `totals.main.numerator` by those. The totals sum the rows (the
+  contract's `AgencyTeamTotals`).
+- **"Campaigns with calls"** for the allowed time are the scope's campaigns with rollup
+  conversations in the window.
+- **Slots**: team reads have a limiter of their own with Compare's process-wide share
+  (`compareGlobalReadLimit`, 5 of a pool of 30); Compare's and Team performance's reads together can
+  hold two such shares (10 of 30).
+- A missing `timezone` is `400 team_timezone_invalid` (the code's own doc in `errors.ts`, and
+  Compare's rule for its zone); any other query that fails its shape, a malformed `campaign_id`
+  included, is the generic agency 400.
+
+**Cost, measured** (2026-11-27, TP20). No migration. Seeded as Compare's cost seed (§7 of
+`compare-agents.md`): one account, two running campaigns of 100 agents each (one recording
+promises), 31 days × 150 dials per agent (930,000 attempts, 310,000 conversations), 2.5 million
+state events (more than Compare's 1.4 million: a reserve, a call and a wrap-up per dial), the rollup
+folded. Each statement's `EXPLAIN (ANALYZE, BUFFERS)` inside the read's own transaction (one
+parallel worker), and the whole read under its 8 s budget, in Asia/Kolkata:
+
+| Window | Scope | Whole read | Roster attempts | Roster occupancy | Rollup (codes, days) | Promises (rows, days) | Call-backs |
+|---|---|---|---|---|---|---|---|
+| 1 day | one campaign | 0.19 s | 0.04 s | 0.08 s | 0.002 s, 0.04 s | 0.001 s, 0.007 s | 0.005 s |
+| 1 day | All campaigns | 0.28–0.34 s | 0.08–0.13 s | 0.17–0.23 s | 0.003 s, 0.05–0.07 s | 0.002 s, 0.007 s | 0.009 s |
+| 7 days | one campaign | 0.74 s | 0.22 s | 0.64 s | 0.01 s, 0.02 s | 0.003 s, 0.004 s | 0.04 s |
+| 7 days | All campaigns | 1.53 s | 0.60 s | 1.30 s | 0.03 s, 0.05 s | 0.005 s, 0.004 s | 0.07 s |
+| 31 days | one campaign | 2.8–3.1 s | 0.96 s | 2.83 s | 0.05 s, 0.06 s | 0.02 s, 0.02 s | 0.12 s |
+| 31 days | All campaigns | **7.7 s, or `503 team_timed_out` at 7.8 s** | 3.67 s | **5.68 s** | 0.05 s, 0.12 s | 0.01 s, 0.02 s | 0.23 s |
+
+(The scope's campaigns: under 0.02 s everywhere. "1 day" is a full busy day, as Today is at its end;
+its chart reads 14 days of rollup and promises.) The read is the roster's two statements: the whole
+cohort's occupancy (every state change of the window, its sort spilling to disk) and, across the
+account, the attempt aggregate without a campaign to narrow `idx_agency_attempts_billing` on. Every
+statement of the read's own is under a quarter of a second on 31 days, the promises on their 0050
+indexes (held by the integration test's plan). So on an account this busy, All campaigns over a
+whole month sits at the budget and answers `503 team_timed_out` about as often as not; a week, or
+one campaign for a month, answers well inside it. That is the roster screen's own cost for the same
+window (it has no timeout). Open for Manas before the tab is turned on for such a tenant: accept it
+(the console says "Too much to read at once. Try a shorter period."), default the page to a shorter
+window, or move the read to the analytics child as Compare's trigger says.
 
 ## 5. Contract
 
@@ -184,7 +232,7 @@ Refusals are `{ error, code, message }` (`AgencyTeamPerformanceErrorResponse`) w
 | Chunk | Scope | Status |
 |---|---|---|
 | A | The contract (`team-performance.ts`, the error codes in `errors.ts` §11), the flag in `flags.ts` and the server's registry, this doc | **Built** (2026-11-27) |
-| B | The server: the SQL, validate, read and assemble, the route and its guards, the metrics, the cost measured (§4) | Not started |
+| B | The server: the SQL, validate, read and assemble, the route and its guards, the metrics, the cost measured (§4) | **Built** (2026-11-27). The route is listed server-only in the route table (`agency-route-table.test.ts`) until the console tab calls it (C), when it moves to `test/fixtures/console-paths.json` |
 | C | The console tab (§2), its nav entry, search entry and Download Excel | **Built** (2026-11-27), against the contract and answers worked out by the shared domain rules (`__tests__/helpers/teamRecorded.ts`), to be replaced by answers recorded from the real route at D. The tabs read Team performance, Analytics, Compare agents, Exports: Analytics stays ahead of Compare agents so a supervisor with this flag off still lands on Analytics, not on Compare. The top bar's "Reports" crumb opens the first tab the reader may open, as the sidebar does, so a viewer's never points at this supervisor-only tab |
 | D | The docs around it (the doc map, modules, status, Compare's and Reports' docs, seams, operations) and a run end to end against the real route on a seeded database | Not started |
 
@@ -203,7 +251,8 @@ Refusals are `{ error, code, message }` (`AgencyTeamPerformanceErrorResponse`) w
   the same campaign and window (the oracle), tenant and account isolation, a departed agent kept,
   calls at 23:50 and 00:10 in a zone other than UTC, the trend skipping a day off, a mixed scope,
   the timeout's 503, and the plan of the promises statement using its index. Mutation-checked: the
-  comparable gate on findings, the working-day rule, the tenant predicate.
+  comparable gate on findings, the working-day rule, the scope's tenant and account predicate.
+  Built.
 - Console (C): the team utilities, the chart geometry, `pages/TeamPerformancePage.test.tsx`
   against a recorded answer, `navRouteGates.test.ts`, `consoleSearch.test.ts` and a timezone test.
   Mutation-checked: the nav gate, the three-pick limit, the comparable rule.

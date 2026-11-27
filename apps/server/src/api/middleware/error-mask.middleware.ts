@@ -13,7 +13,8 @@ import { redactUrl } from '../../utils/redact-url.js';
  * Also: the 429 pass-through, the `preserveReviewedUpstreamError` opt-out (the reviewed way
  * to let a fixed-shape 5xx through; each setter sends a fixed body it owns: among them
  * `sendRevocationCacheUnavailable`, `cache/revocation-unavailable.ts` — decision Q5 — so a role
- * change's 503 keeps its "retry" instruction, and Compare agents' `503 compare_timed_out`; grep
+ * change's 503 keeps its "retry" instruction, Compare agents' `503 compare_timed_out` and Team
+ * performance's `503 team_timed_out`; grep
  * for `preserveReviewedUpstreamError = true` for the rest), the media workers' fixed retry bodies (`REVIEWED_RETRY_BODIES`), the
  * content-length / x-request-id headers, and `MASK_EXEMPT_PATHS` for the probes `/healthz`
  * and `/readyz` (with or without a query string).

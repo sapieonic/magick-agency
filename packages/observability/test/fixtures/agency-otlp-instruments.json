@@ -758,6 +758,37 @@
     ]
   },
   {
+    "name": "agency_team_performance_read_seconds",
+    "kind": "Histogram",
+    "description": "Seconds one Team performance read took against the database, by result (ok, timed_out, aborted (the client went away) or failed); cached and joined answers are not timed",
+    "unit": "s",
+    "advice": {
+      "explicitBucketBoundaries": [
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2,
+        3,
+        4,
+        6,
+        8,
+        12
+      ]
+    },
+    "attributes": [
+      "result"
+    ]
+  },
+  {
+    "name": "agency_team_performance_reads_refused_total",
+    "kind": "Counter",
+    "description": "Team performance reads refused by their guards, by reason: busy (the tenant, or the whole process, already runs its limit of reads) or timed_out (the read passed its 8 s budget: Postgres's statement_timeout ended a statement, or the whole-read deadline cancelled it)",
+    "attributes": [
+      "reason"
+    ]
+  },
+  {
     "name": "agency_tick_idle_total",
     "kind": "Counter",
     "description": "Ticks that dialed nothing, by benign reason (no agents, no slots, no contacts)",

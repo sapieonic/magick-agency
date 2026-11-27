@@ -1012,6 +1012,26 @@ export const agencyCompareReadsRefusedTotal = counter<'reason'>(meter, 'agency_c
   description: 'Compare agents reads refused by their guards, by reason: busy (the tenant, or the whole process, already runs its limit of reads) or timed_out (the read passed its 3 s budget: Postgres\'s statement_timeout ended a statement, or the whole-read deadline cancelled it)',
 });
 
+// ─── Team performance (docs/team-performance.md §4) ───────────────────────────
+//
+// Compare's guards on the whole cohort, on one campaign or across the account
+// (`apps/server/src/agency/team-performance/read.ts`, TP20): a statement timeout and a whole-read
+// deadline of 8 s, a per-tenant and a process-wide limit, and a 30 s cache. Only reads that ran are
+// timed: an answer from the cache, or one joined in flight, is not. The results and refusal reasons
+// are Compare's vocabularies (`CompareReadResult`, `CompareReadRefusal`).
+
+export const agencyTeamPerformanceReadSeconds = histogram<'result'>(meter, 'agency_team_performance_read_seconds', {
+  description: 'Seconds one Team performance read took against the database, by result (ok, timed_out, aborted (the client went away) or failed); cached and joined answers are not timed',
+  unit: 's',
+  // To 12 s. A read normally ends by its 8 s budget; a read that has to be cancelled adds the
+  // cancel's own connection and its grace, and lands past 8 s.
+  buckets: [0.1, 0.25, 0.5, 1, 2, 3, 4, 6, 8, 12],
+});
+
+export const agencyTeamPerformanceReadsRefusedTotal = counter<'reason'>(meter, 'agency_team_performance_reads_refused_total', {
+  description: 'Team performance reads refused by their guards, by reason: busy (the tenant, or the whole process, already runs its limit of reads) or timed_out (the read passed its 8 s budget: Postgres\'s statement_timeout ended a statement, or the whole-read deadline cancelled it)',
+});
+
 // ─── Inbound calls (docs/inbound.md; apps/server/src/agency/inbound/) ──────────────────────
 
 /** What the inbound answer webhook answered: the router's decision, or why it never decided. */

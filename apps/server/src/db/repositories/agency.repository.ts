@@ -375,6 +375,21 @@ export { AgencyCompareReadRepository, agencyCompareReadRepository, ZERO_CALLBACK
 export type { CompareCallbackClasses, CompareCohortScope, CompareDayCountRow, ComparePromiseRow, CompareRollupCodeRow } from './agency/compare-reads.js';
 export { AgencyCompareViewRepository, agencyCompareViewRepository } from './agency/compare-view.repository.js';
 export type { CompareViewContent, CompareViewCreateResult, CompareViewRecord, CompareViewScope, CompareViewUpdate } from './agency/compare-view.repository.js';
+// Team performance (docs/team-performance.md): Compare's sources for the whole cohort, on one
+// campaign or across the account, beside the roster's two statements on the read's own client.
+export { AgencyTeamPerformanceReadRepository, agencyTeamPerformanceReadRepository } from './agency/team-performance-reads.js';
+export type {
+  TeamCampaignsScope,
+  TeamCohortScope,
+  TeamInstantWindow,
+  TeamPromiseDayRow,
+  TeamPromiseRow,
+  TeamReadScope,
+  TeamRollupCodeRow,
+  TeamRollupDayRow,
+  TeamScope,
+  TeamScopeCampaignRow,
+} from './agency/team-performance-reads.js';
 // Campaign templates (0067, docs/campaign-templates.md): the templates and their versions.
 export { AgencyCampaignTemplateRepository, agencyCampaignTemplateRepository } from './agency/campaign-template.repository.js';
 export type {

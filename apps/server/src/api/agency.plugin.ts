@@ -30,6 +30,7 @@ import { proxyAgencyCallsRoutes } from './routes/proxy-agency-calls.routes.js';
 import { proxyAgencySoftphoneRoutes } from './routes/proxy-agency-softphone.routes.js';
 import { proxyAgencyReportsRoutes } from './routes/proxy-agency-reports.routes.js';
 import { proxyAgencyCompareRoutes } from './routes/proxy-agency-compare.routes.js';
+import { proxyAgencyTeamPerformanceRoutes } from './routes/proxy-agency-team-performance.routes.js';
 import { proxyAgencyCampaignTemplatesRoutes } from './routes/proxy-agency-campaign-templates.routes.js';
 import { proxyAgencyInboundRoutes } from './routes/proxy-agency-inbound.routes.js';
 import { proxyAgencyPushDeviceRoutes } from './routes/proxy-agency-push-devices.routes.js';
@@ -174,6 +175,11 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
   // ── Compare agents (`proxy-agency-compare.routes.ts`, docs/compare-agents.md; its own 404s for ids) ──
   await app.register(async (scope) => {
     await scope.register(proxyAgencyCompareRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── Team performance (`proxy-agency-team-performance.routes.ts`, docs/team-performance.md; its own 400 for ids) ──
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyTeamPerformanceRoutes, { prefix: P.proxyAgency });
   });
 
   // ── Campaign templates (`proxy-agency-campaign-templates.routes.ts`, docs/campaign-templates.md; its own 404s for ids) ──

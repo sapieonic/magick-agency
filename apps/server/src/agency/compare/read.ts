@@ -221,7 +221,7 @@ export const COMPARE_STATEMENT_TIMEOUT_SLACK_MS = 50;
 export const COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER = 1;
 
 /** `57014 query_canceled`: what a statement past its `statement_timeout` raises. */
-function isStatementTimeout(err: unknown): boolean {
+export function isStatementTimeout(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === '57014';
 }
 
@@ -344,13 +344,13 @@ export function compareCohortCacheKey(q: CompareWindowScope): string {
 }
 
 /** The whole read's deadline: its signal, and when it fires (`performance.now()` time). */
-interface ReadDeadline {
+export interface ReadDeadline {
   signal: AbortSignal;
   at: number;
 }
 
 /** The deadline of a read that starts now and may take `ms`. */
-function readDeadline(ms: number): ReadDeadline {
+export function readDeadline(ms: number): ReadDeadline {
   return { signal: AbortSignal.timeout(ms), at: performance.now() + ms };
 }
 
