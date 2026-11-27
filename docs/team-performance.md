@@ -6,8 +6,9 @@ happened on the calls, and one row per agent with the ones worth a look marked. 
 agents' definitions number for number (CP9): its read is Compare's sources for the whole cohort,
 team-level, optionally across every campaign. Designed 2026-11-27; rulings TP1–TP20 below. Built
 (§7): the contract, the flag `agency_team_performance_enabled` (off by default), the server's read
-and its route, and the console tab. One decision is open for Manas before the flag is turned on
-for a busy tenant: All campaigns over a whole month (§4 "Cost, measured", §7).
+and its route, and the console tab. All campaigns over a whole month on a busy tenant reads at the
+budget; Manas ruled on 2026-11-27 to keep the live read for now, with daily pre-processing as the
+follow-up (§4 "Cost, measured", §7).
 
 This file is the design and the build contract. Where it and another doc disagree about this page,
 this file wins; where it reuses another area's read, that area's doc defines the number
@@ -16,29 +17,29 @@ this file wins; where it reuses another area's read, that area's doc defines the
 ## 1. Rulings
 
 TP1–TP20 are the design's of 2026-11-27. Those marked "default accepted" were open questions whose
-proposed default Manas accepted the same day; the rest are the design's own recommendations, which
-stand as recommended (the convention of `agent-station.md` §1).
+proposed default Manas accepted the same day; the rest were the design's own recommendations, which
+Manas ratified the same day, TP14's wording (the tiles are the rows' sums) included.
 
 | ID | Ruling | Status |
 |---|---|---|
 | TP1 | **The page is `/agency/team-performance`, Reports' first tab.** Not `/agency/reports/team`: `reports/:runId` owns that space (the dedicated agent's twin path and Exports' sub-page would claim it). Tabs: Team performance, Compare agents, Analytics, Exports. A supervisor lands on Team performance (the section opens its first visible tab); a viewer or operator still lands on Analytics. No redirects: every existing URL keeps working. The Analytics tab keeps its name, and its By agent view stays as the per-person drill-down | Decided (default accepted, Manas, 2026-11-27) |
-| TP2 | **One definition per number (CP9).** Every figure on the page is Compare agents' figure for the same agent, campaign and window, from the same statements (the roster's attempt and occupancy totals, the promise columns, the rollup codes, the call-back classes). The page adds sums, medians and the per-day series, never a new definition | Decided (as recommended) |
-| TP3 | **Supervisors only** (`agency.supervise`, CP3). An agent never sees the team's figures here | Decided (as recommended) |
+| TP2 | **One definition per number (CP9).** Every figure on the page is Compare agents' figure for the same agent, campaign and window, from the same statements (the roster's attempt and occupancy totals, the promise columns, the rollup codes, the call-back classes). The page adds sums, medians and the per-day series, never a new definition | Decided (ratified by Manas 2026-11-27) |
+| TP3 | **Supervisors only** (`agency.supervise`, CP3). An agent never sees the team's figures here | Decided (ratified by Manas 2026-11-27) |
 | TP4 | **Will pay follows CP2 exactly**: promises recorded on every call type, by `dispositioned_at`, credited to the agent who took the call, over the dialler conversations plus that agent's soft-phone conversations and answered inbound calls. When those other calls are in the figure, the tile's line says so ("counts 12 soft-phone and inbound calls") | Decided (default accepted, Manas, 2026-11-27) |
-| TP5 | **The cohort is who dialled in the window**, the roster's rows for the scope (`rosterAttemptTotals`), with the roster route's membership filter keeping a departed member (`filterRowsByMembership`, kept); a departed agent is flagged and shown "(left)" | Decided (as recommended) |
+| TP5 | **The cohort is who dialled in the window**, the roster's rows for the scope (`rosterAttemptTotals`), with the roster route's membership filter keeping a departed member (`filterRowsByMembership`, kept); a departed agent is flagged and shown "(left)" | Decided (ratified by Manas 2026-11-27) |
 | TP6 | **Its own flag**, `agency_team_performance_enabled`: boolean, off by default, global, tenant and account, client-exposed. Separate from `agency_compare_enabled` and `agency_reports_enabled`, because it runs in the primary over the whole account's cohort with its own guards | Decided (default accepted, Manas, 2026-11-27) |
 | TP7 | **All campaigns by default; agents are compared only within one campaign** (CP8). With All campaigns the page shows every figure and no badges, with the note "Choose one campaign to see who's worth a look"; with one campaign, findings mark rows. `comparable` on the answer is the rule | Decided (default accepted, Manas, 2026-11-27) |
 | TP8 | **The main outcome is the Live floor's rule.** If any campaign in scope has a catalog entry with `requires_promise` (its current catalog, or the default when it stores none: `effectiveCatalog`), the main outcome is promises (`promises_rate`); otherwise successes (`success_rate`, gated by `success_rate_reportable`). A mixed scope is promises, and the page notes that some campaigns record none. The server sends the label only when the counted codes carry exactly one distinct catalog label; otherwise the console writes "Will pay" or "Successes". Columns and the sort pill read "{label} rate" | Decided (default accepted, Manas, 2026-11-27) |
 | TP9 | **"Stands out", not "Top performer"** (CP4: findings are for coaching, not appraisal) | Decided (default accepted, Manas, 2026-11-27) |
 | TP10 | **Call-backs on time counts dialler-booked call-backs only**, in IN4's classes, for call-backs booked by cohort agents whose booked time falls in the window | Decided (default accepted, Manas, 2026-11-27) |
 | TP11 | **Whole local days.** The window is local dates, both ends inclusive, under the reports' rule (`reportWindowProblem`: at most 30 days or exactly one calendar month, ending no later than today). A window that holds today runs to now, and the page says "Today, up to 2:15 PM". No custom time of day | Decided (default accepted, Manas, 2026-11-27) |
-| TP12 | **The per-day chart shows working days.** A working day is a local day with at least one dialler conversation in scope or a count that is not zero; a day off is left out, not drawn as 0. A window of fewer than 7 local days shows the last 7 working days ending at its last day, looking back at most 14 days; a longer window shows every working day of it. One colour; the last bar labelled | Decided (as recommended) |
+| TP12 | **The per-day chart shows working days.** A working day is a local day with at least one dialler conversation in scope or a count that is not zero; a day off is left out, not drawn as 0. A window of fewer than 7 local days shows the last 7 working days ending at its last day, looking back at most 14 days; a longer window shows every working day of it. One colour; the last bar labelled | Decided (ratified by Manas 2026-11-27) |
 | TP13 | **"What happened on the calls" is dialler conversations only**, from the Insights rollup (`agency_insights_rollup_codes`), labelled from each campaign's catalog, and says how fresh the rollup is (`rollup_as_of`). The 7 largest outcomes are drawn one by one, the rest as "Other outcomes"; a null code and `no_disposition` are "No outcome chosen". The footnote that the bar and the main tile count differently is shown only when they differ | Decided (default accepted, Manas, 2026-11-27) |
 | TP14 | **Soft-phone-only and inbound-only agents are not rows, and the tiles are the rows' sums.** An agent with no dialler call in the window has no row and is in no tile, so the tiles and the table always agree. The per-day chart and What happened on the calls are the whole team's in the scope, whoever took the calls (the page labels them "whole team" and "Dialler calls only"): the chart's promises per day count such an agent's promises too, so over the window it can pass the Will pay tile by those. Settled at D (2026-11-27): the first wording put their promises in the team's Will pay through nobody's row, which the contract's sums (`AgencyTeamTotals`) never did; the build keeps the sums | Decided (default accepted, Manas, 2026-11-27; wording settled at D) |
-| TP15 | **Worth a look is Compare's findings over the whole cohort**: `compareFindings` on the main rate and `choose_time`, every row picked, keeping `stands_out` and `clear_gap` only (no `too_few_calls`, no `not_clear`, no breaks). Words: "Stands out"; a gap on the rate "Low {label} rate"; on the time to choose "Slow to choose outcome" | Decided (as recommended) |
+| TP15 | **Worth a look is Compare's findings over the whole cohort**: `compareFindings` on the main rate and `choose_time`, every row picked, keeping `stands_out` and `clear_gap` only (no `too_few_calls`, no `not_clear`, no breaks). Words: "Stands out"; a gap on the rate "Low {label} rate"; on the time to choose "Slow to choose outcome" | Decided (ratified by Manas 2026-11-27) |
 | TP16 | **The table is sorted in the browser**: by "{label} rate" (reportable rows first, highest first), Calls handled (most first) or Shortest calls (average call, shortest first, empty last). The rank is the position. Rows are not clickable in v1 | Decided (default accepted, Manas, 2026-11-27) |
-| TP17 | **The server sends data, the console writes words** (CP12, AS15): codes, counts, fractions, labels from the campaigns' own catalogs. Every sentence on the page is the console's, in simple Indian English | Decided (as recommended) |
-| TP18 | **Pick up to 3 rows and Compare picked** (CP1, `COMPARE_PAGE_MAX_AGENTS`): opens Compare agents with the campaign, the window and the picks. Shown only with `agency_compare_enabled` on; with All campaigns it is disabled and says why. Picks are not in the URL and clear when a filter changes | Decided (as recommended) |
+| TP17 | **The server sends data, the console writes words** (CP12, AS15): codes, counts, fractions, labels from the campaigns' own catalogs. Every sentence on the page is the console's, in simple Indian English | Decided (ratified by Manas 2026-11-27) |
+| TP18 | **Pick up to 3 rows and Compare picked** (CP1, `COMPARE_PAGE_MAX_AGENTS`): opens Compare agents with the campaign, the window and the picks. Shown only with `agency_compare_enabled` on; with All campaigns it is disabled and says why. Picks are not in the URL and clear when a filter changes | Decided (ratified by Manas 2026-11-27) |
 | TP19 | **Download Excel is the existing campaign or account report** (one campaign: the campaign report; All campaigns: the account report), opened with the page's dates and the workbook chosen. A team-performance report kind is a later phase. Hidden when `agency_reports_enabled` is off | Decided (default accepted, Manas, 2026-11-27) |
 | TP20 | **The read runs in the primary**, with Compare's guards (§4), and its cost is measured and recorded here before the tab is turned on for a tenant | Decided (default accepted, Manas, 2026-11-27) |
 
@@ -188,9 +189,10 @@ statement of the read's own is under a quarter of a second on 31 days, the promi
 indexes (held by the integration test's plan). So on an account this busy, All campaigns over a
 whole month sits at the budget and answers `503 team_timed_out` about as often as not; a week, or
 one campaign for a month, answers well inside it. That is the roster screen's own cost for the same
-window (it has no timeout). **Open for Manas** before the tab is turned on for such a tenant
-(§7): accept it (the console says "Too much to read at once. Try a shorter period."), default the
-page to a shorter window, or move the read to the analytics child as Compare's trigger says.
+window (it has no timeout). **Decided (Manas, 2026-11-27): keep the live read as it is for
+now** (the console says "Too much to read at once. Try a shorter period."). The follow-up is to
+pre-process the figures once a day and serve the page from them, running the live read only when a
+supervisor asks for a refresh (§7).
 
 ## 5. Contract
 
@@ -249,10 +251,11 @@ Refusals are `{ error, code, message }` (`AgencyTeamPerformanceErrorResponse`) w
 | C | The console tab (§2), its nav entry, search entry and Download Excel | **Built** (2026-11-27), against the contract and answers worked out by the shared domain rules (`__tests__/helpers/teamRecorded.ts`), held at D to answers recorded from the real route. The tabs read Team performance, Analytics, Compare agents, Exports: Analytics stays ahead of Compare agents so a supervisor with this flag off still lands on Analytics, not on Compare. The top bar's "Reports" crumb opens the first tab the reader may open, as the sidebar does, so a viewer's never points at this supervisor-only tab |
 | D | The docs around it (the doc map, modules, status, Compare's and Reports' docs, seams, operations) and a run end to end against the real route on a seeded database | **Built** (2026-11-27). Answers recorded from the real route over the integration test's seed (`__tests__/helpers/teamRouteRecorded.ts`); `__tests__/utils/teamAnswer.test.ts` holds them and the page tests' hand-made answers to the server's rules (the sums, the medians, Compare's values and findings, the trend's span). TP14 settled: the tiles are the rows' sums. The phone layout, the per-day axis and the outcome footnote polished (§2) |
 
-**Open for Manas** before the flag is turned on for a tenant as busy as the cost seed: All
-campaigns over a whole month reads in about 7.7 s against the 8 s budget and answers `503
-team_timed_out` about as often as not (§4 "Cost, measured"). Accept it, default the page to a
-shorter window, or move the read to the analytics child.
+**Next (not built):** All campaigns over a whole month reads in about 7.7 s against the 8 s budget
+on a tenant as busy as the cost seed and answers `503 team_timed_out` about as often as not (§4
+"Cost, measured"). Manas ruled on 2026-11-27 to keep the live read for now and to follow with a
+daily job that pre-processes each day's figures per account and campaign; the page then reads
+those, and runs the live read only on a forced refresh.
 
 ## 8. Tests
 

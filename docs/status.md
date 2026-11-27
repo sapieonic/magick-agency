@@ -2959,8 +2959,9 @@ The tiles are the table's sums; the per-day chart and the outcome bars are the w
 scope (TP14). Not built: a team-performance report kind (TP19's later phase); clickable rows.
 Not verified: the screens have been looked at in a harness against the page's own answers, not
 against a deployed server; the mobile app's `dart test` was not run (no change to what it reads).
-Open: All campaigns over a whole month on a busy account reads at the 8 s budget
-(`team-performance.md` §4, "Open decisions and owners" below). Turning it on and what to watch:
+All campaigns over a whole month on a busy account reads at the 8 s budget; Manas kept the live
+read for now (2026-11-27), with daily pre-processing as the follow-up (`team-performance.md` §4,
+§7). Every TP ruling is decided. Turning it on and what to watch:
 [`operations.md`](operations.md), "Team performance".
 
 ## Not built
@@ -3094,7 +3095,6 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Promise to pay (2026-11-15) | PT2's split and PT4's 30 days are decided. Ratify the rest of PT1–PT14, and decide: the follow-up's 1–14 day range and Insights' counting (PT2), a currency setting (PT5), and PT13's refusal of a promise on a soft-phone call with no claimed contact (or record it without a follow-up) |
 | Live floor (2026-11-18) | Decide LF2 (a currency for Will pay), LF3 (customer names on the agent cards) and LF8 (Join call, whisper); ratify LF1, LF9 and LF10, and Phase 3's defaults LF11–LF35, LF37 and LF38 (LF21: no late callbacks to an agent on a break; LF27: Agents on every campaign's Settings). LF4–LF7 (Phase 3) decided 2026-11-19 and built; LF36 decided 2026-11-26 and built; LF39 decided 2026-11-24 and built (`decisions.md`, "Live floor (LF)") |
 | Archived campaigns (2026-11-21) | Ratify AR1–AR7: a flag beside the status; draft and stopped only, not completed; archived campaigns out of every list, picker and search (a picker keeps one it holds); `agency.campaigns.write`; only Start refused on an archived campaign, the console offering no new work on it |
-| Team performance (2026-11-27) | Before `agency_team_performance_enabled` is turned on for a tenant as busy as the cost seed (200 agents, 310,000 conversations a month): All campaigns over 31 days reads in about 7.7 s against the 8 s budget and answers `503 team_timed_out` about as often as not. Accept it (the page says "Too much to read at once. Try a shorter period."), default the page to a shorter window, or move the read to the analytics child (`team-performance.md` §4). Ratify the rulings marked "as recommended" (TP2, TP3, TP5, TP12, TP15, TP17, TP18) |
 | Staging reports (2026-11-19) | Ratify AD1–AD2 (a summary reads "delayed" server-wide while the AI vendor's newest answer is a refusal) and TR1 (identical audio transcribed at most twice across attempts that end short, at worst 2 per attempt); run `terraform apply` in `grafana/` so `agy-analysis-vendor-refusing` exists; decide P3 soft-phone pickup, and a note on the agent app's Phone tab meanwhile |
 
 ## Deployment invariants
