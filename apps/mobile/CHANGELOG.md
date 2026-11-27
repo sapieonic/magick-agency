@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.21.0...mobile-v0.22.0) (2026-11-27)
+
+
+### Features
+
+* **mobile:** the keyboard made room for once, and every supervisor message within reach (LF36) ([#133](https://github.com/sapieonic/magick-agency/issues/133)) ([2a38138](https://github.com/sapieonic/magick-agency/commit/2a38138a4211494d6c2b5e5b92613f4d43b52bd1))
+
 ## [0.21.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.20.0...mobile-v0.21.0) (2026-11-26)
 
 
