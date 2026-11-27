@@ -77,6 +77,13 @@ context and `Cache-Control: no-store`, `agency.supervise` then the `agency_compa
 read), served from SQL by `agency/compare/` (no `callCore`), its ids validated by its own routes (no wrapper
 id guard). It owns one `CompareReads` per registration (the read's caches and its limiter: per
 tenant and process-wide), cleared when the app closes. No config key, bootstrap or seam is added.
+`api/routes/proxy-agency-team-performance.routes.ts` (Team performance, docs/team-performance.md
+§4) is the same kind: `GET /proxy/agency/team-performance`, its hooks the session, the tenant
+context and `Cache-Control: no-store`, `agency.supervise` then the `agency_team_performance_enabled`
+flag, served from SQL by `agency/team-performance/` (no `callCore`), its campaign id validated by its
+own query schema. It owns one `TeamPerformanceReads` per registration (its cache and its limiter: per
+tenant and Compare's process-wide share), cleared when the app closes. No config key, bootstrap or
+seam is added; its limits are constants in the contract.
 `api/routes/proxy-agency-campaign-templates.routes.ts` (campaign templates, docs/campaign-templates.md
 §6) is the same kind, its routes in `api/routes/proxy-agency-campaign-templates/` (`read.ts`,
 `write.ts`, `apply.ts`, with `shared.ts` and `validate.ts`): the twelve

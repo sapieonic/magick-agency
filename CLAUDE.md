@@ -18,6 +18,7 @@ only; never cite another system, repo or external design doc.
 | `docs/softphone.md`, `docs/mobile.md` | you work on the soft phone or the agent app |
 | `docs/insights.md` | you work on the campaign Insights tab, its rollup or the pacing history |
 | `docs/compare-agents.md` | you work on the Compare agents tab of Reports (lenses, the metric catalog, the findings rules, its read) |
+| `docs/team-performance.md` | you work on the Team performance tab of Reports (the team's tiles, the per-day chart, the outcome bars, one row per agent; rulings TP1–TP20, its read and its measured cost) |
 | `docs/campaign-templates.md` | you work on campaign templates (organisation and account templates, New campaign's fill-in, the soft phone's outcomes when it follows a template); rulings CT1–CT23 |
 | `docs/customer-history.md` | you work on the customer-history search (one number across campaigns), the inbound calls in it included |
 | `docs/call-log.md` | you work on a list of calls (the campaign Call log, My calls, All calls), a call's type or campaign, a campaign's figures by call type (Calls by type, the inbound figures, "Outbound connect rate") or the "Every call must belong to a campaign" setting: the model, phases P1–P6 and their status (all built; §9 says what waits for Manas), rulings CL1–CL42 |

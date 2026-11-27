@@ -43,6 +43,13 @@ recommended (the convention of `agent-station.md` §1).
 
 Reports gains a tab, **Compare agents**, beside the existing ones. Top to bottom:
 
+It is also opened from **Team performance** (`team-performance.md`, TP18): with one campaign, a
+supervisor picks up to three rows there and **Compare picked** opens this tab with the campaign,
+the window and the picks in the URL (`compareStateToParams`). That page uses this tab's
+definitions number for number (TP2: the same roster statements, promise columns, rollup codes,
+call-back classes, `compareValue` and `compareFindings`), so an agent's figure there is the figure
+here for the same campaign and window.
+
 1. **Filters in one row:** Lens, Campaign (one), When (a window of local dates, at most 30 days or
    exactly one calendar month, the reports rule `reportWindowProblem`), and **Metrics · N**, which opens the picker (at most 6,
    grouped as in §3, each marked "higher is better", "lower is better" or "shown, never flagged").
