@@ -330,6 +330,7 @@ const rowOf = (a: AgencyTeamPerformance, i: number) => a.agents.find((r) => r.ag
 // ── Setup ────────────────────────────────────────────────────────────────────
 
 let accountB = '';
+let campaignB = '';
 let supB: Actor;
 
 beforeAll(async () => {
@@ -383,6 +384,20 @@ beforeAll(async () => {
   await q(`INSERT INTO users (id, firebase_uid, email, display_name, status) VALUES ($1, $2, $3, 'Supervisor B', 'active')`, [supBId, uid, `${uid}@load.example.com`]);
   await q(`INSERT INTO memberships (id, user_id, tenant_id, account_id, role, status) VALUES ($1, $2, $3, $4, 'account_admin', 'active')`, [randomUUID(), supBId, floor.tenant, accountB]);
   supB = { id: supBId, uid, tok: `tok:${uid}`, role: 'account_admin', ip: '10.9.201.1' };
+  // Account B's own promise campaign, with one soft-phone promise of its supervisor's on WORK[1]: no
+  // dialler call, so no row and no bars, but its own per-day chart, and never ours.
+  campaignB = randomUUID();
+  await q(`INSERT INTO agency_campaigns (id, tenant_id, account_id, name, caller_ids, telephony_provider, status, disposition_catalog,
+             calling_window_start, calling_window_end, calling_days, default_timezone, started_at, created_at)
+           VALUES ($1, $2, $3, 'Account B campaign', ARRAY['+919000000001'], 'voicelink', 'running', $4::jsonb, '00:00:00', '24:00:00', ARRAY[1,2,3,4,5,6,7], $5, $6, $6)`,
+    [campaignB, floor.tenant, accountB, JSON.stringify(C0_CATALOG), ZONE, created]);
+  const spB = randomUUID();
+  await q(`INSERT INTO agency_agent_sessions (id, tenant_id, account_id, campaign_id, agent_user_id, kind, state, joined_at, left_at)
+           VALUES ($1, $2, $3, NULL, $4, 'softphone', 'offline', $5, $6)`, [spB, floor.tenant, accountB, supBId, L(WORK[1]!, '12:00'), L(WORK[1]!, '12:30')]);
+  await q(`INSERT INTO agency_manual_calls (id, tenant_id, account_id, session_id, agent_user_id, campaign_id, destination_e164, caller_id, state, outcome,
+             dialed_at, bridged_at, ended_at, created_at, settled_at, disposition_code, disposition_source, dispositioned_at, promise_date, promise_amount)
+           VALUES ($1, $2, $3, $4, $5, $6, '+919811110003', '+919000000001', 'ended', 'connected', $7, $8, $9, $7, $10, 'will_pay', 'campaign', $10, $11, 200)`,
+    [randomUUID(), floor.tenant, accountB, spB, supBId, campaignB, L(WORK[1]!, '12:05'), L(WORK[1]!, '12:05:10'), L(WORK[1]!, '12:10'), L(WORK[1]!, '12:11'), WORK[1]]);
 
   for (let i = 0; i < 100; i++) if ((await agencyInsightsRollupRepository.recomputeBatch(500)).picked < 500) break;
 }, 180_000);
@@ -617,9 +632,11 @@ describe('isolation', () => {
     expect(all.statusCode, all.body).toBe(200);
     expect((all.json() as AgencyTeamPerformance).agents).toEqual([]);
     expect((all.json() as AgencyTeamPerformance).outcomes).toEqual([]);
-    // Nor this account's promises in its per-day chart.
-    expect((all.json() as AgencyTeamPerformance).trend).toEqual({ span: 'last_working_days', dates: [], counts: [] });
+    // Its per-day chart holds its own promise and none of this account's (nor ours its, above).
+    expect((all.json() as AgencyTeamPerformance).trend).toEqual({ span: 'last_working_days', dates: [WORK[1]], counts: [1] });
     expect((await asB(url({ campaign_id: c0 }))).statusCode).toBe(404);
+    const theirs = await asB(url({ campaign_id: campaignB }));
+    expect((theirs.json() as AgencyTeamPerformance).trend).toEqual({ span: 'last_working_days', dates: [WORK[1]], counts: [1] });
   });
 });
 
