@@ -751,6 +751,7 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
             <ExportSplitButton
               onExport={() => void onExport()}
               onExportWithFields={() => setFieldsOpen(true)}
+              withFieldsOpen={fieldsOpen}
               exporting={exporting}
               disabled={exporting || loading}
               title={exportTitle}

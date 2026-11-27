@@ -83,6 +83,9 @@ describe('opening', () => {
     expect(screen.getByText('20 Nov to 27 Nov · Dialler')).toBeTruthy();
     await act(async () => resolve(exportFieldsFixture()));
     expect(screen.queryByTestId('export-fields-loading')).toBeNull();
+    // Loaded with nothing ticked: Download waits for a field.
+    expect((screen.getByTestId('export-fields-download') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(box('ai_summary'));
     expect((screen.getByTestId('export-fields-download') as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -213,16 +216,43 @@ describe('the ceiling note (CL48)', () => {
 });
 
 describe('remembered fields (CL50)', () => {
-  it('ticks the remembered fields the list still offers and drops the rest', async () => {
+  it('ticks the remembered fields the list offers, and keeps the others for a later view', async () => {
     window.localStorage.setItem(KEY, JSON.stringify(['ai_summary', 'dim_gone_since', 'field_old_ref']));
     const { onDownload } = await ready();
     expect(box('ai_summary').checked).toBe(true);
     expect(box('field_old_ref').checked).toBe(true);
     expect(previewChosen()).toEqual(['field_old_ref', 'ai_summary']);
     fireEvent.click(screen.getByTestId('export-fields-download'));
+    // Only what this view offers is sent.
     await waitFor(() => expect(onDownload).toHaveBeenCalledWith(['field_old_ref', 'ai_summary']));
-    // The stale name is gone from what is kept, too.
-    expect(JSON.parse(window.localStorage.getItem(KEY)!)).toEqual(['field_old_ref', 'ai_summary']);
+    // The name this view did not offer is still remembered, after the choice made now.
+    expect(JSON.parse(window.localStorage.getItem(KEY)!)).toEqual(['field_old_ref', 'ai_summary', 'dim_gone_since']);
+  });
+
+  it('a later view that offers the kept field ticks it again', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(['ai_summary', 'dim_gone_since']));
+    const base = exportFieldsFixture();
+    const later = exportFieldsFixture({
+      dimensions: [...base.dimensions, {
+        name: 'dim_gone_since', key: 'gone_since', types: ['string'], options: [], description: null, calls: 3, sources: ['dialler'],
+      }],
+    });
+    const { onClose } = await ready();
+    fireEvent.click(screen.getByTestId('export-fields-download'));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    cleanup();
+    await ready(later);
+    expect(box('dim_gone_since').checked).toBe(true);
+    expect(box('ai_summary').checked).toBe(true);
+  });
+
+  it('unticking an offered remembered field forgets it', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify(['ai_summary', 'field_old_ref', 'dim_gone_since']));
+    const { onClose } = await ready();
+    fireEvent.click(box('ai_summary'));
+    fireEvent.click(screen.getByTestId('export-fields-download'));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(JSON.parse(window.localStorage.getItem(KEY)!)).toEqual(['field_old_ref', 'dim_gone_since']);
   });
 
   it('ticks nothing when nothing is remembered, and Remember is on by default', async () => {
@@ -262,11 +292,31 @@ describe('remembered fields (CL50)', () => {
 });
 
 describe('downloading', () => {
+  it('with nothing ticked, Download is disabled and the hint says what to do', async () => {
+    const { onDownload } = await ready();
+    const button = screen.getByTestId('export-fields-download') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    const hint = screen.getByTestId('export-fields-nothing-chosen');
+    expect(hint.textContent).toBe('Tick at least one field, or use Export CSV for the usual file.');
+    expect(button.getAttribute('aria-describedby')).toBe(hint.id);
+    fireEvent.click(button);
+    expect(onDownload).not.toHaveBeenCalled();
+
+    fireEvent.click(box('dim_promise_strength'));
+    expect(button.disabled).toBe(false);
+    expect(screen.queryByTestId('export-fields-nothing-chosen')).toBeNull();
+    // Unticking the last one brings it back.
+    fireEvent.click(box('dim_promise_strength'));
+    expect(button.disabled).toBe(true);
+    expect(screen.getByTestId('export-fields-nothing-chosen')).toBeTruthy();
+  });
+
   it('disables Download while the file is prepared, and closes when it is done', async () => {
     let finish!: () => void;
     mocks.getCallExportFields.mockResolvedValue(exportFieldsFixture());
     const { onClose } = renderDialog({ onDownload: () => new Promise<void>((r) => { finish = r; }) });
     await screen.findByText('Columns in the file');
+    fireEvent.click(box('ai_summary'));
     const button = screen.getByTestId('export-fields-download') as HTMLButtonElement;
     fireEvent.click(button);
     expect(button.disabled).toBe(true);
@@ -274,6 +324,26 @@ describe('downloading', () => {
     expect(onClose).not.toHaveBeenCalled();
     await act(async () => finish());
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('nothing closes it while the file is prepared: not Escape, Cancel, the close button or the overlay', async () => {
+    let finish!: () => void;
+    mocks.getCallExportFields.mockResolvedValue(exportFieldsFixture());
+    const { onClose } = renderDialog({ onDownload: () => new Promise<void>((r) => { finish = r; }) });
+    await screen.findByText('Columns in the file');
+    fireEvent.click(box('ai_summary'));
+    fireEvent.click(screen.getByTestId('export-fields-download'));
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    const cancel = screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement;
+    expect(cancel.disabled).toBe(true);
+    fireEvent.click(cancel);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('dialog'));
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => finish());
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it.each([

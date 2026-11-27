@@ -7,6 +7,11 @@ export interface ExportSplitButtonProps {
   onExport: () => void;
   /** Opens Export with fields. */
   onExportWithFields: () => void;
+  /**
+   * Export with fields is open. When it closes, focus comes back to the arrow (once the arrow
+   * can take it: it is disabled while a download runs), not to the page's `body`.
+   */
+  withFieldsOpen?: boolean;
   /** The plain export is running: its part says so. */
   exporting: boolean;
   disabled: boolean;
@@ -20,7 +25,9 @@ export interface ExportSplitButtonProps {
  * fields…**. The menu is dismissed the way the console's other menus are (Escape gives focus back
  * to the arrow; a press outside closes it and goes on to what it landed on).
  */
-export function ExportSplitButton({ onExport, onExportWithFields, exporting, disabled, title }: ExportSplitButtonProps) {
+export function ExportSplitButton({
+  onExport, onExportWithFields, withFieldsOpen = false, exporting, disabled, title,
+}: ExportSplitButtonProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const arrowRef = useRef<HTMLButtonElement>(null);
@@ -56,6 +63,20 @@ export function ExportSplitButton({ onExport, onExportWithFields, exporting, dis
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
+
+  // Export with fields closed: focus back on the arrow that opened it. The dialog's own restore
+  // cannot do it: the menu item that had focus is gone by then, and the arrow is disabled while
+  // the download it closed after is still settling. So it waits for the arrow to be enabled.
+  const refocusArrow = useRef(false);
+  const wasWithFieldsOpen = useRef(withFieldsOpen);
+  useEffect(() => {
+    if (wasWithFieldsOpen.current && !withFieldsOpen) refocusArrow.current = true;
+    wasWithFieldsOpen.current = withFieldsOpen;
+    if (refocusArrow.current && !withFieldsOpen && !disabled) {
+      refocusArrow.current = false;
+      arrowRef.current?.focus();
+    }
+  }, [withFieldsOpen, disabled]);
 
   const onArrowKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === 'ArrowDown' && !disabled) {
@@ -109,6 +130,8 @@ export function ExportSplitButton({ onExport, onExportWithFields, exporting, dis
             role="menuitem"
             className={styles.item}
             onClick={() => {
+              // Focus on the arrow before the item goes, so the dialog opens from it.
+              arrowRef.current?.focus();
               setOpen(false);
               onExportWithFields();
             }}

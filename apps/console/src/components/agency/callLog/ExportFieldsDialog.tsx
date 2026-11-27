@@ -10,11 +10,13 @@ import {
   CALL_EXPORT_ALWAYS_NOTE,
   CALL_EXPORT_ANALYSIS_OFF_NOTE,
   CALL_EXPORT_BASE_COLUMNS_PREVIEW,
+  CALL_EXPORT_NOTHING_CHOSEN_HINT,
   callExportCeilingNote,
   callExportFieldsRefusal,
   callExportGroups,
   callExportSubtitle,
   orderedChosenFields,
+  rememberedFieldsToStore,
   rememberedStillOffered,
   type CallExportGroup,
   type CallLogExportQuery,
@@ -77,7 +79,8 @@ function OpenExportFieldsDialog({
         if (!live) return;
         const groups = callExportGroups(response);
         setLoad({ state: 'ready', response, groups });
-        // The remembered fields this view still offers; the rest are dropped silently (CL50).
+        // The remembered fields this view offers are ticked; the rest are kept for a later view
+        // that offers them (CL50, `rememberedFieldsToStore`).
         setChosen(rememberedStillOffered(readRememberedFields(storageKey), groups));
       })
       .catch((err: unknown) => {
@@ -114,13 +117,17 @@ function OpenExportFieldsDialog({
   }, []);
 
   const download = async () => {
-    if (!groups) return;
+    if (!groups || ordered.length === 0) return;
     setDownloading(true);
     setDownloadError(null);
     try {
       await onDownload(ordered);
-      // Saved on Download only; unticking Remember and downloading forgets the choice.
-      writeRememberedFields(storageKey, remember ? ordered : null);
+      // Saved on Download only; unticking Remember and downloading forgets the choice. A
+      // remembered field this view did not offer is kept, so a later view can tick it again.
+      writeRememberedFields(
+        storageKey,
+        remember ? rememberedFieldsToStore(ordered, readRememberedFields(storageKey), groups) : null,
+      );
       onClose();
     } catch (err: unknown) {
       setDownloadError(callExportFieldsRefusal(err) ?? getErrorMessage(err, 'Could not export these calls.'));
@@ -128,32 +135,47 @@ function OpenExportFieldsDialog({
     }
   };
 
+  // While the file is being prepared nothing closes the dialog: not Escape, the close button,
+  // Cancel or the overlay. The Modal calls this on each of them.
+  const closeUnlessDownloading = () => {
+    if (!downloading) onClose();
+  };
+  const nothingChosen = load.state === 'ready' && ordered.length === 0;
+
   const subtitle = callExportSubtitle(load.state === 'ready' ? load.response.calls : null, dates, type);
   const analysisOff = load.state === 'ready' && !load.response.analysis_available;
 
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={closeUnlessDownloading}
       title="Export with fields"
       subtitle={subtitle}
       size="md"
       closeOnOverlayClick={!downloading}
       footer={
-        <>
-          <button type="button" className="btn-secondary" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => void download()}
-            disabled={load.state !== 'ready' || downloading}
-            data-testid="export-fields-download"
-          >
-            {downloading ? 'Preparing…' : 'Download CSV'}
-          </button>
-        </>
+        <div className={styles.footerActions}>
+          <div className={styles.footerButtons}>
+            <button type="button" className="btn-secondary" onClick={closeUnlessDownloading} disabled={downloading}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void download()}
+              disabled={load.state !== 'ready' || downloading || nothingChosen}
+              aria-describedby={nothingChosen ? `${ids}-nothing` : undefined}
+              data-testid="export-fields-download"
+            >
+              {downloading ? 'Preparing…' : 'Download CSV'}
+            </button>
+          </div>
+          {nothingChosen && (
+            <p className={styles.footerHint} id={`${ids}-nothing`} data-testid="export-fields-nothing-chosen">
+              {CALL_EXPORT_NOTHING_CHOSEN_HINT}
+            </p>
+          )}
+        </div>
       }
     >
       <div className={styles.body}>

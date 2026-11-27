@@ -1,5 +1,6 @@
 import {
   AGENCY_CALL_EXPORT_ANALYSIS_FIELDS,
+  AGENCY_CALL_EXPORT_MAX_FIELDS,
   lowersCallExportRowLimit,
   type AgencyCallExportAnalysisField,
   type AgencyCallExportCallFieldInfo,
@@ -119,6 +120,9 @@ export const CALL_EXPORT_ALWAYS_NOTE =
 /** Said in place of the analysis groups when the account's analytics setting is off (CL47). */
 export const CALL_EXPORT_ANALYSIS_OFF_NOTE = 'Call analysis is off for this account, so its fields can’t be added.';
 
+/** Under Download CSV while nothing is ticked: the plain file is the split button's main part. */
+export const CALL_EXPORT_NOTHING_CHOSEN_HINT = 'Tick at least one field, or use Export CSV for the usual file.';
+
 /** The file's usual columns as the preview shows them: the first two, then the last two. */
 export const CALL_EXPORT_BASE_COLUMNS_PREVIEW = 'attempt_id, contact_id, … missed_reason, callback_of';
 
@@ -236,13 +240,31 @@ export function orderedChosenFields(groups: readonly CallExportGroup[], chosen: 
 }
 
 /**
- * A remembered choice against what this view offers (CL50): the remembered fields still offered
- * are ticked, the rest dropped silently. Nothing remembered ticks nothing.
+ * A remembered choice against what this view offers (CL50): the remembered fields this view
+ * offers are ticked. The others are not lost: {@link rememberedFieldsToStore} keeps them for a
+ * later view that offers them. Nothing remembered ticks nothing.
  */
 export function rememberedStillOffered(remembered: readonly string[] | null, groups: readonly CallExportGroup[]): Set<string> {
   if (!remembered || remembered.length === 0) return new Set();
   const offered = new Set(offeredFieldNames(groups));
   return new Set(remembered.filter((name) => offered.has(name)));
+}
+
+/**
+ * What a Download with Remember on stores (CL50): the fields chosen now, in the order sent, then
+ * the remembered fields this view did not offer (a dimension the current dates do not hold), so
+ * they are ticked again when a later view offers them. A field this view offers and the person
+ * left unticked is not kept: unticking it is how it is forgotten. At most
+ * `AGENCY_CALL_EXPORT_MAX_FIELDS`, the newest choice first, so the oldest unoffered names go first.
+ */
+export function rememberedFieldsToStore(
+  chosen: readonly string[],
+  remembered: readonly string[] | null,
+  groups: readonly CallExportGroup[],
+): string[] {
+  const offered = new Set(offeredFieldNames(groups));
+  const kept = (remembered ?? []).filter((name) => !offered.has(name));
+  return [...new Set([...chosen, ...kept])].slice(0, AGENCY_CALL_EXPORT_MAX_FIELDS);
 }
 
 /**

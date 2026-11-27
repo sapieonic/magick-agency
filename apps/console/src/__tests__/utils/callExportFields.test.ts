@@ -17,8 +17,10 @@ import {
   nameFromKey,
   offeredFieldNames,
   orderedChosenFields,
+  rememberedFieldsToStore,
   rememberedStillOffered,
 } from '../../utils/agency/callExportFields';
+import { AGENCY_CALL_EXPORT_MAX_FIELDS } from '@magick-agency/contracts/api/agency/call-export-fields';
 import { callExportFieldsKey, readRememberedFields, writeRememberedFields } from '../../utils/agency/callExportFieldsStore';
 import { exportFieldsFixture } from '../helpers/callExportFields';
 
@@ -139,7 +141,7 @@ describe('the order the chosen fields are sent in', () => {
 describe('rememberedStillOffered (CL50)', () => {
   const groups = callExportGroups(exportFieldsFixture());
 
-  it('ticks the remembered fields still offered and drops the rest', () => {
+  it('ticks only the remembered fields this view offers', () => {
     expect([...rememberedStillOffered(['ai_summary', 'dim_gone', 'field_old_ref'], groups)].sort())
       .toEqual(['ai_summary', 'field_old_ref']);
   });
@@ -147,6 +149,32 @@ describe('rememberedStillOffered (CL50)', () => {
   it('ticks nothing when nothing is remembered', () => {
     expect(rememberedStillOffered(null, groups).size).toBe(0);
     expect(rememberedStillOffered([], groups).size).toBe(0);
+  });
+});
+
+describe('rememberedFieldsToStore (CL50)', () => {
+  const groups = callExportGroups(exportFieldsFixture());
+
+  it('the choice now, then the remembered fields this view did not offer', () => {
+    expect(rememberedFieldsToStore(['field_old_ref', 'ai_summary'], ['dim_gone', 'ai_summary', 'dim_later'], groups))
+      .toEqual(['field_old_ref', 'ai_summary', 'dim_gone', 'dim_later']);
+  });
+
+  it('an offered field left unticked is forgotten', () => {
+    expect(rememberedFieldsToStore(['ai_summary'], ['ai_summary', 'field_old_ref', 'dim_gone'], groups))
+      .toEqual(['ai_summary', 'dim_gone']);
+  });
+
+  it('nothing remembered stores the choice alone, without repeats', () => {
+    expect(rememberedFieldsToStore(['ai_summary', 'ai_summary'], null, groups)).toEqual(['ai_summary']);
+  });
+
+  it('keeps at most the maximum, the newest choice first', () => {
+    const old = Array.from({ length: AGENCY_CALL_EXPORT_MAX_FIELDS }, (_, i) => `dim_old_${i}`);
+    const stored = rememberedFieldsToStore(['ai_summary', 'field_old_ref'], old, groups);
+    expect(stored).toHaveLength(AGENCY_CALL_EXPORT_MAX_FIELDS);
+    expect(stored.slice(0, 3)).toEqual(['ai_summary', 'field_old_ref', 'dim_old_0']);
+    expect(stored.at(-1)).toBe(`dim_old_${AGENCY_CALL_EXPORT_MAX_FIELDS - 3}`);
   });
 });
 

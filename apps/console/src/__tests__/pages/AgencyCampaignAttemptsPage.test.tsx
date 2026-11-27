@@ -1964,7 +1964,30 @@ describe('Export with fields', () => {
     fireEvent.click(screen.getByTestId('export-fields-download'));
     await waitFor(() => expect(mocks.downloadSpineCsv).toHaveBeenCalledTimes(1));
     expect(mocks.downloadSpineCsv.mock.calls[0]![2]).toMatchObject({ fields: 'ai_summary,ai_sentiment' });
-    expect(JSON.parse(window.localStorage.getItem(key)!)).toEqual(['ai_summary', 'ai_sentiment']);
+    // A remembered field this view does not offer is kept, after the choice made now.
+    expect(JSON.parse(window.localStorage.getItem(key)!)).toEqual(['ai_summary', 'ai_sentiment', 'dim_dropped']);
+  });
+
+  it('focus comes back to the arrow when the dialog is cancelled', async () => {
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const arrow = screen.getByRole('button', { name: 'More export options' });
+    await openDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Export with fields' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(arrow));
+  });
+
+  it('focus comes back to the arrow after a download, once the arrow is usable again', async () => {
+    renderPage(AT);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const arrow = screen.getByRole('button', { name: 'More export options' });
+    await openDialog();
+    fireEvent.click(box('ai_summary'));
+    fireEvent.click(screen.getByTestId('export-fields-download'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Export with fields' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(arrow));
+    expect((arrow as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('is not offered to an agent', async () => {
