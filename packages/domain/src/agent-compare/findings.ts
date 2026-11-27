@@ -33,7 +33,7 @@
  *    `too_few_calls`. With so few agents "the rest" is not a benchmark. The breaks metric has no
  *    floor, so every cohort agent with a value counts toward its 6.
  * 3. At most `COMPARE_FINDINGS_PER_AGENT` (3) findings per agent and `COMPARE_FINDINGS_MAX` (5) in
- *    all, taken in this order: clear rate gaps, then times, then breaks, then `stands_out`, then
+ *    all (the input's `max` when given: Team performance's whole cohort has no cap in all), taken in this order: clear rate gaps, then times, then breaks, then `stands_out`, then
  *    `too_few_calls`; within one class the larger gap first (a rate's gap in units of its
  *    `min_gap`, a time's ratio, a break count), then the page's agent order, then its metric order.
  *    What does not fit is DROPPED: never moved to `not_clear`, which holds only gaps that could
@@ -80,6 +80,12 @@ export interface CompareFindingsInput {
   metrics: readonly CompareFindingsMetric[];
   /** The picked agents' user ids, in page order. */
   picked: readonly string[];
+  /**
+   * The most findings in all; default `COMPARE_FINDINGS_MAX`, sized for Compare's three picks.
+   * Team performance picks every cohort row and passes `Infinity` (TP15), so a gap is never
+   * crowded out by another agent's. The per-agent cap holds either way.
+   */
+  max?: number;
 }
 
 export interface CompareFindingsResult {
@@ -243,8 +249,9 @@ export function compareFindings(input: CompareFindingsInput): CompareFindingsRes
   candidates.sort(byClassThenSeverity);
   const perAgent = new Map<string, number>();
   const findings: AgencyCompareFinding[] = [];
+  const max = input.max ?? COMPARE_FINDINGS_MAX;
   for (const c of candidates) {
-    if (findings.length >= COMPARE_FINDINGS_MAX) break;
+    if (findings.length >= max) break;
     const n = perAgent.get(c.finding.agent_user_id) ?? 0;
     if (n >= COMPARE_FINDINGS_PER_AGENT) continue;
     perAgent.set(c.finding.agent_user_id, n + 1);
