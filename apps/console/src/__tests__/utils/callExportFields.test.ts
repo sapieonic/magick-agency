@@ -188,17 +188,17 @@ describe('the subtitle', () => {
   it('says the dates as days', () => {
     expect(callExportDatesWords({ from: '2026-11-20T00:00:00.000Z', to: '2026-11-27T23:59:59.999Z' }, 'all')).toBe('20 Nov to 27 Nov');
     expect(callExportDatesWords({ from: '2026-11-20T00:00:00.000Z', to: '2026-11-20T23:59:59.999Z' }, 'all')).toBe('20 Nov');
-    expect(callExportDatesWords({ from: '2026-11-20T00:00:00.000Z' }, 'dialler')).toBe('From 20 Nov');
-    expect(callExportDatesWords({ to: '2026-11-27T23:59:59.999Z' }, 'dialler')).toBe('Up to 27 Nov');
-    expect(callExportDatesWords({}, 'all')).toBe('All dates');
+    expect(callExportDatesWords({ from: '2026-11-20T00:00:00.000Z' }, 'dialler')).toBe('from 20 Nov');
+    expect(callExportDatesWords({ to: '2026-11-27T23:59:59.999Z' }, 'dialler')).toBe('up to 27 Nov');
+    expect(callExportDatesWords({}, 'all')).toBe('every date');
   });
 
   it('says To follow up is not narrowed by the dates', () => {
-    expect(callExportDatesWords({ from: '2026-11-20T00:00:00.000Z' }, 'to_follow_up')).toBe('Whatever the dates');
+    expect(callExportDatesWords({ from: '2026-11-20T00:00:00.000Z' }, 'to_follow_up')).toBe('whatever the dates');
   });
 
   it('names the chip in the list’s words', () => {
-    expect(callExportTypeWords('all')).toBe('All types');
+    expect(callExportTypeWords('all')).toBe('all call types');
     expect(callExportTypeWords('soft_phone')).toBe('Soft phone');
     expect(callExportTypeWords('to_follow_up')).toBe('To follow up');
   });
@@ -206,7 +206,8 @@ describe('the subtitle', () => {
   it('joins the count, dates and type, and leaves out a count not known yet', () => {
     expect(callExportSubtitle(4812, '20 Nov', 'Dialler')).toBe('4,812 calls · 20 Nov · Dialler');
     expect(callExportSubtitle(1, '20 Nov', 'Dialler')).toBe('1 call · 20 Nov · Dialler');
-    expect(callExportSubtitle(null, 'All dates', 'All types')).toBe('All dates · All types');
+    expect(callExportSubtitle(null, 'every date', 'all call types')).toBe('Every date · all call types');
+    expect(callExportSubtitle(12, 'every date', 'all call types')).toBe('12 calls · every date · all call types');
   });
 });
 

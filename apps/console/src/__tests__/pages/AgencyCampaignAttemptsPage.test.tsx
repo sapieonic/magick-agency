@@ -1890,7 +1890,7 @@ describe('Export with fields', () => {
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     await openDialog();
     expect(screen.getByRole('dialog', { name: 'Export with fields' })).toBeTruthy();
-    expect(screen.getByText('24,812 calls · All dates · Dialler')).toBeTruthy();
+    expect(screen.getByText('24,812 calls · every date · Dialler')).toBeTruthy();
     expect(mocks.getCallExportFields).toHaveBeenCalledTimes(1);
 
     // The very query the plain export sends.

@@ -105,7 +105,7 @@ export function callFieldLabel(field: Pick<AgencyCallExportCallFieldInfo, 'key' 
 /** The analysis's common fields as the dialog names them, with a hint where one helps. */
 export const CALL_EXPORT_ANALYSIS_COPY: Readonly<Record<AgencyCallExportAnalysisField, { label: string; hint?: string }>> = {
   analysis_status: { label: 'Analysis status', hint: 'Says why a row has no analysis' },
-  ai_summary: { label: 'Summary' },
+  ai_summary: { label: 'Summary', hint: 'A few sentences per call' },
   ai_sentiment: { label: 'Sentiment', hint: 'Positive, neutral, negative or mixed' },
   ai_sentiment_score: { label: 'Sentiment score' },
   ai_key_topics: { label: 'Key topics', hint: 'Joined with “; ”' },
@@ -266,11 +266,12 @@ export function callExportCeilingNote(
 // ─── The subtitle ────────────────────────────────────────────────────────────
 
 /**
- * The dates the export follows, in words: "20 Nov", "20 Nov to 27 Nov", "From 20 Nov",
- * "Up to 27 Nov", "All dates". To follow up is every open missed call whatever the dates (CL14).
+ * The dates the export follows, in words: "20 Nov", "20 Nov to 27 Nov", "from 20 Nov",
+ * "up to 27 Nov", "every date", written to sit mid-sentence (the subtitle capitalises its start).
+ * To follow up is every open missed call whatever the dates (CL14).
  */
 export function callExportDatesWords(filters: Pick<AgencyAttemptFilters, 'from' | 'to'>, type: AgencyCallLogTypeFilter): string {
-  if (type === 'to_follow_up') return 'Whatever the dates';
+  if (type === 'to_follow_up') return 'whatever the dates';
   const day = (iso: string | undefined): string | null => {
     if (!iso) return null;
     const date = new Date(iso);
@@ -279,19 +280,22 @@ export function callExportDatesWords(filters: Pick<AgencyAttemptFilters, 'from' 
   const from = day(filters.from);
   const to = day(filters.to);
   if (from && to) return from === to ? from : `${from} to ${to}`;
-  if (from) return `From ${from}`;
-  if (to) return `Up to ${to}`;
-  return 'All dates';
+  if (from) return `from ${from}`;
+  if (to) return `up to ${to}`;
+  return 'every date';
 }
 
-/** The chip as the subtitle names it: "All types", "Dialler", "To follow up". */
+/** The chip as the subtitle names it: "all call types", "Dialler", "To follow up". */
 export function callExportTypeWords(type: AgencyCallLogTypeFilter): string {
-  return type === 'all' ? 'All types' : AGENCY_CALLS_TYPE_FILTER_LABELS[type];
+  return type === 'all' ? 'all call types' : AGENCY_CALLS_TYPE_FILTER_LABELS[type];
 }
 
-/** "4,812 calls · 20 Nov to 27 Nov · Dialler"; before the count is known, the dates and type. */
+/** "4,812 calls · 20 Nov to 27 Nov · Dialler"; before the count is known, "Every date · all call types". */
 export function callExportSubtitle(calls: number | null, dates: string, type: string): string {
-  return [calls === null ? null : plural(calls, 'call'), dates, type].filter((part): part is string => part !== null).join(' · ');
+  const line = [calls === null ? null : plural(calls, 'call'), dates, type]
+    .filter((part): part is string => part !== null)
+    .join(' · ');
+  return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
 // ─── Refusals ────────────────────────────────────────────────────────────────
