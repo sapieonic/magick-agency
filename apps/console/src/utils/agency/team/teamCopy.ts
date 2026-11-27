@@ -8,6 +8,7 @@ import {
   TEAM_MAIN_OUTCOME_METRIC,
   type AgencyTeamCallbacks,
   type AgencyTeamMainOutcome,
+  type AgencyTeamMainOutcomeKind,
   type AgencyTeamPerformanceErrorCode,
   type AgencyTeamTotals,
   type AgencyTeamTrend,
@@ -194,12 +195,22 @@ export function rollupLine(rollupAsOf: string | null): string {
 }
 
 /**
- * Said under the bars only when the main outcome's bar and its tile count differently (TP13):
- * the bars count dialler calls by the outcome chosen, the tile every call type.
+ * Said under the bars only when the main outcome's bar and its tile count differently (TP13), with
+ * the likeliest reason: the tile also counts soft-phone and inbound calls (TP4); else, for
+ * promises, the tile counts a promise on the day it was given and the bars a call on the day it was
+ * made; else (successes) the bars are the rollup's, a few minutes behind the tile.
  */
-export function outcomesFootnote(label: string, bar: number, tile: number): string | null {
+export function outcomesFootnote(
+  label: string,
+  bar: number,
+  tile: number,
+  why: { kind: AgencyTeamMainOutcomeKind; otherCalls: number },
+): string | null {
   if (bar === tile) return null;
-  return `${label} here is ${formatCount(bar)}, the tile above says ${formatCount(tile)}: the bars count dialler calls by their outcome, the tile counts every call type.`;
+  const counts = `(${formatCount(tile)} vs ${formatCount(bar)} here)`;
+  if (why.kind === 'promises' && why.otherCalls > 0) return `The tile also counts ${label} on soft-phone and inbound calls ${counts}.`;
+  if (why.kind === 'promises') return `The tile counts ${label} on the day it was given, the bars on the day the call was made ${counts}.`;
+  return `The bars are a few minutes behind the tile ${counts}.`;
 }
 
 /** The colour rule, said once under the bars. */

@@ -1,6 +1,6 @@
 import { TEAM_OUTCOME_BARS_MAX, type AgencyTeamOutcomeBar, type AgencyTeamTrend } from '@magick-agency/contracts/api/agency/team-performance';
 import type { AgencyTileIcon } from '@magick-agency/contracts/agency/tile-icons';
-import { columnPath, niceCeiling } from '../../../components/agency/AgentBucketChart';
+import { columnPath } from '../../../components/agency/AgentBucketChart';
 import { labelledDateIndexes } from '../compare/compareCharts';
 import { isoWeekday } from '../../reports/reportWindow';
 import { outcomeLabel } from './teamCopy';
@@ -10,10 +10,11 @@ import { outcomeLabel } from './teamCopy';
  * figures and a measured width to coordinates, so every mark is unit-tested without a browser and
  * one SVG unit is one CSS pixel (`useChartWidth`). The components only draw what these return.
  *
- * One colour for every bar (TP12, TP13): the charts compare sizes, not kinds. The axis top is
- * `AgentBucketChart`'s `niceCeiling` (three labelled lines: 0, half, top), the columns its
- * `columnPath` (rounded at the data end, square on the baseline), and which days get a label is
- * Compare's `labelledDateIndexes`.
+ * One colour for every bar (TP12, TP13): the charts compare sizes, not kinds. The axis is this
+ * file's {@link trendAxis} (a finer top than `AgentBucketChart`'s `niceCeiling`, whose 1-2-3-…×10ⁿ
+ * tops leave a peak of 105 under an axis of 200), the columns `AgentBucketChart`'s `columnPath`
+ * (rounded at the data end, square on the baseline), and which days get a label is Compare's
+ * `labelledDateIndexes`.
  */
 
 // ─── The main outcome per working day ───────────────────────────────────────
@@ -33,6 +34,31 @@ export function dayLabel(day: string): string {
   return `${WEEKDAYS[isoWeekday(day) - 1]} ${Number(day.slice(8, 10))}`;
 }
 
+/** Steps the per-day axis may take, times a power of ten. */
+const AXIS_STEPS = [1, 2, 2.5, 3, 4, 5] as const;
+
+/**
+ * The per-day chart's axis: a whole-number step of 1, 2, 2.5, 3, 4 or 5 × 10ⁿ, with three or four
+ * gaps between its lines, choosing the lowest top (fewer lines when two tops tie), so the tallest
+ * column fills most of the plot: 105 → 0, 40, 80, 120; 98 → 0, 25, 50, 75, 100. A chart with
+ * nothing to draw, or a peak of 1, still gets a top of 2 and whole-number lines.
+ */
+export function trendAxis(max: number): { top: number; step: number } {
+  if (!(max > 2)) return { top: 2, step: 1 };
+  let best: { top: number; step: number; gaps: number } | null = null;
+  for (const gaps of [3, 4]) {
+    const wanted = max / gaps;
+    const magnitude = 10 ** Math.floor(Math.log10(wanted));
+    const step = [...AXIS_STEPS, 10]
+      .map((m) => m * magnitude)
+      .find((candidate) => candidate >= wanted && Number.isInteger(candidate)) ?? 10 * magnitude;
+    const top = Math.ceil(max / step) * step;
+    const n = top / step;
+    if (best === null || top < best.top || (top === best.top && n < best.gaps)) best = { top, step, gaps: n };
+  }
+  return { top: best!.top, step: best!.step };
+}
+
 export interface TrendColumn {
   date: string;
   count: number;
@@ -49,9 +75,9 @@ export interface TrendColumnsGeometry {
   left: number;
   right: number;
   baseline: number;
-  /** The axis top (`niceCeiling`). */
+  /** The axis top ({@link trendAxis}). */
   top: number;
-  /** The three labelled lines: 0, half, top. */
+  /** The labelled lines, 0 to the top, one {@link trendAxis} step apart. */
   ticks: Array<{ value: number; y: number }>;
   columns: TrendColumn[];
   /** The last column's count, drawn above it (TP12: the last bar labelled). */
@@ -64,7 +90,7 @@ export function trendColumnsGeometry(input: { width: number; trend: Pick<AgencyT
   const plotW = width - TREND_LEFT - TREND_RIGHT;
   const plotH = TREND_HEIGHT - TREND_TOP - TREND_BOTTOM;
   const baseline = TREND_TOP + plotH;
-  const top = niceCeiling(Math.max(0, ...counts));
+  const { top, step } = trendAxis(Math.max(0, ...counts));
   const n = dates.length;
   const band = n > 0 ? plotW / n : plotW;
   const columnW = Math.max(3, Math.min(COLUMN_MAX, band * 0.55));
@@ -91,7 +117,7 @@ export function trendColumnsGeometry(input: { width: number; trend: Pick<AgencyT
     right: width - TREND_RIGHT,
     baseline,
     top,
-    ticks: [0, 0.5, 1].map((f) => ({ value: Math.round(top * f), y: round(baseline - f * plotH) })),
+    ticks: Array.from({ length: Math.round(top / step) + 1 }, (_, k) => ({ value: k * step, y: round(baseline - ((k * step) / top) * plotH) })),
     columns,
     lastLabel: last ? { x: last.cx, y: round(baseline - lastH - 7), text: last.count } : null,
   };

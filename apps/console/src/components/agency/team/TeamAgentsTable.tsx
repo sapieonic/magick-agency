@@ -31,8 +31,9 @@ import styles from './Team.module.css';
  * one campaign, TP7). With Compare agents on, up to three rows are picked ("Pick {name} to
  * compare", the count said politely to a screen reader) and Compare picked opens them (TP18).
  *
- * The table scrolls inside its card with the Agent column held; the inline bars hide on a narrow
- * screen (the numbers stay).
+ * One semantic table at every width. On a wide screen it scrolls inside its card with the Agent
+ * column held; below about 640px each row is laid out as a card (CSS only): the pick box, rank and
+ * name, its badges, then the figures, each under its column's name (`data-label`).
  */
 export interface TeamAgentsTableProps {
   data: AgencyTeamPerformance;
@@ -135,26 +136,29 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
       ) : null}
 
       <div className={styles.tableWrap} tabIndex={0} role="region" aria-labelledby={titleId}>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th scope="col" className={styles.agentCol}>
+        {/* The roles restate the table's own: below 640px the rows are laid out as cards (CSS), and a
+            browser drops a table's semantics once its parts are no longer displayed as one. */}
+        <table className={styles.table} role="table">
+          <thead role="rowgroup">
+            <tr role="row">
+              <th scope="col" role="columnheader" className={styles.agentCol}>
                 Agent
               </th>
-              <th scope="col">Calls handled</th>
-              <th scope="col">{label}</th>
-              <th scope="col">Avg call</th>
-              <th scope="col">Choose outcome</th>
-              <th scope="col">Break</th>
-              <th scope="col">Worth a look</th>
+              <th scope="col" role="columnheader">Calls handled</th>
+              <th scope="col" role="columnheader">{label}</th>
+              <th scope="col" role="columnheader">Avg call</th>
+              <th scope="col" role="columnheader">Choose outcome</th>
+              <th scope="col" role="columnheader">Break</th>
+              <th scope="col" role="columnheader">Worth a look</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody role="rowgroup">
             {rows.map((row, i) => {
               const picked = picks.includes(row.agent_user_id);
+              const rowBadges = badges.get(row.agent_user_id) ?? [];
               return (
-                <tr key={row.agent_user_id} data-picked={picked || undefined} data-testid="team-row">
-                  <th scope="row" className={styles.agentCol}>
+                <tr key={row.agent_user_id} role="row" data-picked={picked || undefined} data-testid="team-row">
+                  <th scope="row" role="rowheader" className={styles.agentCol}>
                     <span className={styles.agentCell}>
                       {canPick ? (
                         <input
@@ -176,17 +180,19 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
                       </span>
                     </span>
                   </th>
-                  <td>
+                  <td role="cell" data-label="Calls handled">
                     <span className={styles.figure}>
                       <span className={styles.num}>{formatCount(row.calls_handled)}</span>
                       <InlineBar share={inlineShare(row.calls_handled, callsScale)} median={inlineShare(data.medians.calls_handled, callsScale)} />
                     </span>
                   </td>
-                  <td>
+                  <td role="cell" data-label={label}>
                     <MainCell row={row} floor={floor} scale={rateScale} median={inlineShare(data.medians.main_rate, rateScale)} />
                   </td>
-                  <td className={styles.num}>{clockOrDash(row.avg_call_seconds)}</td>
-                  <td className={styles.num}>
+                  <td role="cell" className={styles.num} data-label="Avg call">
+                    {clockOrDash(row.avg_call_seconds)}
+                  </td>
+                  <td role="cell" className={styles.num} data-label="Choose outcome">
                     {row.choose.value === null ? (
                       '—'
                     ) : row.choose.reportable ? (
@@ -198,9 +204,11 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
                       </>
                     )}
                   </td>
-                  <td className={styles.num}>{breakMinutes(row.break_seconds)}</td>
-                  <td>
-                    <WorthALook badges={badges.get(row.agent_user_id) ?? []} />
+                  <td role="cell" className={styles.num} data-label="Break">
+                    {breakMinutes(row.break_seconds)}
+                  </td>
+                  <td role="cell" className={styles.worth} data-empty={rowBadges.length === 0 || undefined}>
+                    <WorthALook badges={rowBadges} />
                   </td>
                 </tr>
               );
@@ -208,7 +216,11 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
           </tbody>
         </table>
       </div>
-      <p className={styles.foot}>Tick on a bar: the team median. Rates under {formatCount(floor)} calls are said in words, not drawn.</p>
+      <p className={styles.foot}>
+        {/* No bars on a phone, so no tick to explain there. */}
+        <span className={styles.tickNote}>Tick on a bar: the team median. </span>
+        Rates under {formatCount(floor)} calls are said in words, not drawn.
+      </p>
     </section>
   );
 }

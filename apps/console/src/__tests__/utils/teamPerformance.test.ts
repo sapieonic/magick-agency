@@ -39,6 +39,7 @@ import {
   inlineShare,
   mainOutcomeBarCount,
   outcomeBars,
+  trendAxis,
   trendColumnsGeometry,
 } from '../../utils/agency/team/teamCharts';
 import { TEAM_ALL_CAMPAIGNS, TEAM_ONE_CAMPAIGN } from '../helpers/teamRecorded';
@@ -139,8 +140,15 @@ describe('the words (teamCopy)', () => {
     expect(outcomeLabel({ code: null, label: null })).toBe('No outcome chosen');
     expect(outcomeLabel({ code: 'no_disposition', label: 'Whatever' })).toBe('No outcome chosen');
     expect(outcomeLabel({ code: 'legacy_paid', label: null })).toBe('legacy_paid');
-    expect(outcomesFootnote('Will pay', 96, 96)).toBeNull();
-    expect(outcomesFootnote('Will pay', 96, 98)).toMatch(/Will pay here is 96, the tile above says 98/);
+    const promises = { kind: 'promises' as const, otherCalls: 0 };
+    expect(outcomesFootnote('Will pay', 96, 96, promises)).toBeNull();
+    expect(outcomesFootnote('Will pay', 96, 98, { kind: 'promises', otherCalls: 12 })).toBe(
+      'The tile also counts Will pay on soft-phone and inbound calls (98 vs 96 here).',
+    );
+    expect(outcomesFootnote('Will pay', 96, 98, promises)).toBe(
+      'The tile counts Will pay on the day it was given, the bars on the day the call was made (98 vs 96 here).',
+    );
+    expect(outcomesFootnote('Interested', 40, 41, { kind: 'successes', otherCalls: 0 })).toBe('The bars are a few minutes behind the tile (41 vs 40 here).');
   });
 
   it('words Worth a look as TP15: Stands out, Low {label} rate, Slow to choose outcome', () => {
@@ -212,8 +220,10 @@ describe('the chart geometry (teamCharts)', () => {
   it('draws one column per working day on a clean axis, the last one labelled (TP12)', () => {
     const g = trendColumnsGeometry({ width: 600, trend: TEAM_ONE_CAMPAIGN.trend });
     expect(g.columns).toHaveLength(7);
-    expect(g.top).toBe(200);
-    expect(g.ticks.map((t) => t.value)).toEqual([0, 100, 200]);
+    // The tallest column is 106: the axis tops out at 120, not 200, so the columns fill the plot.
+    expect(g.top).toBe(120);
+    expect(g.ticks.map((t) => t.value)).toEqual([0, 40, 80, 120]);
+    expect(g.ticks[0]!.y).toBe(g.baseline);
     expect(g.lastLabel?.text).toBe(98);
     expect(g.columns.map((c) => c.label)).toEqual(['Tue 10', 'Wed 11', 'Thu 12', 'Fri 13', 'Sat 14', 'Mon 16', 'Tue 17']);
     // Every column sits inside the plot, left to right.
@@ -224,6 +234,27 @@ describe('the chart geometry (teamCharts)', () => {
     // A taller count is a taller column: Fri 13 (106) over Sat 14 (74).
     const height = (i: number) => Number(/L[\d.]+,([\d.]+)/.exec(g.columns[i]!.path)![1]);
     expect(height(3)).toBeLessThan(height(4));
+  });
+
+  it('tops the axis just over the tallest column, on whole-number lines three or four gaps apart', () => {
+    const lines = (max: number) => {
+      const { top, step } = trendAxis(max);
+      return Array.from({ length: top / step + 1 }, (_, k) => k * step);
+    };
+    expect(lines(105)).toEqual([0, 40, 80, 120]);
+    expect(lines(98)).toEqual([0, 25, 50, 75, 100]);
+    expect(lines(100)).toEqual([0, 25, 50, 75, 100]);
+    expect(lines(7)).toEqual([0, 2, 4, 6, 8]);
+    expect(lines(3)).toEqual([0, 1, 2, 3]);
+    expect(lines(0)).toEqual([0, 1, 2]);
+    expect(lines(1)).toEqual([0, 1, 2]);
+    expect(lines(1234)).toEqual([0, 500, 1000, 1500]);
+    for (let max = 1; max <= 2000; max++) {
+      const { top, step } = trendAxis(max);
+      expect(Number.isInteger(step) && top >= max && top / step <= 4, `max ${max}`).toBe(true);
+      // Never more than half again the tallest column, past the smallest charts.
+      if (max >= 10) expect(top / max, `max ${max}`).toBeLessThanOrEqual(1.5);
+    }
   });
 
   it('thins the day labels on a narrow chart, always keeping the last', () => {

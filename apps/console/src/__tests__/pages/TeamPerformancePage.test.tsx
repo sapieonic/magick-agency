@@ -206,7 +206,7 @@ describe('the figures', () => {
     expect(within(outcomes).getAllByTestId('team-outcome')[0]!.textContent).toBe('Will pay96');
     expect(within(outcomes).getByText('Bars share one colour on purpose: this compares sizes, not outcome types.')).toBeTruthy();
     // 96 conversations ended in Will pay; the tile counts 98 promises recorded.
-    expect(within(outcomes).getByTestId('team-outcomes-footnote').textContent).toMatch(/96.*98/);
+    expect(within(outcomes).getByTestId('team-outcomes-footnote').textContent).toMatch(/\(98 vs 96 here\)/);
     fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: '' } });
     await waitFor(() => expect(within(screen.getByTestId('team-outcomes')).getAllByTestId('team-outcome')).toHaveLength(8));
     expect(within(screen.getByTestId('team-outcomes')).getAllByTestId('team-outcome').at(-1)!.textContent).toBe('Other outcomes22');
@@ -224,6 +224,19 @@ describe('the agents', () => {
     const pooja = screen.getAllByTestId('team-row').find((r) => r.textContent!.includes('Pooja M'))!;
     expect(pooja.textContent).toContain('Too few calls (17; needs 20)');
     expect(within(screen.getByTestId('team-agents')).getByRole('columnheader', { name: 'Will pay' })).toBeTruthy();
+  });
+
+  it('names each figure after its column, for the phone layout, and leaves an empty Worth a look out of it', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    const heads = within(screen.getByTestId('team-agents')).getAllByRole('columnheader').map((h) => h.textContent);
+    for (const row of screen.getAllByTestId('team-row')) {
+      const cells = within(row).getAllByRole('cell');
+      // Every figure is named as its column is; Worth a look, the last, carries badges or nothing.
+      expect(cells.slice(0, -1).map((c) => c.getAttribute('data-label'))).toEqual(heads.slice(1, -1));
+      const worth = cells.at(-1)!;
+      expect(worth.hasAttribute('data-empty')).toBe(within(worth).queryAllByTestId('team-badge').length === 0);
+    }
   });
 
   it('sorts with toggle pills, into the URL', async () => {

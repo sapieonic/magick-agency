@@ -19,7 +19,12 @@ export function OutcomeBreakdown({ data, label, preset }: { data: AgencyTeamPerf
   const titleId = useId();
   const bars = outcomeBars(data.outcomes);
   const total = data.outcomes.reduce((sum, o) => sum + o.conversations, 0);
-  const footnote = bars.length > 0 ? outcomesFootnote(label, mainOutcomeBarCount(data.outcomes, data.main_outcome.codes), data.totals.main.numerator) : null;
+  const footnote = bars.length > 0
+    ? outcomesFootnote(label, mainOutcomeBarCount(data.outcomes, data.main_outcome.codes), data.totals.main.numerator, {
+        kind: data.main_outcome.kind,
+        otherCalls: data.totals.other_conversations,
+      })
+    : null;
   return (
     <section className={styles.card} aria-labelledby={titleId} data-testid="team-outcomes">
       <div className={styles.cardHead}>
