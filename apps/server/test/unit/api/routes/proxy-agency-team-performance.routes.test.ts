@@ -18,10 +18,16 @@ import Fastify, { type FastifyInstance } from 'fastify';
 vi.mock('../../../../src/auth/session.middleware.js', () => ({ sessionMiddleware: async () => {} }));
 vi.mock('../../../../src/api/middleware/tenant-context.middleware.js', () => ({ tenantContextMiddleware: async () => {} }));
 
-import { TEAM_PERFORMANCE_BUSY_RETRY_AFTER_SECONDS } from '@magick-agency/contracts/api/agency/team-performance';
+import {
+  TEAM_PERFORMANCE_BUSY_RETRY_AFTER_SECONDS,
+  type AgencyTeamPerformanceErrorResponse,
+} from '@magick-agency/contracts/api/agency/team-performance';
 import { proxyAgencyTeamPerformanceRoutes, type TeamPerformanceRouteDeps } from '../../../../src/api/routes/proxy-agency-team-performance.routes.js';
 import { TeamRefusal } from '../../../../src/agency/team-performance/read.js';
 import { TEAM_ERROR_MESSAGES } from '../../../../src/agency/team-performance/validate.js';
+
+/** A refusal body as the contract declares it (`AgencyTeamPerformanceErrorResponse`), as the wire sends it. */
+const refusal = (body: AgencyTeamPerformanceErrorResponse): string => JSON.stringify(body);
 
 const TENANT = '33333333-3333-4333-8333-333333333333';
 const ACCOUNT = '44444444-4444-4444-8444-444444444444';
@@ -112,7 +118,7 @@ describe('the guards, in order', () => {
   it('another account\'s campaign: 404 team_campaign_not_found, byte for byte, before the zone', async () => {
     const res = await get({ ...OK, campaign_id: '66666666-6666-4666-8666-666666666666' });
     expect(res.statusCode).toBe(404);
-    expect(res.body).toBe(JSON.stringify({ error: 'Not Found', code: 'team_campaign_not_found', message: TEAM_ERROR_MESSAGES.team_campaign_not_found }));
+    expect(res.body).toBe(refusal({ error: 'Not Found', code: 'team_campaign_not_found', message: TEAM_ERROR_MESSAGES.team_campaign_not_found }));
     expect(log).toEqual(['flag', 'campaign']);
   });
 
@@ -120,7 +126,7 @@ describe('the guards, in order', () => {
     for (const zone of [null, '', 'IST', 'Mars/Olympus']) {
       const res = await get(zone === null ? { from: OK.from, to: OK.to } : { ...OK, timezone: zone });
       expect(res.statusCode, String(zone)).toBe(400);
-      expect(res.body).toBe(JSON.stringify({ error: 'Bad Request', code: 'team_timezone_invalid', message: TEAM_ERROR_MESSAGES.team_timezone_invalid }));
+      expect(res.body).toBe(refusal({ error: 'Bad Request', code: 'team_timezone_invalid', message: TEAM_ERROR_MESSAGES.team_timezone_invalid }));
     }
     expect(databaseZone).not.toHaveBeenCalled();
     databaseZone.mockResolvedValueOnce(null);
@@ -133,7 +139,7 @@ describe('the guards, in order', () => {
     for (const w of [{ from: '2026-11-20', to: '2026-11-21' }, { from: '2026-10-01', to: '2026-11-20' }, { from: '2026-11-20', to: '2026-11-19' }, { from: '2026-11-x', to: '2026-11-20' }]) {
       const res = await get({ ...OK, ...w });
       expect(res.statusCode, JSON.stringify(w)).toBe(400);
-      expect(res.body).toBe(JSON.stringify({ error: 'Bad Request', code: 'team_window_invalid', message: TEAM_ERROR_MESSAGES.team_window_invalid }));
+      expect(res.body).toBe(refusal({ error: 'Bad Request', code: 'team_window_invalid', message: TEAM_ERROR_MESSAGES.team_window_invalid }));
     }
     expect(read).not.toHaveBeenCalled();
   });
@@ -160,7 +166,7 @@ describe('the read\'s refusals', () => {
     const res = await get(OK);
     expect(res.statusCode).toBe(429);
     expect(res.headers['retry-after']).toBe(String(TEAM_PERFORMANCE_BUSY_RETRY_AFTER_SECONDS));
-    expect(res.body).toBe(JSON.stringify({
+    expect(res.body).toBe(refusal({
       error: 'Too Many Requests', code: 'team_busy', message: TEAM_ERROR_MESSAGES.team_busy, retry_after_seconds: TEAM_PERFORMANCE_BUSY_RETRY_AFTER_SECONDS,
     }));
     expect(preserved).toBeUndefined();
@@ -171,7 +177,7 @@ describe('the read\'s refusals', () => {
     const res = await get(OK);
     expect(res.statusCode).toBe(503);
     expect(res.headers['retry-after']).toBeUndefined();
-    expect(res.body).toBe(JSON.stringify({ error: 'Service Unavailable', code: 'team_timed_out', message: 'Too much to read at once. Try a shorter period.' }));
+    expect(res.body).toBe(refusal({ error: 'Service Unavailable', code: 'team_timed_out', message: 'Too much to read at once. Try a shorter period.' }));
     expect(preserved).toBe(true);
   });
 

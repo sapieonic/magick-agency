@@ -152,7 +152,12 @@ After the transaction, on the pool: the membership and the names (`filterRowsByM
 account, campaign or all, window and zone; an identical read already running is joined, and a
 cached or joined answer takes no slot. Every statement is scoped by tenant and account; the optional
 campaign predicate is two SQL strings, never `$1 IS NULL OR`. Compare's SQL constants are not edited
-(their plans are pinned by tests); the read reuses their exported fragments.
+(their plans are pinned by tests). The read reuses the fragments Compare's statements are built from
+where they are exported (`CALLBACK_BOOKING_COLUMNS_SQL`, `callbackClassSql`,
+`SOFTPHONE_CONNECTED_SQL`); the promise statements (`promisedRowsSql`, the conversations of
+`teamPromisesSql`) and the call-backs' rows are copies of `COMPARE_PROMISES_SQL`'s and
+`COMPARE_CALLBACKS_SQL`'s, widened to the scope, held to Compare's numbers by the integration
+test's one-campaign oracle (§8).
 
 Metrics: `agency_team_performance_read_seconds{result}` and
 `agency_team_performance_reads_refused_total{reason}` (`packages/observability/src/metrics/agency.ts`).

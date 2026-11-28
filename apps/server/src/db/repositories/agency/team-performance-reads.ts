@@ -183,9 +183,10 @@ export const TEAM_ROLLUP_DAYS_SQL = `
 
 /**
  * Every promise recorded in `[$3, $4)` in scope on the three call tables, each by the agent who took
- * the call, tenant `$1` and account `$2`: `(agent_user_id, at)`. `COMPARE_PROMISES_SQL`'s rows with
+ * the call, tenant `$1` and account `$2`: `(agent_user_id, at)`. A copy of the rows
+ * `COMPARE_PROMISES_SQL` counts (Compare's constants are not edited: their plans are pinned), with
  * the campaign in scope ({@link onCampaign}, `campaignParam`); of the cohort's agents (`$5`) when
- * `cohort`, else the team's.
+ * `cohort`, else the team's. The integration test's one-campaign oracle holds it to Compare's numbers.
  */
 function promisedRowsSql(scope: TeamScope, campaignParam: string, cohort: boolean): string {
   const of = (column: string): string => (cohort ? `\n       AND ${column} = ANY($5::uuid[])` : '');
