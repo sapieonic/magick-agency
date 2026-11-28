@@ -316,9 +316,44 @@ describe('the agents', () => {
   it('names the scrolling table apart from its section', async () => {
     renderView(`?campaign=${CAMPAIGN}`);
     const section = await screen.findByTestId('team-agents');
-    const region = within(section).getByRole('region', { name: 'Agents table' });
-    expect(region.getAttribute('tabindex')).toBe('0');
+    expect(within(section).getByRole('region', { name: 'Agents table' })).toBeTruthy();
     expect(within(section).queryAllByRole('region', { name: /^Agents · / })).toHaveLength(0);
+  });
+
+  it('makes the table a tab stop only while it scrolls sideways, so a phone’s cards get none', async () => {
+    const size = { scrollWidth: 380, clientWidth: 380 };
+    const names = ['scrollWidth', 'clientWidth'] as const;
+    const before = names.map((name) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, name));
+    for (const name of names) {
+      Object.defineProperty(HTMLElement.prototype, name, {
+        configurable: true,
+        get(this: HTMLElement) {
+          return this.getAttribute('aria-label') === 'Agents table' ? size[name] : 0;
+        },
+      });
+    }
+    try {
+      renderView(`?campaign=${CAMPAIGN}`);
+      const region = within(await screen.findByTestId('team-agents')).getByRole('region', { name: 'Agents table' });
+      expect(region.hasAttribute('tabindex')).toBe(false);
+      size.scrollWidth = 1100;
+      size.clientWidth = 900;
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+      expect(region.getAttribute('tabindex')).toBe('0');
+      size.scrollWidth = 900;
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+      expect(region.hasAttribute('tabindex')).toBe(false);
+    } finally {
+      names.forEach((name, i) => {
+        const own = before[i];
+        if (own) Object.defineProperty(HTMLElement.prototype, name, own);
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name];
+      });
+    }
   });
 
   it('sorts with toggle pills, into the URL', async () => {

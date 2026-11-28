@@ -19,7 +19,7 @@ import { outcomeLabel } from './teamCopy';
 
 // ─── The main outcome per working day ───────────────────────────────────────
 
-export const TREND_HEIGHT = 220;
+const TREND_HEIGHT = 220;
 const TREND_TOP = 22;
 const TREND_BOTTOM = 26;
 const TREND_LEFT = 36;

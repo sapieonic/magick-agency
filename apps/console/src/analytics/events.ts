@@ -568,8 +568,8 @@ export function trackAgencyAssignmentRefused(props: EventCatalog['agency_assignm
 }
 
 /**
- * Where an export was asked for (`docs/reports.md`, the four entry points and the Reports page;
- * `team_performance` is Team performance's Download Excel, `docs/team-performance.md` TP19).
+ * Where an export was asked for: one value per entry point (`docs/reports.md`) and the Reports
+ * page; `team_performance` is Team performance's Download Excel (`docs/team-performance.md` TP19).
  */
 export type ReportEntry = 'agent_record' | 'my_performance' | 'campaign_insights' | 'account_analytics' | 'reports_page' | 'team_performance';
 

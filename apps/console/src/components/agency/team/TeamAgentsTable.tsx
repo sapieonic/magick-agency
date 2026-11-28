@@ -1,4 +1,4 @@
-import { useId, type CSSProperties } from 'react';
+import { useCallback, useEffect, useId, useState, type CSSProperties } from 'react';
 import { Check, TriangleAlert, Users } from 'lucide-react';
 import { COMPARE_PAGE_MAX_AGENTS } from '@magick-agency/contracts/api/agency/compare';
 import type { AgencyTeamAgentRow, AgencyTeamPerformance } from '@magick-agency/contracts/api/agency/team-performance';
@@ -19,6 +19,7 @@ import {
   picksLine,
   rateLabel,
   withheldWords,
+  type TeamBadgeTone,
 } from '../../../utils/agency/team/teamCopy';
 import { rowName, sortTeamRows } from '../../../utils/agency/team/teamSort';
 import { inlineScale, inlineShare } from '../../../utils/agency/team/teamCharts';
@@ -66,11 +67,12 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
   const callsScale = inlineScale(rows.map((r) => r.calls_handled), data.medians.calls_handled);
   const rateScale = inlineScale(rows.map((r) => (r.main.reportable ? r.main.value : null)), data.medians.main_rate);
   const widths = figureWidths(rows);
+  const [wrapRef, overflows] = useOverflowsSideways();
   const full = picks.length >= COMPARE_PAGE_MAX_AGENTS;
   // Agents are picked only within one campaign (TP18, CP8): with All campaigns there are no boxes.
   const canPick = canCompare && data.comparable;
   const reason = compareDisabledReason(data.comparable, picks.length);
-  const badges = new Map<string, Array<{ label: string; tone: 'best' | 'watch' }>>();
+  const badges = new Map<string, Array<{ label: string; tone: TeamBadgeTone }>>();
   if (data.comparable) {
     for (const f of data.findings) {
       const badge = findingBadge(f, label);
@@ -149,8 +151,9 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
         </p>
       ) : null}
 
-      {/* Its own name: the section around it already carries the heading's. */}
-      <div className={styles.tableWrap} tabIndex={0} role="region" aria-label="Agents table">
+      {/* Its own name: the section around it already carries the heading's. A tab stop only while it
+          scrolls sideways, so a keyboard can scroll it; a phone's cards never do, and get none. */}
+      <div ref={wrapRef} className={styles.tableWrap} tabIndex={overflows ? 0 : undefined} role="region" aria-label="Agents table">
         {/* The roles restate the table's own: below 640px the rows are laid out as cards (CSS), and a
             browser drops a table's semantics once its parts are no longer displayed as one. */}
         <table className={styles.table} role="table" style={widths}>
@@ -241,6 +244,31 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
 }
 
 /**
+ * Whether the node is wider inside than it shows (`scrollWidth > clientWidth`), measured when it
+ * mounts, when it or its content changes size (`ResizeObserver`, where there is one) and when the
+ * window is resized.
+ */
+function useOverflowsSideways(): [(node: HTMLDivElement | null) => void, boolean] {
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const [overflows, setOverflows] = useState(false);
+  const ref = useCallback((el: HTMLDivElement | null) => setNode(el), []);
+  useEffect(() => {
+    if (!node) return undefined;
+    const check = () => setOverflows(node.scrollWidth > node.clientWidth + 1);
+    check();
+    window.addEventListener('resize', check);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(check);
+    observer?.observe(node);
+    if (node.firstElementChild) observer?.observe(node.firstElementChild);
+    return () => {
+      window.removeEventListener('resize', check);
+      observer?.disconnect();
+    };
+  }, [node]);
+  return [ref, overflows];
+}
+
+/**
  * The widths of the figures before the bars, each its column's longest (in `ch`, tabular digits),
  * as CSS variables on the table: every row's count and rate then fill boxes of one width, so the
  * bars (and the median tick on each) start at the same x in every row, with no room wasted when
@@ -289,7 +317,7 @@ function InlineBar({ share, median }: { share: number | null; median: number | n
 }
 
 /** A row's badges; `badges` is empty unless the answer is comparable (the one place that rule is applied, above). */
-function WorthALook({ badges }: { badges: ReadonlyArray<{ label: string; tone: 'best' | 'watch' }> }) {
+function WorthALook({ badges }: { badges: ReadonlyArray<{ label: string; tone: TeamBadgeTone }> }) {
   if (badges.length === 0) return <span className={styles.muted}>—</span>;
   return (
     <span className={styles.badges}>
