@@ -126,7 +126,7 @@ describe('the words (teamCopy)', () => {
     expect(rateWords('PTP')).toBe('PTP rate');
   });
 
-  it('names the successes fallback’s rate in the singular: Success rate, Low success rate (C5)', () => {
+  it('names the successes fallback’s rate in the singular: Success rate, Low success rate', () => {
     const label = mainLabel({ kind: 'successes', label: null });
     expect(rateLabel(label)).toBe('Success rate');
     expect(rateWords(label)).toBe('success rate');
@@ -138,7 +138,7 @@ describe('the words (teamCopy)', () => {
     expect(rateLabel('Sale made')).toBe('Sale-made rate');
   });
 
-  it('says calmly that some campaigns record no promises, in the label’s words (TP8, C14)', () => {
+  it('says calmly that some campaigns record no promises, in the label’s words (TP8)', () => {
     expect(mixedNote('Will pay')).toBe('Some campaigns here don’t record Will pay; their calls still count in the will-pay rate.');
     expect(mixedNote('PTP')).toBe('Some campaigns here don’t record PTP; their calls still count in the PTP rate.');
   });
@@ -170,7 +170,7 @@ describe('the words (teamCopy)', () => {
     expect(datesWords({ from: '2026-11-17', to: '2026-11-17' })).toBe('17 Nov');
   });
 
-  it('says how fresh the bars are, as a line of its own, and a failed refresh calmly (C13, C2)', () => {
+  it('says how fresh the bars are, as a line of its own, and a failed refresh calmly', () => {
     expect(rollupLine('2026-11-17T08:40:00.000Z')).toBe('Dialler calls only · as of 8:40 AM');
     expect(rollupLine(null)).toBe('Dialler calls only');
     expect(refreshFailedWords('2026-11-17T08:45:12.000Z')).toBe('Couldn’t refresh. Showing figures up to 8:45 AM.');

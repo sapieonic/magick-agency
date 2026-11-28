@@ -277,7 +277,7 @@ describe('the agents', () => {
     }
   });
 
-  it('gives an agent whose name did not resolve the initials of the name shown, and every name a title (C8, C9)', async () => {
+  it('gives an agent whose name did not resolve the initials of the name shown, and every name a title', async () => {
     const lakshmi = TEAM_AGENT['Lakshmi P']!;
     const shown = `Agent ${lakshmi.slice(0, 8)}`;
     mocks.getTeamPerformance.mockImplementation(async (q: AgencyTeamPerformanceQuery) => {
@@ -292,7 +292,7 @@ describe('the agents', () => {
     expect(within(head('Swapna K')).getByTitle('Swapna K')).toBeTruthy();
   });
 
-  it('gives the figures before the bars one width per column, its longest, so every bar starts at the same x (C4)', async () => {
+  it('gives the figures before the bars one width per column, its longest, so every bar starts at the same x', async () => {
     renderView(`?campaign=${CAMPAIGN}`);
     const table = within(await screen.findByTestId('team-agents')).getByRole('table');
     // The rows' longest: 51 calls, 24 promises, 47% (a "%" counts 2, a digit a little over 1).
@@ -301,7 +301,7 @@ describe('the agents', () => {
     expect(table.style.getPropertyValue('--team-rate-ch')).toBe('4.25ch');
   });
 
-  it('names the scrolling table apart from its section (C10)', async () => {
+  it('names the scrolling table apart from its section', async () => {
     renderView(`?campaign=${CAMPAIGN}`);
     const section = await screen.findByTestId('team-agents');
     const region = within(section).getByRole('region', { name: 'Agents table' });
@@ -349,7 +349,7 @@ describe('the agents', () => {
   });
 });
 
-describe('a mixed scope (TP8, C14)', () => {
+describe('a mixed scope (TP8)', () => {
   it('says once, calmly, that some campaigns record no Will pay when the answer is mixed', async () => {
     renderView();
     await screen.findByTestId('team-agents');
@@ -405,7 +405,7 @@ describe('picking for Compare agents (TP18)', () => {
     expect(screen.getByTestId('team-picks').textContent).toBe('0 of 3 picked');
   });
 
-  it('disables the picks and Compare picked while the rows on screen are another filter’s (C3)', async () => {
+  it('disables the picks and Compare picked while the rows on screen are another filter’s', async () => {
     renderView(`?campaign=${CAMPAIGN}`);
     await screen.findByTestId('team-agents');
     mocks.getTeamPerformance.mockImplementation(() => new Promise(() => {}));
@@ -419,7 +419,7 @@ describe('picking for Compare agents (TP18)', () => {
     expect((screen.getByTestId('team-compare-picked') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('keeps the picks disabled when the new filter’s read failed, over the last figures (C3)', async () => {
+  it('keeps the picks disabled when the new filter’s read failed, over the last figures', async () => {
     renderView(`?campaign=${CAMPAIGN}`);
     await screen.findByTestId('team-agents');
     mocks.getTeamPerformance.mockRejectedValue(refusal(503, 'team_timed_out'));
@@ -510,7 +510,7 @@ describe('the states', () => {
 });
 
 describe('reading again on its own (§2 States)', () => {
-  it('reads Last 7 days and This week again, but never Last 30 days, a month-long read (C1)', async () => {
+  it('reads Last 7 days and This week again, but never Last 30 days, a month-long read', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     for (const [when, again] of [['7d', true], ['week', true], ['30d', false]] as const) {
       mocks.getTeamPerformance.mockClear();
@@ -525,7 +525,7 @@ describe('reading again on its own (§2 States)', () => {
     }
   });
 
-  it('does not ask again, on the timer or on return, after a refusal that would only repeat (C1)', async () => {
+  it('does not ask again, on the timer or on return, after a refusal that would only repeat', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     mocks.getTeamPerformance.mockRejectedValue(refusal(404, 'team_campaign_not_found'));
     renderView(`?campaign=${CAMPAIGN}`);
@@ -538,7 +538,7 @@ describe('reading again on its own (§2 States)', () => {
     expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
   });
 
-  it('stops after a timeout until the reader presses Try again (C1)', async () => {
+  it('stops after a timeout until the reader presses Try again', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     mocks.getTeamPerformance.mockRejectedValueOnce(refusal(503, 'team_timed_out'));
     renderView();
@@ -555,7 +555,7 @@ describe('reading again on its own (§2 States)', () => {
     await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3));
   });
 
-  it('keeps the figures up after a failed quiet refresh, says so calmly, and tries again next minute (C2)', async () => {
+  it('keeps the figures up after a failed quiet refresh, says so calmly, and tries again next minute', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     renderView(`?campaign=${CAMPAIGN}`);
     await screen.findByTestId('team-tiles');
@@ -574,7 +574,7 @@ describe('reading again on its own (§2 States)', () => {
     expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3);
   });
 
-  it('after a quiet refresh times out, keeps the figures and offers Try again, as nothing else will read (C1, C2)', async () => {
+  it('after a quiet refresh times out, keeps the figures and offers Try again, as nothing else will read', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     renderView();
     await screen.findByTestId('team-tiles');
@@ -590,7 +590,7 @@ describe('reading again on its own (§2 States)', () => {
     expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3);
   });
 
-  it('at midnight reads a custom window again, but not a preset, whose question moves with the day (C7)', async () => {
+  it('at midnight reads a custom window again, but not a preset, whose question moves with the day', async () => {
     const { unmount } = renderView();
     await screen.findByTestId('team-tiles');
     midnight();
@@ -607,7 +607,7 @@ describe('reading again on its own (§2 States)', () => {
 });
 
 describe('Download Excel (TP19)', () => {
-  it('opens on the dialog’s today at the latest, when the campaign’s day is behind the browser’s (C6)', async () => {
+  it('opens on the dialog’s today at the latest, when the campaign’s day is behind the browser’s', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(NOW);
     // 08:50 UTC on 17 Nov is 22:50 on 16 Nov in Honolulu: the page's today is the campaign's tomorrow.
@@ -623,7 +623,7 @@ describe('Download Excel (TP19)', () => {
     expect((within(dialog).getByLabelText('From') as HTMLInputElement).value).toBe('2026-11-16');
   });
 
-  it('chooses only the workbook even when the page’s window cannot be read (C6)', async () => {
+  it('chooses only the workbook even when the page’s window cannot be read', async () => {
     renderView('?when=custom&from=2026-09-01&to=2026-11-17');
     fireEvent.click(await screen.findByTestId('report-entry-team_performance'));
     const dialog = await screen.findByRole('dialog');
