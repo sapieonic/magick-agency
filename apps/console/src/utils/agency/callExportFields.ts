@@ -7,7 +7,6 @@ import {
   type AgencyCallExportDimensionInfo,
   type AgencyCallExportFieldsResponse,
 } from '@magick-agency/contracts/api/agency/call-export-fields';
-import type { AnalyticsDimensionType } from '@magick-agency/contracts/api/agency/shared';
 import type { AgencyCallFieldType } from '@magick-agency/contracts/agency';
 import type { AgencyAttemptFilters } from '../../types/agency-spine';
 import {
@@ -19,6 +18,9 @@ import {
 import { formatDayMonth } from '../format/date';
 import { formatCount, plural } from '../format/number';
 import { errorCode } from '../agencyErrors';
+import { humaniseCode } from '../agencyCatalogSync';
+import { DIMENSION_TYPE_LABELS } from '../analysisDimensionTypes';
+import { CALL_FIELD_TYPE_LABELS } from '../softphone/fieldSettings';
 
 /**
  * Export with fields (`docs/call-log.md` §10, rulings CL43–CL52): the rules the campaign Call
@@ -36,8 +38,7 @@ export type CallLogExportQuery = Record<string, string | string[] | undefined>;
  * What the campaign call export is asked for: the list's filters (the dates among them), its
  * soft-phone status, and its chip as the export's `source` (`all` is no `source`). The ONE
  * builder: the plain Export CSV, Export with fields' download and its field list
- * (`getCallExportFields`, which names the chip `type` as the list's routes do) all read it, so
- * the dialog can never offer fields for other calls than the file holds.
+ * (`getCallExportFields`) all read it, so the dialog can never offer fields for other calls than the file holds.
  */
 export function callLogExportQuery(
   filters: AgencyAttemptFilters,
@@ -53,54 +54,32 @@ export function callLogExportQuery(
 // ─── Words ───────────────────────────────────────────────────────────────────
 
 /**
- * A key as words, the dialog's name for a dimension (CL44: there is no label to add) and for a
- * call field the soft phone no longer has: `promise_strength` → "Promise strength".
- */
-export function nameFromKey(key: string): string {
-  const words = key.split('_').filter((w) => w !== '').join(' ');
-  if (words === '') return key;
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-const DIMENSION_TYPE_WORDS: Readonly<Record<AnalyticsDimensionType, string>> = {
-  string: 'Text',
-  number: 'Number',
-  boolean: 'Yes / no',
-  enum: 'Choice',
-};
-
-/**
- * A dimension's type in words, its option's second line: "Choice: firm, vague, none", "Yes / no",
- * "Number", "Text"; a key a profile changed the type of, "Changed type: Text, then Choice"; a key
+ * A dimension's type in words, its option's second line: "Choice: firm, vague, none", "Yes / No",
+ * "Number", "Text"; a key a profile changed the type of, "Changed type: Text, then Choices"; a key
  * found only in stored results, "Found in stored results".
  */
 export function dimensionTypeWords(dimension: Pick<AgencyCallExportDimensionInfo, 'types' | 'options'>): string {
   const { types, options } = dimension;
   if (types.length === 0) return 'Found in stored results';
-  if (types.length > 1) return `Changed type: ${types.map((t) => DIMENSION_TYPE_WORDS[t] ?? t).join(', then ')}`;
+  if (types.length > 1) return `Changed type: ${types.map((t) => DIMENSION_TYPE_LABELS[t] ?? t).join(', then ')}`;
   const only = types[0]!;
   if (only === 'enum' && options.length > 0) return `Choice: ${options.join(', ')}`;
-  return DIMENSION_TYPE_WORDS[only] ?? only;
+  return DIMENSION_TYPE_LABELS[only] ?? only;
 }
-
-const CALL_FIELD_TYPE_WORDS: Readonly<Record<AgencyCallFieldType, string>> = {
-  text: 'Text',
-  number: 'Number',
-  choice: 'Choice',
-  boolean: 'Yes / no',
-  date: 'Date',
-};
 
 /** A call field's type in words; a field the soft phone no longer has says so. */
 export function callFieldTypeWords(type: AgencyCallFieldType | null): string {
   if (type === null) return 'No longer in the soft phone’s call details';
-  return CALL_FIELD_TYPE_WORDS[type] ?? type;
+  return CALL_FIELD_TYPE_LABELS[type] ?? type;
 }
 
-/** A call field's name in the dialog: the soft phone's label, else its key as words. */
+/**
+ * A call field's name in the dialog: the soft phone's label, else its key as words (a field the
+ * soft phone no longer has).
+ */
 export function callFieldLabel(field: Pick<AgencyCallExportCallFieldInfo, 'key' | 'label'>): string {
   const label = field.label?.trim();
-  return label ? label : nameFromKey(field.key);
+  return label ? label : humaniseCode(field.key);
 }
 
 /** The analysis's common fields as the dialog names them, with a hint where one helps. */
@@ -128,10 +107,10 @@ export const CALL_EXPORT_BASE_COLUMNS_PREVIEW = 'attempt_id, contact_id, … mis
 
 // ─── The groups ──────────────────────────────────────────────────────────────
 
-export type CallExportGroupId = 'call_fields' | 'analysis' | 'dimensions';
+type CallExportGroupId = 'call_fields' | 'analysis' | 'dimensions';
 
 /** One field the dialog offers. */
-export interface CallExportOption {
+interface CallExportOption {
   /** The column, and what `fields` sends. */
   name: string;
   label: string;
@@ -167,7 +146,8 @@ function dimensionOption(dimension: AgencyCallExportDimensionInfo): CallExportOp
   const only = dimension.sources.length === 1 ? dimension.sources[0]! : null;
   return {
     name: dimension.name,
-    label: nameFromKey(dimension.key),
+    // A key as words (CL44: a dimension has no label): `promise_strength` → "Promise strength".
+    label: humaniseCode(dimension.key),
     detail: dimensionTypeWords(dimension),
     calls: dimension.calls,
     badge: only ? AGENCY_CALL_LOG_TYPE_LABELS[only] ?? null : null,

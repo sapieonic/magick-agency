@@ -11,7 +11,7 @@ import { ExportSplitButton, type ExportSplitButtonProps } from '../../components
 afterEach(cleanup);
 
 function props(overrides: Partial<ExportSplitButtonProps> = {}): ExportSplitButtonProps {
-  return { onExport: vi.fn(), onExportWithFields: vi.fn(), exporting: false, disabled: false, title: 'Export', ...overrides };
+  return { onExport: vi.fn(), onExportWithFields: vi.fn(), exporting: false, disabled: false, title: 'Export', ...overrides, withFieldsOpen: overrides.withFieldsOpen ?? false };
 }
 
 describe('ExportSplitButton: focus around Export with fields', () => {

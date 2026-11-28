@@ -14,6 +14,7 @@ import {
 import { callbackCodes } from '../../../db/repositories/agency/assignment-sql.js';
 import {
   clampLimit,
+  multiParam,
   parseAttemptFilters,
   parseContactFilters,
   parseFlagParam,
@@ -35,8 +36,8 @@ import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { campaignOf, gate, ownedCampaign, requireOwned } from './guards.js';
 import { inboundJourney, type CampaignCallLogRow, type CampaignInboundLogRow } from '../../../agency/campaign-call-log.js';
+import { AGENCY_CALL_EXPORT_KEY_PATTERN } from '@magick-agency/contracts/api/agency/call-export-fields';
 import {
-  CALL_LOG_INCLUDES,
   attachCallExportExtras,
   parseCallLogInclude,
   type CallLogInclude,
@@ -179,10 +180,9 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     const parsedQuery = parseCallLogQuery(query);
     if (!parsedQuery.ok) return replyValidationFailed(reply, parsedQuery.issues);
     const { filters, source, includeCounts, ...narrowed } = parsedQuery.value;
-    const included = parseCallLogInclude(query['include']);
-    if (!included.ok) {
-      return replyValidationFailed(reply, [{ param: 'include', message: `must be one of: ${CALL_LOG_INCLUDES.join(', ')}` }]);
-    }
+    const includeIssues: FilterIssue[] = [];
+    const include = parseCallLogInclude(query['include'], includeIssues);
+    if (!include) return replyValidationFailed(reply, includeIssues);
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
@@ -205,8 +205,8 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         })
         : Promise.resolve(null),
     ]);
-    const page = included.include.size > 0
-      ? { ...listed, rows: await withExportExtras(request, listed.rows, included.include) }
+    const page = include.size > 0
+      ? { ...listed, rows: await withExportExtras(request, listed.rows, include) }
       : listed;
     return reply.send(counts === null ? page : { ...page, counts });
   });
@@ -241,36 +241,77 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     return attachCallExportExtras(rows, legs, callFields);
   }
 
+  /**
+   * The call log's own query (`parseCallLogQuery`: its filters, `source`, `status`, both outcome
+   * vocabularies) as the export's field reads take it, for the campaign and the request's account
+   * (proved the campaign's by `spinePageCampaign`). `cursor`, `limit` and `include_counts` mean
+   * nothing to them and are ignored. Null once it has replied 400.
+   */
+  function callExportListInput(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    campaignId: string,
+    query: Record<string, unknown>,
+  ) {
+    const parsedQuery = parseCallLogQuery(query);
+    if (!parsedQuery.ok) {
+      void replyValidationFailed(reply, parsedQuery.issues);
+      return null;
+    }
+    const { filters, source, softphoneStatus, inboundOutcomes } = parsedQuery.value;
+    return {
+      campaignId,
+      tenantId: getTenantId(request),
+      accountId: getAccountId(request),
+      filters,
+      source,
+      softphoneStatus,
+      inboundOutcomes,
+    };
+  }
+
   // ── GET /api/v1/agency-campaigns/:id/call-log/export-fields ─────────────
   //
   // What can be added to the campaign call export of the calls these filters match (CL45): the
-  // call log's own query (`parseCallLogQuery`: its filters, `source`, `status`, both outcome
-  // vocabularies; `cursor`, `limit` and `include_counts` mean nothing here and are ignored), and
-  // `include_analysis=1` for the analysis groups, which the public route sends only with the
-  // campaign's account's analytics setting. The same ownership step as the page reads, the
-  // export's proof included (the export reads its dimensions' descriptions here).
+  // call log's own query (`callExportListInput`), and `include_analysis=1` for the analysis
+  // groups, which the public route sends only with the campaign's account's analytics setting.
+  // The same ownership step as the page reads.
   app.get<{ Params: { id: string } }>('/:id/call-log/export-fields', async (request, reply) => {
     const owned = await spinePageCampaign(request, reply);
     if (!owned) return reply;
 
     const query = (request.query ?? {}) as Record<string, unknown>;
-    const parsedQuery = parseCallLogQuery(query);
-    if (!parsedQuery.ok) return replyValidationFailed(reply, parsedQuery.issues);
+    const input = callExportListInput(request, reply, owned.id, query);
+    if (!input) return reply;
     const issues: FilterIssue[] = [];
     const includeAnalysis = parseFlagParam('include_analysis', query['include_analysis'], issues) === true;
     if (issues.length > 0) return replyValidationFailed(reply, issues);
-    const { filters, source, includeCounts: _counts, ...narrowed } = parsedQuery.value;
-    void _counts;
 
-    return reply.send(await agencyAttemptRepository.callExportFieldsForCampaign({
-      campaignId: owned.id,
-      tenantId: getTenantId(request),
-      accountId: getAccountId(request),
-      filters,
-      source,
-      ...narrowed,
-      includeAnalysis,
-    }));
+    return reply.send(await agencyAttemptRepository.callExportFieldsForCampaign({ ...input, includeAnalysis }));
+  });
+
+  // ── GET /api/v1/agency-campaigns/:id/call-log/export-fields/descriptions ─
+  //
+  // The chosen dimensions' newest descriptions, for the export's preamble (CL51): `keys` (either
+  // form, each a dimension key), over the calls the call log's own query matches. Only the
+  // dimension copies the analysis jobs ran with are read, never a result. Read by the export
+  // alone, which reaches it only with the campaign's account's analytics setting. The answer:
+  // `descriptions`, one `{ key, description }` per key that has one.
+  app.get<{ Params: { id: string } }>('/:id/call-log/export-fields/descriptions', async (request, reply) => {
+    const owned = await spinePageCampaign(request, reply);
+    if (!owned) return reply;
+
+    const query = (request.query ?? {}) as Record<string, unknown>;
+    const input = callExportListInput(request, reply, owned.id, query);
+    if (!input) return reply;
+    const keys = [...new Set(multiParam(query['keys']) ?? [])];
+    const badKeys = keys.filter((key) => !AGENCY_CALL_EXPORT_KEY_PATTERN.test(key));
+    if (badKeys.length > 0) {
+      return replyValidationFailed(reply, [{ param: 'keys', message: `not a dimension key: ${badKeys.join(', ')}` }]);
+    }
+
+    const descriptions = await agencyAttemptRepository.callExportDimensionDescriptions({ ...input, keys });
+    return reply.send({ descriptions: [...descriptions].map(([key, description]) => ({ key, description })) });
   });
 
   // ── GET /api/v1/agency-campaigns/:id/call-log/inbound/:callId ───────────

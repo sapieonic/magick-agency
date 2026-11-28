@@ -48,6 +48,7 @@ const { campaigns, attempts, contacts } = vi.hoisted(() => ({
   attempts: {
     listForCampaign: vi.fn(), listCallLogForCampaign: vi.fn(), countCallLogForCampaign: vi.fn(),
     callExportLegAnalyses: vi.fn(), callExportCallFields: vi.fn(), callExportFieldsForCampaign: vi.fn(),
+    callExportDimensionDescriptions: vi.fn(),
   },
   contacts: { listForCampaign: vi.fn(), findDetailScoped: vi.fn() },
 }));
@@ -559,6 +560,9 @@ describe('GET /:id/call-log: the campaign call log the export drains (SR6)', () 
 describe('GET /:id/call-log?include: the export\'s extras (docs/call-log.md §10)', () => {
   const LEG = '22222222-2222-4222-8222-222222222222';
   const MANUAL = '33333333-3333-4333-8333-333333333333';
+  const RESULT = {
+    ai_summary: 'ok', ai_sentiment: null, ai_sentiment_score: null, ai_key_topics: null, custom: { a: 1 }, custom_dimensions: null,
+  };
   const ROWS = [
     { source: 'dialler', id: 'a1', webrtc_call_id: LEG },
     { source: 'soft_phone', id: MANUAL, webrtc_call_id: null },
@@ -578,7 +582,7 @@ describe('GET /:id/call-log?include: the export\'s extras (docs/call-log.md §10
 
   it('one lookup per kind asked for, by the page\'s ids, scoped to the request\'s tenant and account', async () => {
     attempts.listCallLogForCampaign.mockResolvedValue({ rows: ROWS, next_cursor: null, limit: 50 });
-    attempts.callExportLegAnalyses.mockResolvedValue(new Map([[LEG, { analysis_status: 'completed', call_analysis: { custom: { a: 1 } } }]]));
+    attempts.callExportLegAnalyses.mockResolvedValue(new Map([[LEG, { analysis_status: 'completed', result: RESULT }]]));
     attempts.callExportCallFields.mockResolvedValue(new Map([[MANUAL, { loan_no: 'LN-1' }]]));
     const app = await makeApp();
     const res = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?include=analysis,call_fields', headers: HEADERS });
@@ -587,22 +591,22 @@ describe('GET /:id/call-log?include: the export\'s extras (docs/call-log.md §10
     expect(attempts.callExportLegAnalyses).toHaveBeenCalledWith('t1', 'a1', [LEG], { withResult: true });
     expect(attempts.callExportCallFields).toHaveBeenCalledWith('t1', 'a1', [MANUAL]);
     expect(res.json().rows.map((r: { export_extras: unknown }) => r.export_extras)).toEqual([
-      { analysis_status: 'completed', call_analysis: { custom: { a: 1 } }, call_fields: null },
-      { analysis_status: null, call_analysis: null, call_fields: { loan_no: 'LN-1' } },
-      { analysis_status: null, call_analysis: null, call_fields: null },
+      { analysis_status: 'completed', result: RESULT, call_fields: null },
+      { analysis_status: null, result: null, call_fields: { loan_no: 'LN-1' } },
+      { analysis_status: null, result: null, call_fields: null },
     ]);
     await app.close();
   });
 
   it('analysis_status alone reads the legs\' status without their stored result', async () => {
     attempts.listCallLogForCampaign.mockResolvedValue({ rows: ROWS, next_cursor: null, limit: 50 });
-    attempts.callExportLegAnalyses.mockResolvedValue(new Map([[LEG, { analysis_status: 'completed', call_analysis: null }]]));
+    attempts.callExportLegAnalyses.mockResolvedValue(new Map([[LEG, { analysis_status: 'completed', result: null }]]));
     const app = await makeApp();
     const res = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?include=analysis_status', headers: HEADERS });
     expect(res.statusCode).toBe(200);
     expect(attempts.callExportLegAnalyses).toHaveBeenCalledWith('t1', 'a1', [LEG], { withResult: false });
     expect(attempts.callExportCallFields).not.toHaveBeenCalled();
-    expect(res.json().rows[0].export_extras).toEqual({ analysis_status: 'completed', call_analysis: null, call_fields: null });
+    expect(res.json().rows[0].export_extras).toEqual({ analysis_status: 'completed', result: null, call_fields: null });
     await app.close();
   });
 
@@ -630,7 +634,9 @@ describe('GET /:id/call-log?include: the export\'s extras (docs/call-log.md §10
     const app = await makeApp();
     const res = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log?include=analysis,transcript', headers: HEADERS });
     expect(res.statusCode).toBe(400);
-    expect(res.json().details).toEqual([{ param: 'include', message: 'must be one of: analysis, analysis_status, call_fields' }]);
+    expect(res.json().details).toEqual([
+      { param: 'include', message: 'unknown include: transcript — expected one of analysis, analysis_status, call_fields' },
+    ]);
     expect(attempts.listCallLogForCampaign).not.toHaveBeenCalled();
     await app.close();
   });
@@ -677,6 +683,53 @@ describe('GET /:id/call-log/export-fields (docs/call-log.md §10)', () => {
     expect(attempts.callExportFieldsForCampaign.mock.calls[1]![0].includeAnalysis).toBe(true);
     const bad = await app.inject({ method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log/export-fields?include_analysis=yes', headers: HEADERS });
     expect(bad.statusCode).toBe(400);
+    await app.close();
+  });
+});
+
+describe('GET /:id/call-log/export-fields/descriptions (the export\'s preamble, CL51)', () => {
+  it('is behind the dialer flag and the ownership probe', async () => {
+    attempts.callExportDimensionDescriptions.mockResolvedValue(new Map());
+    const app = await makeApp();
+    flags.isEnabled.mockResolvedValue(false);
+    const url = '/api/v1/agency-campaigns/c1/call-log/export-fields/descriptions?keys=a';
+    expect((await app.inject({ method: 'GET', url, headers: HEADERS })).statusCode).toBe(403);
+    flags.isEnabled.mockResolvedValue(true);
+    campaigns.findById.mockResolvedValue({ ...CAMPAIGN, account_id: 'someone-else' });
+    expect((await app.inject({ method: 'GET', url, headers: HEADERS })).statusCode).toBe(404);
+    expect(attempts.callExportDimensionDescriptions).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('reads the call log\'s query and the keys, scoped to the campaign\'s tenant and account', async () => {
+    attempts.callExportDimensionDescriptions.mockResolvedValue(new Map([['promise_strength', 'How firm the promise was']]));
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/agency-campaigns/c1/call-log/export-fields/descriptions?source=inbound&outcome=missed&keys=promise_strength,amount&keys=amount',
+      headers: HEADERS,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ descriptions: [{ key: 'promise_strength', description: 'How firm the promise was' }] });
+    expect(attempts.callExportDimensionDescriptions).toHaveBeenCalledWith(expect.objectContaining({
+      campaignId: 'c1', tenantId: 't1', accountId: 'a1', source: 'inbound', inboundOutcomes: ['missed'],
+      keys: ['promise_strength', 'amount'],
+    }));
+    await app.close();
+  });
+
+  it('refuses a key that is not a dimension key, and a bad filter, before reading', async () => {
+    const app = await makeApp();
+    const bad = await app.inject({
+      method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log/export-fields/descriptions?keys=ok,Not-A-Key', headers: HEADERS,
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().details).toEqual([{ param: 'keys', message: 'not a dimension key: Not-A-Key' }]);
+    const badSource = await app.inject({
+      method: 'GET', url: '/api/v1/agency-campaigns/c1/call-log/export-fields/descriptions?keys=ok&source=nope', headers: HEADERS,
+    });
+    expect(badSource.statusCode).toBe(400);
+    expect(attempts.callExportDimensionDescriptions).not.toHaveBeenCalled();
     await app.close();
   });
 });

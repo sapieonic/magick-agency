@@ -277,8 +277,8 @@ describe('the field list (export-fields) over every call type, both shapes', () 
     ]);
   });
 
-  it('follows the Call log\'s type, status and filters', async () => {
-    const dialler = await fieldList('?type=dialler');
+  it('follows the export\'s source, status and filters', async () => {
+    const dialler = await fieldList('?source=dialler');
     expect(dialler.calls).toBe(6);
     expect(dialler.analysed).toBe(2);
     expect(dialler.call_fields).toEqual([]);
@@ -292,7 +292,7 @@ describe('the field list (export-fields) over every call type, both shapes', () 
     expect(settled.call_fields.map((f) => [f.key, f.calls])).toEqual([['loan_no', 1], ['removed_field', 1], ['visited', 1]]);
     expect(settled.dimensions.map((d) => d.key)).toEqual(['stored_only']);
 
-    const inbound = await fieldList('?type=inbound');
+    const inbound = await fieldList('?source=inbound');
     expect(inbound).toMatchObject({ calls: 2, analysed: 1 });
 
     const window = await fieldList(`?from=${encodeURIComponent(at(10).toISOString())}&to=${encodeURIComponent(at(11).toISOString())}`);
@@ -313,18 +313,90 @@ describe('the field list (export-fields) over every call type, both shapes', () 
 
 describe('the call log read\'s extras (include)', () => {
   it('the legs lookup is scoped to the tenant and the account: another\'s leg id answers nothing', async () => {
-    const legs = await agencyAttemptRepository.callExportLegAnalyses(floor.tenant, floor.account, [...leg.values()]);
+    const legs = await agencyAttemptRepository.callExportLegAnalyses(floor.tenant, floor.account, [...leg.values()], { withResult: true });
     expect([...legs.keys()].sort()).toEqual(['d1', 'd2', 'd6', 's1', 'i1', 'i2'].map((l) => leg.get(l)!).sort());
-    expect(legs.get(leg.get('d6')!)).toEqual({ analysis_status: 'deleted', call_analysis: null });
-    expect(legs.get(leg.get('d1')!)?.call_analysis).toMatchObject({ common: { summary: '=HYPERLINK("http://evil","click")' } });
     // The status alone: no stored result is read.
     const statuses = await agencyAttemptRepository.callExportLegAnalyses(floor.tenant, floor.account, [...leg.values()], { withResult: false });
     expect([...statuses.keys()].sort()).toEqual([...legs.keys()].sort());
     for (const [legId, analysis] of statuses) {
-      expect(analysis).toEqual({ analysis_status: legs.get(legId)!.analysis_status, call_analysis: null });
+      expect(analysis).toEqual({ analysis_status: legs.get(legId)!.analysis_status, result: null });
     }
     const fields = await agencyAttemptRepository.callExportCallFields(other.tenant, other.account, [id.get('s1')!, id.get('s2')!]);
     expect(fields.size).toBe(0);
+  });
+
+  it('projects only what the fields read: the current shape first, else the legacy one; an erased leg has none', async () => {
+    const legs = await agencyAttemptRepository.callExportLegAnalyses(floor.tenant, floor.account, [...leg.values()], { withResult: true });
+    const empty = { ai_summary: null, ai_sentiment: null, ai_sentiment_score: null, ai_key_topics: null, custom: null, custom_dimensions: null };
+    expect(legs.get(leg.get('d1')!)).toEqual({
+      analysis_status: 'completed',
+      result: {
+        ...empty, ai_summary: '=HYPERLINK("http://evil","click")', ai_sentiment: 'positive', ai_sentiment_score: 0.8,
+        ai_key_topics: ['emi', 'waiver'], custom: { promise_strength: 'strong', amount: 5000, 'Bad-Key': 'x' },
+      },
+    });
+    expect(legs.get(leg.get('d2')!)).toEqual({
+      analysis_status: 'completed',
+      result: {
+        ...empty, ai_summary: 'Legacy summary,\nsecond line', ai_sentiment: 'negative', ai_sentiment_score: -0.4, ai_key_topics: [],
+        custom_dimensions: { promise_strength: 'weak', amount: '5,000', new_dim: false },
+      },
+    });
+    expect(legs.get(leg.get('d6')!)).toEqual({ analysis_status: 'deleted', result: empty });
+    expect(legs.get(leg.get('i1')!)).toEqual({ analysis_status: 'pending', result: empty });
+  });
+
+  it('with both shapes in one result, a common field the current shape has no value for falls back', async () => {
+    const [mixed] = (await q(
+      `INSERT INTO agency_calls (tenant_id, account_id, caller_id, destination_phone, analysis_status, call_analysis)
+       VALUES ($1, $2, '+919000000001', '+919800000000', 'completed', $3::jsonb) RETURNING id`,
+      [floor.tenant, floor.account, JSON.stringify({
+        common: { summary: null, key_topics: ['now'] }, summary: 'old', key_topics: ['old'], overall_sentiment: { label: 'neutral' },
+        custom: 'not an object', custom_dimensions: { a: 1 },
+      })],
+    )).rows as Array<{ id: string }>;
+    try {
+      const legs = await agencyAttemptRepository.callExportLegAnalyses(floor.tenant, floor.account, [mixed!.id], { withResult: true });
+      expect(legs.get(mixed!.id)!.result).toEqual({
+        ai_summary: 'old', ai_sentiment: 'neutral', ai_sentiment_score: null, ai_key_topics: ['now'], custom: null, custom_dimensions: { a: 1 },
+      });
+    } finally {
+      await q('DELETE FROM agency_calls WHERE id = $1', [mixed!.id]);
+    }
+  });
+});
+
+describe('the preamble\'s descriptions read (callExportDimensionDescriptions)', () => {
+  const read = (keys: string[], extra: Partial<Parameters<typeof agencyAttemptRepository.callExportDimensionDescriptions>[0]> = {}) =>
+    agencyAttemptRepository.callExportDimensionDescriptions({
+      campaignId, tenantId: floor.tenant, accountId: floor.account, filters: {}, source: null, keys, ...extra,
+    });
+
+  it('answers the chosen keys\' newest descriptions as the field list does, and nothing else', async () => {
+    const list = await fieldList();
+    const keys = ['promise_strength', 'amount', 'stored_only', 'leak_snap', 'leak_sibling_snap'];
+    expect(await read(keys)).toEqual(new Map(list.dimensions
+      .filter((d) => keys.includes(d.key) && d.description !== null)
+      .map((d) => [d.key, d.description])));
+    expect((await read(['promise_strength'])).get('promise_strength')).toBe('How firm (inbound route)');
+    expect(await read([])).toEqual(new Map());
+  });
+
+  it('follows the export\'s filters', async () => {
+    expect(await read(['promise_strength'], { source: 'dialler' })).toEqual(new Map([['promise_strength', 'How firm (v2)']]));
+    expect(await read(['promise_strength'], { source: 'soft_phone' })).toEqual(new Map());
+  });
+
+  it('reads the jobs\' dimension copies alone: never a result', async () => {
+    const pool = getPool();
+    const spy = vi.spyOn(pool, 'query');
+    try {
+      await read(['promise_strength']);
+      const [text] = spy.mock.calls.at(-1)! as unknown as [string];
+      expect(text).not.toContain('call_analysis');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -509,22 +581,18 @@ describe('the field list counts exactly the rows the export writes', () => {
       tenantId: floor.tenant, accountId: floor.account, campaign: campaignId, from: '+919800000077', to: '+919000000009',
       arrived: at(35), outcome: 'closed', closedCause: 'hours', followUp: { status: 'open', reason: 'closed' },
     }));
-    const cases: Array<[string, string]> = [
-      ['', ''],
-      ['type=dialler', 'source=dialler'],
-      ['type=soft_phone', 'source=soft_phone'],
-      ['type=inbound', 'source=inbound'],
-      ['type=to_follow_up', 'source=to_follow_up'],
-      ['type=soft_phone&status=settled', 'source=soft_phone&status=settled'],
-      ['type=soft_phone&status=awaiting_outcome', 'source=soft_phone&status=awaiting_outcome'],
+    // The field list takes the export's own query, so each case is one query sent to both.
+    const cases = [
+      '', 'source=dialler', 'source=soft_phone', 'source=inbound', 'source=to_follow_up',
+      'source=soft_phone&status=settled', 'source=soft_phone&status=awaiting_outcome',
     ];
     const seen = new Set<number>();
-    for (const [listQuery, exportQuery] of cases) {
-      const list = await fieldList(listQuery ? `?${listQuery}` : '');
-      const res = await get(`/proxy/agency/campaigns/${campaignId}/attempts.csv?preamble=false&fields=analysis_status${exportQuery ? `&${exportQuery}` : ''}`);
-      expect(res.statusCode, exportQuery).toBe(200);
-      expect(res.headers['x-export-rows'], listQuery).toBe(String(list.calls));
-      expect(parseCsv(res.body).length - 1, listQuery).toBe(list.calls);
+    for (const query of cases) {
+      const list = await fieldList(query ? `?${query}` : '');
+      const res = await get(`/proxy/agency/campaigns/${campaignId}/attempts.csv?preamble=false&fields=analysis_status${query ? `&${query}` : ''}`);
+      expect(res.statusCode, query).toBe(200);
+      expect(res.headers['x-export-rows'], query).toBe(String(list.calls));
+      expect(parseCsv(res.body).length - 1, query).toBe(list.calls);
       seen.add(list.calls);
     }
     // The cases are not all one number: each filter really narrows.

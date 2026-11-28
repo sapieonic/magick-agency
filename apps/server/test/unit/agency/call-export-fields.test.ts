@@ -11,7 +11,6 @@ import {
   callExportFieldsInvalidBody,
   callExportFieldsNotPermittedBody,
   callExportHasValue,
-  callExportInclude,
   callExportPreambleLines,
   callExportValue,
   parseCallExportFields,
@@ -21,10 +20,12 @@ import {
   toCallExportDimensions,
   toCallExportFieldsResponse,
   type CallExportField,
+  type CallExportResult,
   type CallExportRow,
 } from '../../../src/agency/call-export-fields.js';
 import { ATTEMPT_CSV_COLUMNS, SPINE_EXPORT_MAX_ROWS, attemptCsvRow } from '../../../src/agency/agency-spine.js';
 import { csvNumberCell } from '../../../src/agency/agency-csv.js';
+import type { FilterIssue } from '../../../src/agency/spine-filters.js';
 
 /**
  * Export with fields (`docs/call-log.md` §10, CL43–CL52): the leaf module's rules, one by one.
@@ -140,23 +141,31 @@ describe('planCallExportFields: the grant, the extras and the ceiling (CL47, CL4
   });
 
   it('asks the read for each kind of extra only when a field of that kind is chosen', () => {
-    expect(callExportInclude(planCallExportFields(fieldsOf('field_a')))).toBe('call_fields');
+    expect(planCallExportFields(fieldsOf('field_a')).include).toEqual(['call_fields']);
     // analysis_status alone reads the status, never the stored result.
-    expect(callExportInclude(planCallExportFields(fieldsOf('analysis_status')))).toBe('analysis_status');
-    expect(callExportInclude(planCallExportFields(fieldsOf('analysis_status,field_a')))).toBe('analysis_status,call_fields');
-    expect(callExportInclude(planCallExportFields(fieldsOf('analysis_status,ai_summary')))).toBe('analysis');
-    expect(callExportInclude(planCallExportFields(fieldsOf('dim_x,field_a')))).toBe('analysis,call_fields');
-    expect(callExportInclude(planCallExportFields([]))).toBeNull();
+    expect(planCallExportFields(fieldsOf('analysis_status')).include).toEqual(['analysis_status']);
+    expect(planCallExportFields(fieldsOf('analysis_status,field_a')).include).toEqual(['analysis_status', 'call_fields']);
+    expect(planCallExportFields(fieldsOf('analysis_status,ai_summary')).include).toEqual(['analysis']);
+    expect(planCallExportFields(fieldsOf('dim_x,field_a')).include).toEqual(['analysis', 'call_fields']);
+    expect(planCallExportFields([]).include).toEqual([]);
   });
 });
 
 describe('parseCallLogInclude (the internal read)', () => {
   it('reads either form, and refuses a value it does not know', () => {
-    expect(parseCallLogInclude(undefined)).toEqual({ ok: true, include: new Set() });
-    expect(parseCallLogInclude('analysis,call_fields')).toEqual({ ok: true, include: new Set(['analysis', 'call_fields']) });
-    expect(parseCallLogInclude(['call_fields'])).toEqual({ ok: true, include: new Set(['call_fields']) });
-    expect(parseCallLogInclude('analysis_status')).toEqual({ ok: true, include: new Set(['analysis_status']) });
-    expect(parseCallLogInclude('analysis,transcript')).toEqual({ ok: false, unknown: ['transcript'] });
+    const parse = (raw: unknown) => {
+      const issues: FilterIssue[] = [];
+      return { include: parseCallLogInclude(raw, issues), issues };
+    };
+    expect(parse(undefined)).toEqual({ include: new Set(), issues: [] });
+    expect(parse('analysis,call_fields')).toEqual({ include: new Set(['analysis', 'call_fields']), issues: [] });
+    expect(parse(['call_fields'])).toEqual({ include: new Set(['call_fields']), issues: [] });
+    expect(parse('analysis_status')).toEqual({ include: new Set(['analysis_status']), issues: [] });
+    // Refused in the surface's own words (`validateEnum`).
+    expect(parse('analysis,transcript')).toEqual({
+      include: null,
+      issues: [{ param: 'include', message: 'unknown include: transcript — expected one of analysis, analysis_status, call_fields' }],
+    });
   });
 });
 
@@ -198,21 +207,22 @@ describe('callExportCell: how a value is written (CL49)', () => {
 });
 
 describe('callExportValue: where each field reads from', () => {
-  const current = {
-    common: { summary: 'Agreed to pay', key_topics: ['emi', 'waiver'], overall_sentiment: { label: 'positive', score: 0.8 } },
+  // What the extras lookup hands over, already projected: the current and legacy shapes and the
+  // erasure are the SQL's (`agency-call-export-fields.test.ts`, "the call log read's extras").
+  const result = (r: Partial<CallExportResult>): CallExportResult => ({
+    ai_summary: null, ai_sentiment: null, ai_sentiment_score: null, ai_key_topics: null, custom: null, custom_dimensions: null, ...r,
+  });
+  const projected = result({
+    ai_summary: 'Agreed to pay', ai_sentiment: 'positive', ai_sentiment_score: 0.8, ai_key_topics: ['emi', 'waiver'],
     custom: { promise_strength: 'strong', will_pay: true, amount: 5000 },
-  };
-  const legacy = {
-    summary: 'Old summary', key_topics: ['old'], overall_sentiment: { label: 'negative', score: -0.4 },
-    custom_dimensions: { promise_strength: 'weak', legacy_only: 'yes' },
-  };
-  const row = (callAnalysis: unknown, status: string | null = 'completed', extra: Partial<CallExportRow> = {}): CallExportRow => ({
-    ...ROW, ...extra, export_extras: { analysis_status: status, call_analysis: callAnalysis, call_fields: null },
+  });
+  const row = (r: CallExportResult | null, status: string | null = 'completed', extra: Partial<CallExportRow> = {}): CallExportRow => ({
+    ...ROW, ...extra, export_extras: { analysis_status: status, result: r, call_fields: null },
   });
   const value = (name: string, r: CallExportRow) => callExportValue(fieldsOf(name)[0]!, r);
 
-  it('the current shape: common.* and custom.*', () => {
-    const r = row(current);
+  it('each analysis field reads its projected column', () => {
+    const r = row(projected);
     expect(value('analysis_status', r)).toBe('completed');
     expect(value('ai_summary', r)).toBe('Agreed to pay');
     expect(value('ai_sentiment', r)).toBe('positive');
@@ -222,38 +232,35 @@ describe('callExportValue: where each field reads from', () => {
     expect(value('dim_will_pay', r)).toBe(true);
   });
 
-  it('the legacy flat shape, when the current one has no value', () => {
-    const r = row(legacy);
-    expect(value('ai_summary', r)).toBe('Old summary');
-    expect(value('ai_sentiment', r)).toBe('negative');
-    expect(value('ai_sentiment_score', r)).toBe(-0.4);
-    expect(value('ai_key_topics', r)).toEqual(['old']);
-    expect(value('dim_promise_strength', r)).toBe('weak');
-    // Both present: the current shape wins, and a key only in the legacy one is still read.
-    const both = row({ ...legacy, ...current });
-    expect(value('ai_summary', both)).toBe('Agreed to pay');
+  it('a dimension reads the current shape\'s key, else the legacy one\'s', () => {
+    const both = row(result({
+      custom: { promise_strength: 'strong', empty: null },
+      custom_dimensions: { promise_strength: 'weak', legacy_only: 'yes', empty: 'old' },
+    }));
     expect(value('dim_promise_strength', both)).toBe('strong');
     expect(value('dim_legacy_only', both)).toBe('yes');
+    expect(value('dim_empty', both)).toBe('old');
+    expect(value('dim_missing', both)).toBeUndefined();
   });
 
-  it('analysis_status is none for a row with no leg or never queued; an erased leg exports nothing', () => {
+  it('analysis_status is none for a row with no leg or never queued; no result reads nothing', () => {
     expect(value('analysis_status', row(null, null))).toBe('none');
     expect(value('analysis_status', { ...ROW })).toBe('none');
-    const erased = row(current, 'deleted');
-    expect(value('analysis_status', erased)).toBe('deleted');
-    expect(value('ai_summary', erased)).toBeUndefined();
-    expect(value('dim_promise_strength', erased)).toBeUndefined();
+    const statusOnly = row(null, 'deleted');
+    expect(value('analysis_status', statusOnly)).toBe('deleted');
+    expect(value('ai_summary', statusOnly)).toBeUndefined();
+    expect(value('dim_promise_strength', statusOnly)).toBeUndefined();
   });
 
   it('a key shaped like an Object.prototype member reads only the result\'s own key', () => {
-    expect(value('dim_constructor', row(current))).toBeUndefined();
-    expect(value('dim_constructor', row({ custom: { constructor: 'own' } }))).toBe('own');
+    expect(value('dim_constructor', row(projected))).toBeUndefined();
+    expect(value('dim_constructor', row(result({ custom: { constructor: 'own' } })))).toBe('own');
     expect(value('field_constructor', row(null, null, { source: 'soft_phone' }))).toBeUndefined();
   });
 
   it('a call detail is read only on a soft-phone row', () => {
     const fields = { loan_no: 'LN-42', visited: false };
-    const soft: CallExportRow = { ...ROW, source: 'soft_phone', export_extras: { analysis_status: null, call_analysis: null, call_fields: fields } };
+    const soft: CallExportRow = { ...ROW, source: 'soft_phone', export_extras: { analysis_status: null, result: null, call_fields: fields } };
     expect(value('field_loan_no', soft)).toBe('LN-42');
     expect(value('field_visited', soft)).toBe(false);
     expect(value('field_missing', soft)).toBeUndefined();
@@ -262,6 +269,9 @@ describe('callExportValue: where each field reads from', () => {
 });
 
 describe('the file: header order and rows (CL43)', () => {
+  const NO_RESULT: CallExportResult = {
+    ai_summary: null, ai_sentiment: null, ai_sentiment_score: null, ai_key_topics: null, custom: null, custom_dimensions: null,
+  };
   const fields = fieldsOf('dim_b,ai_summary,field_a,analysis_status');
 
   it('today\'s columns first, then the chosen ones in the order asked', () => {
@@ -269,7 +279,7 @@ describe('the file: header order and rows (CL43)', () => {
   });
 
   it('a row is the plain row\'s cells, then the chosen cells', () => {
-    const line = callExportCsvRow({ ...ROW, export_extras: { analysis_status: 'completed', call_analysis: { common: { summary: 'ok' }, custom: { b: 2 } }, call_fields: null } }, fields);
+    const line = callExportCsvRow({ ...ROW, export_extras: { analysis_status: 'completed', result: { ...NO_RESULT, ai_summary: 'ok', custom: { b: 2 } }, call_fields: null } }, fields);
     const plain = attemptCsvRow(ROW).trimEnd();
     expect(line).toBe(`${plain},2,ok,,completed\n`);
   });
@@ -281,7 +291,7 @@ describe('the file: header order and rows (CL43)', () => {
 
   it('a model-written summary that looks like a formula comes out guarded, once', () => {
     const line = callExportCsvRow({
-      ...ROW, export_extras: { analysis_status: 'completed', call_analysis: { common: { summary: '=HYPERLINK("http://evil","x")' } }, call_fields: null },
+      ...ROW, export_extras: { analysis_status: 'completed', result: { ...NO_RESULT, ai_summary: '=HYPERLINK("http://evil","x")' }, call_fields: null },
     }, fieldsOf('ai_summary'));
     expect(line.trimEnd().endsWith(',"\'=HYPERLINK(""http://evil"",""x"")"')).toBe(true);
     expect(line).not.toContain("''=");
@@ -293,7 +303,7 @@ describe('the file: header order and rows (CL43)', () => {
       source: 'soft_phone',
       export_extras: {
         analysis_status: 'completed',
-        call_analysis: { common: { overall_sentiment: { label: '-1+2', score: -0.4 } }, custom: { n: -5e-7, s: '=1', l: [-1, 2] } },
+        result: { ...NO_RESULT, ai_sentiment: '-1+2', ai_sentiment_score: -0.4, custom: { n: -5e-7, s: '=1', l: [-1, 2] } },
         call_fields: { phone: '+919876500001', amount: -1500 },
       },
     }, fieldsOf('ai_sentiment_score,ai_sentiment,dim_n,dim_s,dim_l,field_phone,field_amount'));
@@ -303,13 +313,16 @@ describe('the file: header order and rows (CL43)', () => {
 
   it('a summary with line breaks and commas stays one quoted cell', () => {
     const line = callExportCsvRow({
-      ...ROW, export_extras: { analysis_status: 'completed', call_analysis: { common: { summary: 'Paid, partly.\nCall back' } }, call_fields: null },
+      ...ROW, export_extras: { analysis_status: 'completed', result: { ...NO_RESULT, ai_summary: 'Paid, partly.\nCall back' }, call_fields: null },
     }, fieldsOf('ai_summary'));
     expect(line.endsWith(',"Paid, partly.\nCall back"\n')).toBe(true);
   });
 });
 
 describe('attachCallExportExtras', () => {
+  const LEG_RESULT: CallExportResult = {
+    ai_summary: 'ok', ai_sentiment: null, ai_sentiment_score: null, ai_key_topics: null, custom: {}, custom_dimensions: null,
+  };
   it('puts each leg\'s analysis on its row and a soft-phone row\'s details on it alone', () => {
     const rows = [
       { source: 'dialler', id: 'a1', webrtc_call_id: 'leg-1' },
@@ -319,17 +332,17 @@ describe('attachCallExportExtras', () => {
     ];
     const out = attachCallExportExtras(
       rows,
-      new Map([['leg-1', { analysis_status: 'completed', call_analysis: { custom: {} } }], ['leg-2', { analysis_status: 'pending', call_analysis: null }]]),
+      new Map([['leg-1', { analysis_status: 'completed', result: LEG_RESULT }], ['leg-2', { analysis_status: 'pending', result: null }]]),
       new Map([['m1', { loan_no: 'LN-1' }]]),
     );
     expect(out.map((r) => r.export_extras)).toEqual([
-      { analysis_status: 'completed', call_analysis: { custom: {} }, call_fields: null },
-      { analysis_status: 'pending', call_analysis: null, call_fields: { loan_no: 'LN-1' } },
-      { analysis_status: null, call_analysis: null, call_fields: null },
+      { analysis_status: 'completed', result: LEG_RESULT, call_fields: null },
+      { analysis_status: 'pending', result: null, call_fields: { loan_no: 'LN-1' } },
+      { analysis_status: null, result: null, call_fields: null },
       // A dialler row whose id happens to be a soft-phone call's gets no details.
-      { analysis_status: null, call_analysis: null, call_fields: null },
+      { analysis_status: null, result: null, call_fields: null },
     ]);
-    expect(attachCallExportExtras(rows, null, null)[0]!.export_extras).toEqual({ analysis_status: null, call_analysis: null, call_fields: null });
+    expect(attachCallExportExtras(rows, null, null)[0]!.export_extras).toEqual({ analysis_status: null, result: null, call_fields: null });
   });
 });
 

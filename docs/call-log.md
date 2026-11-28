@@ -1620,10 +1620,11 @@ arrow.
 
 | Route | Floor | What |
 |---|---|---|
-| `GET /proxy/agency/campaigns/:id/call-log/export-fields` | `agency.supervise` | `AgencyCallExportFieldsResponse` for the Call log's query: its filters, `type` (the chip, as the JSON Call log takes it; the export takes the same as `source`) and `status`; anything else is 400 `unknown_query_params`. `calls` is the rows the file would hold (every listed row, a soft-phone call that never dialled included) |
-| `GET /proxy/agency/campaigns/:id/attempts.csv` | `agency.supervise` | takes `fields`, read by the route and never forwarded. In order: 400 `export_fields_invalid` (before any read), the campaign's 404, 403 `export_fields_not_permitted` (the setting is read only when an analysis field or a dimension is asked), one read of the field list for the dimensions' descriptions when a dimension is chosen and a preamble is written (not with `preamble=false`), then the drain |
+| `GET /proxy/agency/campaigns/:id/call-log/export-fields` | `agency.supervise` | `AgencyCallExportFieldsResponse` for the export's own query, forwarded as the export forwards it: the attempt filters, `source` and `status` (the console turns the Call log's chip into `source`, as it does for the export); anything else is 400 `unknown_query_params`. `calls` is the rows the file would hold (every listed row, a soft-phone call that never dialled included) |
+| `GET /proxy/agency/campaigns/:id/attempts.csv` | `agency.supervise` | takes `fields`, read by the route and never forwarded. In order: 400 `export_fields_invalid` (before any read), the campaign's 404, 403 `export_fields_not_permitted` (the setting is read only when an analysis field or a dimension is asked), then the drain, and beside it, when a dimension is chosen and a preamble is written (not with `preamble=false`), one read of the chosen dimensions' descriptions; a refusal of either stops the export |
 | internal `GET /agency-campaigns/:id/call-log/export-fields` | (behind `callCore`) | the same, over the call log's own WHERE terms; `include_analysis=1` reads the analysis groups, which the public route sends only with the grant. Every listed row is counted; of each media leg only the paths the fields read are carried, and of each analysis job only its dimension copy |
-| internal `GET /agency-campaigns/:id/call-log` | (behind `callCore`) | `include=analysis,call_fields` attaches `export_extras` to each row from one lookup per page (the media leg by `webrtc_call_id`, scoped to the tenant and account; the soft-phone call's `fields`). `include=analysis_status` reads the leg's status alone, never `call_analysis`: the export sends it when `analysis_status` is the only analysis field chosen. The export asks for either only with the grant |
+| internal `GET /agency-campaigns/:id/call-log/export-fields/descriptions` | (behind `callCore`) | `keys` (dimension keys) and the call log's query: each key's newest description, from the dimension copies the listed calls' analysis jobs ran with (the field list's own CTEs, restricted to the keys); no result is read. The export calls it only with the grant |
+| internal `GET /agency-campaigns/:id/call-log` | (behind `callCore`) | `include=analysis,call_fields` attaches `export_extras` to each row from one lookup per page (the media leg by `webrtc_call_id`, scoped to the tenant and account; the soft-phone call's `fields`). With `analysis`, the leg's result is projected in SQL to what the fields read, by the field list's own projection (current shape first, else the legacy one; nothing for an erased leg), never the whole `call_analysis`. `include=analysis_status` reads the leg's status alone: the export sends it when `analysis_status` is the only analysis field chosen. The export asks for either only with the grant |
 
 ### Tests and what was not run
 
@@ -1633,9 +1634,10 @@ Server: the leaf module (`test/unit/agency/call-export-fields.test.ts`), the pub
 the route table and agent reach, and on real Postgres
 `test/integration/api/agency-call-export-fields.test.ts` (the three call types, both analysis
 shapes, two profile versions with a key whose type changed, a key only in a stored result,
-another tenant's and account's legs never read, filters, type and status, the export end to end
+another tenant's and account's legs never read, filters, source and status, the page lookup's
+projection of both shapes, the preamble's descriptions read, the export end to end
 with the setting on and off, `analysis_status` read without the result, the SQL and JS value
-rules agreeing, the field list's `calls` equal to `X-Export-Rows` under every type, the
+rules agreeing, the field list's `calls` equal to `X-Export-Rows` under every source, the
 follow-ups and a soft-phone status, and the plan on the primary key and the job's unique index
 with the CTEs carrying no whole result or snapshot). Console:
 `__tests__/utils/callExportFields.test.ts`, `__tests__/components/ExportFieldsDialog.test.tsx`,

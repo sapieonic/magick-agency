@@ -11,7 +11,7 @@ export interface ExportSplitButtonProps {
    * Export with fields is open. When it closes, focus comes back to the arrow (once the arrow
    * can take it: it is disabled while a download runs), not to the page's `body`.
    */
-  withFieldsOpen?: boolean;
+  withFieldsOpen: boolean;
   /** The plain export is running: its part says so. */
   exporting: boolean;
   disabled: boolean;
@@ -26,7 +26,7 @@ export interface ExportSplitButtonProps {
  * to the arrow; a press outside closes it and goes on to what it landed on).
  */
 export function ExportSplitButton({
-  onExport, onExportWithFields, withFieldsOpen = false, exporting, disabled, title,
+  onExport, onExportWithFields, withFieldsOpen, exporting, disabled, title,
 }: ExportSplitButtonProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -34,9 +34,9 @@ export function ExportSplitButton({
   const itemRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
 
-  const close = useCallback((refocus: boolean) => {
+  const closeAndRefocus = useCallback(() => {
     setOpen(false);
-    if (refocus) arrowRef.current?.focus();
+    arrowRef.current?.focus();
   }, []);
 
   useEffect(() => {
@@ -49,7 +49,7 @@ export function ExportSplitButton({
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       event.preventDefault();
-      close(true);
+      closeAndRefocus();
     };
     document.addEventListener('mousedown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
@@ -57,7 +57,7 @@ export function ExportSplitButton({
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [open, close]);
+  }, [open, closeAndRefocus]);
 
   // Disabled while open (a load began): the menu goes with the button.
   useEffect(() => {
@@ -115,7 +115,7 @@ export function ExportSplitButton({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        onClick={() => (open ? close(false) : setOpen(true))}
+        onClick={() => setOpen(!open)}
         onKeyDown={onArrowKeyDown}
         disabled={disabled}
         data-testid="call-log-export-more"

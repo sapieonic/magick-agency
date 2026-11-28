@@ -3,6 +3,7 @@ import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import type { AgencyCallExportFieldsResponse } from '@magick-agency/contracts/api/agency/call-export-fields';
 import { getCallExportFields } from '../../../api/agencySpine';
 import { formatCount } from '../../../utils/format/number';
@@ -55,46 +56,35 @@ export function ExportFieldsDialog(props: ExportFieldsDialogProps) {
   return <OpenExportFieldsDialog {...props} />;
 }
 
-type Load =
-  | { state: 'loading' }
-  | { state: 'error'; message: string }
-  | { state: 'ready'; response: AgencyCallExportFieldsResponse; groups: CallExportGroup[] };
-
 function OpenExportFieldsDialog({
   onClose, campaignId, query, dates, type, storageKey, tenantId, accountId, onDownload,
 }: ExportFieldsDialogProps) {
   const ids = useId();
-  const [load, setLoad] = useState<Load>({ state: 'loading' });
-  const [attempt, setAttempt] = useState(0);
   const [chosen, setChosen] = useState<Set<string>>(() => new Set());
   const [remember, setRemember] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let live = true;
-    setLoad({ state: 'loading' });
-    getCallExportFields(campaignId, query, tenantId, accountId)
-      .then((response) => {
-        if (!live) return;
-        const groups = callExportGroups(response);
-        setLoad({ state: 'ready', response, groups });
-        // The remembered fields this view offers are ticked; the rest are kept for a later view
-        // that offers them (CL50, `rememberedFieldsToStore`).
-        setChosen(rememberedStillOffered(readRememberedFields(storageKey), groups));
-      })
-      .catch((err: unknown) => {
-        if (live) setLoad({ state: 'error', message: getErrorMessage(err, 'Could not read the fields for these calls.') });
-      });
-    return () => {
-      live = false;
-    };
-    // `query` is the page's memoised value; a new attempt is Retry.
-  }, [campaignId, query, tenantId, accountId, storageKey, attempt]);
+  // `query` is the page's memoised value, so the list is read once per opening; Retry reloads.
+  const fetchFields = useCallback(
+    () => getCallExportFields(campaignId, query, tenantId, accountId),
+    [campaignId, query, tenantId, accountId],
+  );
+  const fields = useAsyncResource<AgencyCallExportFieldsResponse | null>(fetchFields, {
+    initialData: null,
+    errorMessage: 'Could not read the fields for these calls.',
+  });
+  const response = fields.loading ? null : fields.data;
+  const groups = useMemo(() => (response ? callExportGroups(response) : null), [response]);
 
-  const groups = load.state === 'ready' ? load.groups : null;
+  // The remembered fields this view offers are ticked; the rest are kept for a later view that
+  // offers them (CL50, `rememberedFieldsToStore`).
+  useEffect(() => {
+    if (groups) setChosen(rememberedStillOffered(readRememberedFields(storageKey), groups));
+  }, [groups, storageKey]);
+
   const ordered = useMemo(() => (groups ? orderedChosenFields(groups, chosen) : []), [groups, chosen]);
-  const ceiling = load.state === 'ready' ? callExportCeilingNote(ordered, load.response) : null;
+  const ceiling = response ? callExportCeilingNote(ordered, response) : null;
 
   const toggle = useCallback((name: string, on: boolean) => {
     setChosen((current) => {
@@ -140,10 +130,10 @@ function OpenExportFieldsDialog({
   const closeUnlessDownloading = () => {
     if (!downloading) onClose();
   };
-  const nothingChosen = load.state === 'ready' && ordered.length === 0;
+  const nothingChosen = groups !== null && ordered.length === 0;
 
-  const subtitle = callExportSubtitle(load.state === 'ready' ? load.response.calls : null, dates, type);
-  const analysisOff = load.state === 'ready' && !load.response.analysis_available;
+  const subtitle = callExportSubtitle(response ? response.calls : null, dates, type);
+  const analysisOff = response !== null && !response.analysis_available;
 
   return (
     <Modal
@@ -163,7 +153,7 @@ function OpenExportFieldsDialog({
               type="button"
               className="btn-primary"
               onClick={() => void download()}
-              disabled={load.state !== 'ready' || downloading || nothingChosen}
+              disabled={!groups || downloading || nothingChosen}
               aria-describedby={nothingChosen ? `${ids}-nothing` : undefined}
               data-testid="export-fields-download"
             >
@@ -181,19 +171,19 @@ function OpenExportFieldsDialog({
       <div className={styles.body}>
         <p className={styles.intro}>The file keeps its usual columns; what you tick here is added at the end.</p>
 
-        {load.state === 'loading' && (
+        {fields.loading && (
           <div className={styles.loading} data-testid="export-fields-loading">
             <LoadingSpinner size="sm" />
           </div>
         )}
 
-        {load.state === 'error' && (
+        {!fields.loading && fields.error && (
           <div data-testid="export-fields-error">
-            <ErrorAlert message={load.message} onRetry={() => setAttempt((n) => n + 1)} />
+            <ErrorAlert message={fields.error} onRetry={() => void fields.reload()} />
           </div>
         )}
 
-        {load.state === 'ready' && groups && (
+        {groups && (
           <>
             <section className={styles.group} aria-labelledby={`${ids}-always`}>
               <h3 className={styles.groupTitle} id={`${ids}-always`}>Always in the file</h3>

@@ -76,13 +76,16 @@ const ROW = {
   wrapup_seconds: null, created_at: '2026-11-27T10:00:00.000Z',
   export_extras: {
     analysis_status: 'completed',
-    call_analysis: { common: { summary: '=HYPERLINK("x")', key_topics: ['emi', 'waiver'] }, custom: { promise_strength: 'strong' } },
+    result: {
+      ai_summary: '=HYPERLINK("x")', ai_sentiment: null, ai_sentiment_score: null, ai_key_topics: ['emi', 'waiver'],
+      custom: { promise_strength: 'strong' }, custom_dimensions: null,
+    },
     call_fields: null,
   },
 };
 const SOFT_ROW = {
   ...ROW, source: 'soft_phone', id: 'manual-1', webrtc_call_id: null,
-  export_extras: { analysis_status: null, call_analysis: null, call_fields: { loan_no: 'LN-42' } },
+  export_extras: { analysis_status: null, result: null, call_fields: { loan_no: 'LN-42' } },
 };
 const FIELD_LIST = ok({
   calls: 2,
@@ -92,6 +95,15 @@ const FIELD_LIST = ok({
     dimensions: [{ name: 'dim_promise_strength', key: 'promise_strength', types: ['enum'], options: ['strong', 'weak'], description: 'How firm the promise was', calls: 1, sources: ['dialler'] }],
   },
   call_fields: [{ name: 'field_loan_no', key: 'loan_no', label: 'Loan number', type: 'text', calls: 1 }],
+});
+
+const DESCRIPTIONS = ok({ descriptions: [{ key: 'promise_strength', description: 'How firm the promise was' }] });
+const DESCRIPTIONS_PATH = `/agency-campaigns/${CAMPAIGN}/call-log/export-fields/descriptions`;
+/** The internal reads by path: the descriptions read runs beside the drain, so their order is not fixed. */
+const byPath = (answers: Record<string, unknown>) => mocks.proxyToCore.mockImplementation(async (c: { path: string }) => {
+  const suffix = c.path.slice(`/agency-campaigns/${CAMPAIGN}`.length);
+  if (!(suffix in answers)) throw new Error(`unexpected internal read ${c.path}`);
+  return answers[suffix];
 });
 
 const csv = (fields: string, extra = '') => `${PREFIX}/campaigns/${CAMPAIGN}/attempts.csv?fields=${encodeURIComponent(fields)}${extra}`;
@@ -224,15 +236,16 @@ describe('attempts.csv?fields: what is asked of the call log read', () => {
     }
   });
 
-  it('a dimension reads its description from the field list, with the file\'s own filters, once', async () => {
-    mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(FIELD_LIST).mockResolvedValueOnce(page([ROW]));
+  it('a dimension reads its description, with the file\'s own filters and the chosen keys, once', async () => {
+    byPath({ '': CAMPAIGN_BODY, '/call-log/export-fields/descriptions': DESCRIPTIONS, '/call-log': page([ROW]) });
     const app = await buildApp();
-    const res = await app.inject({ method: 'GET', url: csv('dim_promise_strength', '&source=dialler') });
+    const res = await app.inject({ method: 'GET', url: csv('dim_promise_strength,ai_summary,dim_other', '&source=dialler') });
     expect(res.statusCode).toBe(200);
-    const listCall = mocks.proxyToCore.mock.calls[1]![0];
-    expect(listCall.path).toBe(`/agency-campaigns/${CAMPAIGN}/call-log/export-fields`);
-    expect(listCall.query).toEqual({ source: 'dialler', include_analysis: '1' });
+    const reads = mocks.proxyToCore.mock.calls.map((c) => c[0]).filter((c) => c.path === DESCRIPTIONS_PATH);
+    expect(reads).toHaveLength(1);
+    expect(reads[0].query).toEqual({ source: 'dialler', keys: 'promise_strength,other' });
     expect(res.body).toContain('# dim_promise_strength: How firm the promise was\n');
+    expect(res.body).toContain('# dim_other: (no description: the key is found only in stored results)\n');
     await app.close();
   });
 
@@ -254,13 +267,26 @@ describe('attempts.csv?fields: what is asked of the call log read', () => {
     await app.close();
   });
 
-  it('the field list refusing stops the export: its status, no file, no audit row', async () => {
-    mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce({ status: 400, body: { error: 'Validation failed' }, headers: new Headers() });
+  it('the descriptions read refusing stops the export: its status, no file, no audit row', async () => {
+    byPath({
+      '': CAMPAIGN_BODY,
+      '/call-log/export-fields/descriptions': { status: 400, body: { error: 'Validation failed' }, headers: new Headers() },
+      '/call-log': page([ROW]),
+    });
     const app = await buildApp();
     const res = await app.inject({ method: 'GET', url: csv('dim_x') });
     expect(res.statusCode).toBe(400);
     expect(res.headers['content-type']).not.toContain('text/csv');
     expect(mocks.auditLog).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('a descriptions body it cannot read stops the export with a 502', async () => {
+    byPath({ '': CAMPAIGN_BODY, '/call-log/export-fields/descriptions': ok({ calls: 1 }), '/call-log': page([ROW]) });
+    const app = await buildApp();
+    const res = await app.inject({ method: 'GET', url: csv('dim_x') });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().code).toBe('spine_export_unreadable');
     await app.close();
   });
 });
@@ -389,7 +415,7 @@ describe('GET /campaigns/:id/call-log/export-fields', () => {
   it('with the setting: asks for the analysis groups and answers the contract\'s shape', async () => {
     mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(FIELD_LIST);
     const app = await buildApp();
-    const res = await app.inject({ method: 'GET', url: url('?type=soft_phone&status=settled&outcome=connected') });
+    const res = await app.inject({ method: 'GET', url: url('?source=soft_phone&status=settled&outcome=connected') });
     expect(res.statusCode).toBe(200);
     const call = mocks.proxyToCore.mock.calls[1]![0];
     expect(call.path).toBe(`/agency-campaigns/${CAMPAIGN}/call-log/export-fields`);
@@ -415,7 +441,7 @@ describe('GET /campaigns/:id/call-log/export-fields', () => {
       settings.catch(() => {});
       mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(ok({ calls: 2, analysis: null, call_fields: FIELD_LIST.body.call_fields }));
       const app = await buildApp();
-      const res = await app.inject({ method: 'GET', url: url('?type=all') });
+      const res = await app.inject({ method: 'GET', url: url() });
       expect(res.statusCode).toBe(200);
       expect(mocks.proxyToCore.mock.calls[1]![0].query).toEqual({});
       expect(res.json()).toMatchObject({ analysis_available: false, analysed: null, analysis: [], dimensions: [], call_fields: FIELD_LIST.body.call_fields });
@@ -423,9 +449,9 @@ describe('GET /campaigns/:id/call-log/export-fields', () => {
     }
   });
 
-  it('refuses what the Call log refuses, and what only the list takes', async () => {
+  it('takes the export\'s own query, and refuses what only the list takes', async () => {
     const app = await buildApp();
-    for (const q of ['?type=bogus', '?include_counts=1', '?cursor=x', '?limit=5', '?include_analysis=1', '?fields=ai_summary', '?source=dialler']) {
+    for (const q of ['?type=dialler', '?include_counts=1', '?cursor=x', '?limit=5', '?include_analysis=1', '?fields=ai_summary', '?preamble=false']) {
       const res = await app.inject({ method: 'GET', url: url(q) });
       expect(res.statusCode, q).toBe(400);
     }

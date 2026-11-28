@@ -14,7 +14,6 @@ import {
   callFieldTypeWords,
   callLogExportQuery,
   dimensionTypeWords,
-  nameFromKey,
   offeredFieldNames,
   orderedChosenFields,
   rememberedFieldsToStore,
@@ -30,30 +29,17 @@ import { exportFieldsFixture } from '../helpers/callExportFields';
  * ceiling note. The dialog itself is `ExportFieldsDialog.test.tsx`.
  */
 
-describe('nameFromKey (CL44: a dimension has no label)', () => {
-  it('turns a snake_case key into a sentence-case name', () => {
-    expect(nameFromKey('promise_strength')).toBe('Promise strength');
-    expect(nameFromKey('loan_account_no')).toBe('Loan account no');
-    expect(nameFromKey('dpd')).toBe('Dpd');
-    expect(nameFromKey('a__b_')).toBe('A b');
-  });
-
-  it('keeps a key that has no words as it is', () => {
-    expect(nameFromKey('_')).toBe('_');
-  });
-});
-
 describe('dimensionTypeWords', () => {
   it('names one type, a choice with its options', () => {
     expect(dimensionTypeWords({ types: ['enum'], options: ['firm', 'vague', 'none'] })).toBe('Choice: firm, vague, none');
-    expect(dimensionTypeWords({ types: ['enum'], options: [] })).toBe('Choice');
-    expect(dimensionTypeWords({ types: ['boolean'], options: [] })).toBe('Yes / no');
+    expect(dimensionTypeWords({ types: ['enum'], options: [] })).toBe('Choices');
+    expect(dimensionTypeWords({ types: ['boolean'], options: [] })).toBe('Yes / No');
     expect(dimensionTypeWords({ types: ['number'], options: [] })).toBe('Number');
     expect(dimensionTypeWords({ types: ['string'], options: [] })).toBe('Text');
   });
 
   it('says a key changed type, oldest first', () => {
-    expect(dimensionTypeWords({ types: ['string', 'enum'], options: ['a'] })).toBe('Changed type: Text, then Choice');
+    expect(dimensionTypeWords({ types: ['string', 'enum'], options: ['a'] })).toBe('Changed type: Text, then Choices');
   });
 
   it('says a key with no declaration was found in stored results', () => {
@@ -69,7 +55,7 @@ describe('call fields', () => {
   });
 
   it('say their type, or that the soft phone no longer has them', () => {
-    expect(callFieldTypeWords('boolean')).toBe('Yes / no');
+    expect(callFieldTypeWords('boolean')).toBe('Yes / No');
     expect(callFieldTypeWords('date')).toBe('Date');
     expect(callFieldTypeWords(null)).toBe('No longer in the soft phone’s call details');
   });
@@ -99,8 +85,8 @@ describe('callExportGroups', () => {
     const dims = callExportGroups(exportFieldsFixture())[2]!.options;
     expect(dims.map((d) => [d.label, d.detail, d.badge])).toEqual([
       ['Promise strength', 'Choice: firm, vague, none', null],
-      ['Callback requested', 'Yes / no', 'Inbound'],
-      ['Reason code', 'Changed type: Text, then Choice', 'Dialler'],
+      ['Callback requested', 'Yes / No', 'Inbound'],
+      ['Reason code', 'Changed type: Text, then Choices', 'Dialler'],
       ['Legacy flag', 'Found in stored results', null],
     ]);
     expect(dims[0]!.description).toBe('How firm the customer’s promise to pay was');

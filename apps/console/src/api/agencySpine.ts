@@ -421,8 +421,7 @@ export async function downloadSpineCsv(
 /**
  * Export with fields (`docs/call-log.md` §10): what can be added to the campaign call export of
  * the calls `query` matches. `query` is the export's own (`callLogExportQuery`), so the list is
- * of exactly the calls the file holds; this route is one of the list's and names the chip `type`
- * where the export names it `source`. `agency.supervise`.
+ * of exactly the calls the file holds. `agency.supervise`.
  */
 export async function getCallExportFields(
   campaignId: string,
@@ -430,9 +429,8 @@ export async function getCallExportFields(
   tenantId?: string,
   accountId?: string,
 ): Promise<AgencyCallExportFieldsResponse> {
-  const { source, ...rest } = query;
   return apiFetch<AgencyCallExportFieldsResponse>(
-    `${AGENCY_BASE}/campaigns/${campaignId}/call-log/export-fields${toQuery({ ...rest, ...(source !== undefined ? { type: source } : {}) })}`,
+    `${AGENCY_BASE}/campaigns/${campaignId}/call-log/export-fields${toQuery(query)}`,
     {},
     tenantId,
     accountId,

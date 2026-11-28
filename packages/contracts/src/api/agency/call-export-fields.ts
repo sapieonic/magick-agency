@@ -24,7 +24,9 @@
 
 import type { AnalyticsDimensionType } from './shared';
 import type { AgencyCallLogType } from './call-log';
+import type { DialerAnalysisStatus } from './webrtc-call';
 import type { AgencyCallFieldType } from '../../agency';
+import { SOFTPHONE_CALL_FIELD_KEY_MAX } from '../../agency/softphone';
 import type { AllListed } from '../../primitives';
 
 /** The call analysis's common fields, in the order the dialog offers them. */
@@ -54,10 +56,12 @@ export const AGENCY_CALL_EXPORT_CALL_FIELD_PREFIX = 'field_';
 
 /**
  * A dimension or call-field key, as the profile and soft-phone validators allow it: snake_case,
- * starting with a letter, at most 50 characters. A `fields` item whose key does not match is
- * refused (400), before anything is read.
+ * starting with a letter, at most {@link SOFTPHONE_CALL_FIELD_KEY_MAX} (50) characters, the
+ * dimension validator's cap too. The length is in the pattern, not beside it, because the server
+ * also hands `.source` to Postgres. A `fields` item whose key does not match is refused (400),
+ * before anything is read.
  */
-export const AGENCY_CALL_EXPORT_KEY_PATTERN = /^[a-z][a-z0-9_]{0,49}$/;
+export const AGENCY_CALL_EXPORT_KEY_PATTERN = new RegExp(`^[a-z][a-z0-9_]{0,${SOFTPHONE_CALL_FIELD_KEY_MAX - 1}}$`);
 
 /**
  * The most fields one export may ask for: the five analysis fields, a profile's 20 dimensions
@@ -78,15 +82,7 @@ export const AGENCY_CALL_EXPORT_AI_ROW_LIMIT = 20_000;
  * wire codes, never respelled), or `none` when the call has no media leg or was never queued for
  * analysis (not recorded, or analysis off when it was placed). `deleted` is an erasure on request.
  */
-export type AgencyCallExportAnalysisStatus =
-  | 'none'
-  | 'awaiting_recording'
-  | 'pending'
-  | 'completed'
-  | 'failed'
-  | 'skipped'
-  | 'expired'
-  | 'deleted';
+export type AgencyCallExportAnalysisStatus = 'none' | DialerAnalysisStatus;
 
 export const AGENCY_CALL_EXPORT_ANALYSIS_STATUSES = [
   'none',

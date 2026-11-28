@@ -133,7 +133,7 @@ describe('the groups', () => {
     // Dimensions: named from the key, the type in words, a badge on a one-type dimension.
     expect(screen.getByLabelText('Promise strength')).toBe(box('dim_promise_strength'));
     expect(screen.getByText('Choice: firm, vague, none')).toBeTruthy();
-    expect(screen.getByText('Changed type: Text, then Choice')).toBeTruthy();
+    expect(screen.getByText('Changed type: Text, then Choices')).toBeTruthy();
     expect(screen.getByText('Found in stored results')).toBeTruthy();
     expect(screen.getByTestId('export-fields-badge-dim_callback_requested').textContent).toBe('Inbound');
     expect(screen.getByTestId('export-fields-badge-dim_reason_code').textContent).toBe('Dialler');

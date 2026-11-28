@@ -95,13 +95,6 @@ export type SpineCallSource = 'dialler' | 'soft_phone' | 'inbound';
 export const CALL_LOG_QUERY_PARAMS = ['type', 'include_counts', 'status'] as const;
 
 /**
- * The export-with-fields field list's own params (`GET /proxy/agency/campaigns/:id/call-log/export-fields`,
- * `docs/call-log.md` §10): the Call log's `type` (mapped to `source` as that route maps it) and
- * `status`, beside the attempt filters. No paging and no chip counts: it describes every row.
- */
-export const CALL_LOG_EXPORT_FIELDS_QUERY_PARAMS = ['type', 'status'] as const;
-
-/**
  * `?fields=` on the campaign call export (CL52): read by the route itself (the columns to add)
  * and never forwarded, so it is route-consumed, like `preamble`. The page reads get `include`
  * instead, set by the route from the fields chosen.
@@ -576,13 +569,16 @@ export interface SpineCsvPreambleInput {
   truncated: SpineExportTruncation | null;
   /** The ceiling that applied to this file: the Truncated line names it. */
   rowLimit: number;
-  /**
-   * The call export's chosen fields (`docs/call-log.md` §10, CL51): the lines that describe them
-   * (`callExportPreambleLines`, already written as preamble lines), and whether a soft-phone
-   * call detail (`field_<key>`) is among them, which changes what the soft-phone note says is
-   * left out. Absent when no field was chosen: the preamble is then exactly as it always was.
-   */
-  exportFields?: { lines: string[]; callFields: boolean };
+  /** The call export's chosen fields; absent when none was chosen: the preamble is then exactly as it always was. */
+  exportFields?: SpineCsvExportFields;
+}
+
+/** What the preamble says about the call export's chosen fields (`docs/call-log.md` §10, CL51). */
+export interface SpineCsvExportFields {
+  /** The lines that describe them (`callExportPreambleLines`, already written as preamble lines). */
+  lines: string[];
+  /** A soft-phone call detail (`field_<key>`) is among them: the soft-phone note then says less is left out. */
+  callFields: boolean;
 }
 
 /**

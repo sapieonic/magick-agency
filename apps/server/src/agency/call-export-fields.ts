@@ -3,8 +3,8 @@
  * adds to the campaign call export (`GET /proxy/agency/campaigns/:id/attempts.csv?fields=`).
  *
  *  - {@link parseCallExportFields}: `fields` read and checked (CL52), before anything is read.
- *  - {@link planCallExportFields}: what the chosen fields need (the analytics grant, which extras
- *    the call log read attaches) and the file's row ceiling (CL48).
+ *  - {@link planCallExportFields}: what the chosen fields need (the analytics grant, the call log
+ *    read's `include`) and the file's row ceiling (CL48).
  *  - {@link callExportCsvHeader} / {@link callExportCsvRow}: the file's columns, today's then the
  *    chosen ones in the order asked (CL43), each value written by {@link callExportCell} (CL49).
  *  - {@link callExportPreambleLines}: what the preamble says about them (CL51).
@@ -36,7 +36,7 @@ import { AGENCY_CALL_LOG_TYPES } from '@magick-agency/contracts/api/agency/call-
 import { AGENCY_CALL_FIELD_TYPES, type AgencyCallFieldType } from '@magick-agency/contracts/agency';
 import { csvNumberCell, preambleLine, sanitizePreambleValue, toCsvLine, type CsvCell } from './agency-csv.js';
 import { ATTEMPT_CSV_COLUMNS, SPINE_EXPORT_MAX_ROWS, attemptCsvCells, type SpineAttemptRow } from './agency-spine.js';
-import { multiParam } from './spine-filters.js';
+import { multiParam, validateEnum, type FilterIssue } from './spine-filters.js';
 
 // ─── Asking for fields (CL52) ──────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ export type CallExportField =
 /** How much of a refused item the 400 echoes back: an item is a name, never this long. */
 const ECHOED_ITEM_MAX_CHARS = 64;
 /** How many refused items the 400 echoes back; `invalid_count` says how many there were. */
-export const ECHOED_INVALID_MAX_ITEMS = 10;
+const ECHOED_INVALID_MAX_ITEMS = 10;
 
 export type CallExportFieldsParse =
   | { ok: true; fields: CallExportField[] }
@@ -142,22 +142,18 @@ export function callExportFieldsNotPermittedBody(names: readonly string[]): {
 
 /** What a set of chosen fields asks of the export. */
 export interface CallExportFieldPlan {
-  fields: CallExportField[];
+  fields: readonly CallExportField[];
   /** The analysis and dimension fields: behind the campaign's account's analytics setting (CL47). */
   needsAnalysisGrant: string[];
   /**
-   * The call log read attaches the media leg's analysis status AND its stored result
-   * (`include=analysis`): an analysis field other than `analysis_status`, or a dimension, is chosen.
+   * What the call log read attaches to each row (`include`), empty when nothing:
+   *  - `analysis`: the media leg's analysis status AND its stored result, when an analysis field
+   *    other than `analysis_status`, or a dimension, is chosen;
+   *  - `analysis_status`: the status alone, when `analysis_status` is chosen and nothing that
+   *    needs the result, so no result is read (still behind the grant);
+   *  - `call_fields`: the soft-phone call's details, when a call detail is chosen.
    */
-  includeAnalysis: boolean;
-  /**
-   * The call log read attaches the media leg's analysis status alone (`include=analysis_status`):
-   * `analysis_status` is chosen and nothing that needs the stored result, so no `call_analysis` is
-   * read. Still behind the analytics setting (`needsAnalysisGrant`).
-   */
-  includeAnalysisStatus: boolean;
-  /** The call log read attaches the soft-phone call's details (`include=call_fields`). */
-  includeCallFields: boolean;
+  include: CallLogInclude[];
   /** The file's row ceiling: 20,000 with an AI field (CL48), else the export's own 50,000. */
   rowLimit: number;
 }
@@ -166,24 +162,16 @@ export function planCallExportFields(fields: readonly CallExportField[]): CallEx
   const needsAnalysisGrant = fields.filter((f) => f.kind !== 'call_field').map((f) => f.name);
   // The fields read from the stored result are exactly those that lower the ceiling (CL48).
   const needsResult = fields.some((f) => lowersCallExportRowLimit(f.name));
+  const include: CallLogInclude[] = [];
+  if (needsResult) include.push(CALL_LOG_INCLUDE_ANALYSIS);
+  else if (needsAnalysisGrant.length > 0) include.push(CALL_LOG_INCLUDE_ANALYSIS_STATUS);
+  if (fields.some((f) => f.kind === 'call_field')) include.push(CALL_LOG_INCLUDE_CALL_FIELDS);
   return {
-    fields: [...fields],
+    fields,
     needsAnalysisGrant,
-    includeAnalysis: needsResult,
-    includeAnalysisStatus: !needsResult && needsAnalysisGrant.length > 0,
-    includeCallFields: fields.some((f) => f.kind === 'call_field'),
+    include,
     rowLimit: needsResult ? AGENCY_CALL_EXPORT_AI_ROW_LIMIT : SPINE_EXPORT_MAX_ROWS,
   };
-}
-
-/** The `include` the call log read is asked for, or null when the chosen fields need none. */
-export function callExportInclude(plan: CallExportFieldPlan): string | null {
-  const kinds = [
-    ...(plan.includeAnalysis ? [CALL_LOG_INCLUDE_ANALYSIS] : []),
-    ...(plan.includeAnalysisStatus ? [CALL_LOG_INCLUDE_ANALYSIS_STATUS] : []),
-    ...(plan.includeCallFields ? [CALL_LOG_INCLUDE_CALL_FIELDS] : []),
-  ];
-  return kinds.length > 0 ? kinds.join(',') : null;
 }
 
 // ─── The internal read's extras ────────────────────────────────────────────
@@ -198,33 +186,47 @@ export const CALL_LOG_INCLUDES = [CALL_LOG_INCLUDE_ANALYSIS, CALL_LOG_INCLUDE_AN
 export type CallLogInclude = (typeof CALL_LOG_INCLUDES)[number];
 
 /**
- * `?include=` read (either form, blanks dropped): the set asked for, or the unknown values. Absent:
- * the empty set, and the read answers exactly as it always has.
+ * `?include=` read (either form, blanks dropped), an unknown value refused in the surface's own
+ * words (`validateEnum`): the set asked for, or null once `issues` holds the refusal. Absent: the
+ * empty set, and the read answers exactly as it always has.
  */
-export function parseCallLogInclude(raw: unknown): { ok: true; include: Set<CallLogInclude> } | { ok: false; unknown: string[] } {
-  const items = multiParam(raw) ?? [];
-  const unknown = items.filter((item) => !(CALL_LOG_INCLUDES as readonly string[]).includes(item));
-  if (unknown.length > 0) return { ok: false, unknown };
-  return { ok: true, include: new Set(items as CallLogInclude[]) };
+export function parseCallLogInclude(raw: unknown, issues: FilterIssue[]): Set<CallLogInclude> | null {
+  const items = validateEnum('include', multiParam(raw) ?? [], CALL_LOG_INCLUDES, issues);
+  return items ? new Set(items) : null;
 }
 
 /**
- * What the internal read attaches to a row with `include`: its media leg's analysis (status and
- * stored result, null when not asked for, the row has no leg, or the leg is not this account's;
- * with `include=analysis_status` alone the result is null as it was never read)
- * and, on a soft-phone row, the call details the agent entered (null on any other row).
+ * What the export reads of a media leg's stored result, as the extras lookup projects it in SQL
+ * (`attempt.repository.ts`, the same projection as the field list's): never the whole
+ * `call_analysis`. Each common field is taken from the current shape (`common.*`) first, else
+ * the legacy flat one; all of it is null when the leg's analysis was erased (`deleted`) or holds
+ * no result.
+ */
+export interface CallExportResult {
+  ai_summary: unknown;
+  ai_sentiment: unknown;
+  ai_sentiment_score: unknown;
+  ai_key_topics: unknown;
+  /** The current shape's dimensions (`custom`), when an object; read first. */
+  custom: Record<string, unknown> | null;
+  /** The legacy shape's dimensions (`custom_dimensions`), when an object; read when `custom` has no value. */
+  custom_dimensions: Record<string, unknown> | null;
+}
+
+/**
+ * What the internal read attaches to a row with `include`: its media leg's analysis status and
+ * stored result (null when not asked for, the row has no leg, or the leg is not this account's;
+ * with `include=analysis_status` alone the result is null as it was never read) and, on a
+ * soft-phone row, the call details the agent entered (null on any other row).
  */
 export interface CallExportExtras {
   analysis_status: string | null;
-  call_analysis: unknown;
+  result: CallExportResult | null;
   call_fields: Record<string, unknown> | null;
 }
 
 /** A media leg's analysis, as the extras lookup reads it. */
-export interface CallExportLegAnalysis {
-  analysis_status: string | null;
-  call_analysis: unknown;
-}
+export type CallExportLegAnalysis = Pick<CallExportExtras, 'analysis_status' | 'result'>;
 
 /**
  * Put `export_extras` on each row from the page's two lookups: `legs` by the row's
@@ -243,7 +245,7 @@ export function attachCallExportExtras<R extends { source: string; id: string; w
       ...row,
       export_extras: {
         analysis_status: leg?.analysis_status ?? null,
-        call_analysis: leg?.call_analysis ?? null,
+        result: leg?.result ?? null,
         call_fields: fields ?? null,
       },
     };
@@ -258,20 +260,7 @@ export type CallExportRow = SpineAttemptRow & { export_extras?: Partial<CallExpo
 /** `obj[key]` only when it is the object's own: a key such as `constructor` must not read the prototype. */
 function own(obj: unknown, key: string): unknown {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return undefined;
-  return Object.prototype.hasOwnProperty.call(obj, key) ? (obj as Record<string, unknown>)[key] : undefined;
-}
-
-/** The value at `path` in the result. */
-function at(result: unknown, path: readonly string[]): unknown {
-  let value: unknown = result;
-  for (const key of path) value = own(value, key);
-  return value;
-}
-
-/** The current shape's value (`common.*`, `custom.*`), else the legacy flat one. */
-function firstPresent(result: unknown, current: readonly string[], legacy: readonly string[]): unknown {
-  const value = at(result, current);
-  return value === null || value === undefined ? at(result, legacy) : value;
+  return Object.hasOwn(obj, key) ? (obj as Record<string, unknown>)[key] : undefined;
 }
 
 /**
@@ -318,25 +307,20 @@ export function callExportHasValue(value: unknown): boolean {
   return typeof cell === 'string' ? cell !== '' : true;
 }
 
-/** The stored result, unless the leg's analysis was erased (`deleted`): an erasure leaves nothing to export. */
-function storedResult(extras: Partial<CallExportExtras> | null | undefined): unknown {
-  return extras?.analysis_status === 'deleted' ? null : extras?.call_analysis ?? null;
-}
-
-/** One chosen field's value on a row, before it is a cell. */
+/**
+ * One chosen field's value on a row, before it is a cell. The result is already projected (the
+ * shapes and the erasure are the SQL's, {@link CallExportResult}); a dimension is the current
+ * shape's key, else the legacy one's.
+ */
 export function callExportValue(field: CallExportField, row: CallExportRow): unknown {
   const extras = row.export_extras;
-  if (field.kind === 'call_field') {
-    return row.source === 'soft_phone' ? own(extras?.call_fields, field.key) : undefined;
-  }
-  const result = storedResult(extras);
-  if (field.kind === 'dimension') return firstPresent(result, ['custom', field.key], ['custom_dimensions', field.key]);
-  switch (field.name) {
-    case 'analysis_status': return extras?.analysis_status ?? 'none';
-    case 'ai_summary': return firstPresent(result, ['common', 'summary'], ['summary']);
-    case 'ai_sentiment': return firstPresent(result, ['common', 'overall_sentiment', 'label'], ['overall_sentiment', 'label']);
-    case 'ai_sentiment_score': return firstPresent(result, ['common', 'overall_sentiment', 'score'], ['overall_sentiment', 'score']);
-    case 'ai_key_topics': return firstPresent(result, ['common', 'key_topics'], ['key_topics']);
+  switch (field.kind) {
+    case 'call_field':
+      return row.source === 'soft_phone' ? own(extras?.call_fields, field.key) : undefined;
+    case 'dimension':
+      return own(extras?.result?.custom, field.key) ?? own(extras?.result?.custom_dimensions, field.key);
+    case 'analysis':
+      return field.name === 'analysis_status' ? extras?.analysis_status ?? 'none' : extras?.result?.[field.name];
   }
 }
 
@@ -347,16 +331,18 @@ export function callExportCsvHeader(fields: readonly CallExportField[]): string 
 
 /** One row: today's cells, then the chosen fields' (CL49), every cell through `toCsvLine`'s guard. */
 export function callExportCsvRow(row: CallExportRow, fields: readonly CallExportField[]): string {
-  return toCsvLine([...attemptCsvCells(row), ...fields.map((f) => callExportCell(callExportValue(f, row)))]);
+  const cells: CsvCell[] = attemptCsvCells(row);
+  for (const field of fields) cells.push(callExportCell(callExportValue(field, row)));
+  return toCsvLine(cells);
 }
 
 // ─── The preamble (CL51) ───────────────────────────────────────────────────
 
 /**
  * What the preamble says about the chosen fields: which were added and where, each dimension's
- * newest description (`descriptions`, by key; read from the field list with the file's own
- * filters), the ceiling that applied, what an empty analysis cell means, and that the added
- * columns are customer content. Every value goes through `sanitizePreambleValue`.
+ * newest description (`descriptions`, by key; read with the file's own filters), the ceiling
+ * that applied, what an empty analysis cell means, and that the added columns are customer
+ * content. Every value goes through `sanitizePreambleValue`.
  */
 export function callExportPreambleLines(input: {
   fields: readonly CallExportField[];

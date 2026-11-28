@@ -118,6 +118,7 @@ import { AttemptDispositionCell } from '../../components/agency/AttemptDispositi
 import { ExportSplitButton } from '../../components/agency/callLog/ExportSplitButton';
 import { ExportFieldsDialog } from '../../components/agency/callLog/ExportFieldsDialog';
 import { callExportDatesWords, callExportTypeWords, callLogExportQuery } from '../../utils/agency/callExportFields';
+import { downloadBlob } from '../../utils/agency/insights/csv';
 import { callExportFieldsKey } from '../../utils/agency/callExportFieldsStore';
 
 const PAGE_SIZE = 50;
@@ -532,18 +533,13 @@ export function CallLogList({ scope }: { scope: CallLogListScope }) {
       fields.length > 0 ? { ...exportQuery, fields: fields.join(',') } : exportQuery,
       tenantId ?? undefined, accountId ?? undefined,
     );
-    const url = URL.createObjectURL(result.blob);
-    const link = document.createElement('a');
-    link.href = url;
     // Campaign names are free text and routinely carry `/`, `:` and `?`,
     // which browsers reject or mangle in `download` — so the name goes
     // through the same sanitiser the other exports use. The prefix is applied
     // OUTSIDE it on purpose: sanitised as part of the name, a campaign called
     // `///` would strip to a bare `attempts.csv` and lose the only thing
     // identifying which campaign the file came from.
-    link.download = `attempts-${outcomeReportFilename(campaign?.name ?? null, id)}`;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(`attempts-${outcomeReportFilename(campaign?.name ?? null, id)}`, result.blob);
     if (result.truncated) {
       // Not a success toast with a footnote: a large campaign truncates by
       // design, and an operator who reads this as "done" hands over a file
