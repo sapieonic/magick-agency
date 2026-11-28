@@ -377,8 +377,9 @@ performance row, `operations.md` "Team performance") is the case for bringing it
   `navRouteGates.test.ts`, `consoleSearch.test.ts`, `reportEntryPoints.test.tsx` (Download Excel's
   entry), `api/teamPerformance.test.ts` (exactly the query the server validates) and a timezone
   test. Mutation-checked: the nav gate, the three-pick limit, the comparable rule, the per-day axis,
-  the figures' names for the phone layout, the mixed note (shown, hidden) and `mixed` only with
-  promises.
+  the figures' names for the phone layout, the mixed note (shown, hidden), `mixed` only with
+  promises, and the footnote reading `bar_conversations` (a sum of the merged bars in its place turns
+  `OutcomeBreakdown.test.tsx` red).
 - Mobile: the app does not read this route. The flag adds one key to the platform fixture's flag
   map (`fixtures/agent/platform.json`), which the app's `FeatureFlags.fromJson` reads whatever its
   keys (`agency_wire`'s `platform_test.dart`).
