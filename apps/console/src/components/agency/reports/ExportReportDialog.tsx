@@ -104,7 +104,6 @@ function OpenExportReportDialog({ onClose, target, entry, now, initial }: Export
   const submitErrorId = `${ids}-submit-error`;
 
   const isCampaign = target.kind === 'campaign';
-  const [preset, setPreset] = useState<ReportWindowPreset>(() => (initial?.from && initial.to ? 'custom' : 'last_7_days'));
   const [zone, setZone] = useState<string>(() => browserZone());
   // A campaign whose zone this page does not know yet bounds its dates by the browser's zone;
   // the server cuts the days in the campaign's own zone either way (RP3).
@@ -113,6 +112,7 @@ function OpenExportReportDialog({ onClose, target, entry, now, initial }: Export
   const [clock] = useState<Date>(() => now ?? new Date());
   const today = todayIn(reportZone, clock);
   const initialDates = initialDatesFor(initial, today);
+  const [preset, setPreset] = useState<ReportWindowPreset>(initialDates ? 'custom' : 'last_7_days');
   const [customFrom, setCustomFrom] = useState(initialDates?.from ?? '');
   const [customTo, setCustomTo] = useState(initialDates?.to ?? '');
   const [formats, setFormats] = useState<Record<ReportFormat, boolean>>(() => (initial ? { ...initial.formats } : { pdf: true, xlsx: true }));

@@ -3,7 +3,7 @@ import { ChartColumn } from 'lucide-react';
 import type { AgencyTeamTrend } from '@magick-agency/contracts/api/agency/team-performance';
 import { formatCount } from '../../../utils/format/number';
 import { formatReportDay } from '../../../utils/reports/reportCopy';
-import { trendLine } from '../../../utils/agency/team/teamCopy';
+import { trendLine, trendSummary } from '../../../utils/agency/team/teamCopy';
 import { trendColumnsGeometry } from '../../../utils/agency/team/teamCharts';
 import { useChartWidth } from '../useChartWidth';
 import styles from './Team.module.css';
@@ -18,11 +18,7 @@ export function MainOutcomePerDayChart({ trend, label }: { trend: AgencyTeamTren
   const titleId = useId();
   const [ref, width] = useChartWidth(520);
   const g = trendColumnsGeometry({ width, trend });
-  const last = trend.dates.length > 0 ? trend.dates[trend.dates.length - 1]! : null;
-  const summary =
-    trend.dates.length === 0
-      ? `${label} per day: no working days yet.`
-      : `${label} per day over ${trend.dates.length === 1 ? 'one working day' : `${trend.dates.length} working days`}, from ${formatCount(Math.min(...trend.counts))} to ${formatCount(Math.max(...trend.counts))}; ${formatCount(trend.counts[trend.counts.length - 1] ?? 0)} on ${formatReportDay(last!, false)}.`;
+  const summary = trendSummary(label, trend);
   return (
     <section className={styles.card} aria-labelledby={titleId} data-testid="team-trend">
       <div className={styles.cardHead}>

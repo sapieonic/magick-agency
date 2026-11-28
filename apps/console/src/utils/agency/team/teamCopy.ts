@@ -15,6 +15,7 @@ import {
   type AgencyTeamWrapupAllowed,
 } from '@magick-agency/contracts/api/agency/team-performance';
 import { formatCount, plural } from '../../format/number';
+import { localDay } from '../../format/date';
 import { statClock } from '../../format/duration';
 import { clockTime } from '../stationFormat';
 import { formatReportDay } from '../../reports/reportCopy';
@@ -124,8 +125,7 @@ export function mainLine(totals: Pick<AgencyTeamTotals, 'main' | 'other_conversa
     return `Too few calls for a rate (${formatCount(main.denominator ?? 0)}; needs ${formatCount(floor)})`;
   }
   if (totals.other_conversations === 0) return `${percent(main.value)} of calls handled`;
-  const other = totals.other_conversations;
-  return `${percent(main.value)} ${rateWords(label)} · counts ${formatCount(other)} soft-phone and inbound ${other === 1 ? 'call' : 'calls'}`;
+  return `${percent(main.value)} ${rateWords(label)} · counts ${plural(totals.other_conversations, 'soft-phone and inbound call')}`;
 }
 
 /** The allowed time to choose an outcome: "30 s allowed", "no time limit", "allowed time differs by campaign". */
@@ -158,12 +158,12 @@ export interface TeamAnswerReach {
  */
 export function callbacksTile(callbacks: AgencyTeamCallbacks, reach: TeamAnswerReach): { value: string; of: string | null; line: string } {
   if (callbacks.due === 0) {
-    if (!reach.runsToNow) return { value: '—', of: null, line: 'No call-backs were due' };
-    return {
-      value: '—',
-      of: null,
-      line: callbacks.upcoming > 0 ? `No call-backs due yet · ${formatCount(callbacks.upcoming)} later today` : 'No call-backs due yet',
-    };
+    const line = !reach.runsToNow
+      ? 'No call-backs were due'
+      : callbacks.upcoming > 0
+        ? `No call-backs due yet · ${formatCount(callbacks.upcoming)} later today`
+        : 'No call-backs due yet';
+    return { value: '—', of: null, line };
   }
   return {
     value: formatCount(callbacks.on_time),
@@ -224,6 +224,18 @@ export function trendLine(trend: Pick<AgencyTeamTrend, 'span' | 'dates'>): strin
   return `whole team, ${plural(days, 'working day')}`;
 }
 
+/**
+ * The per-day chart's summary for a screen reader: "Will pay per day over 5 working days, from 3
+ * to 41; 12 on 20 Nov.", or "Will pay per day: no working days yet."
+ */
+export function trendSummary(label: string, trend: Pick<AgencyTeamTrend, 'dates' | 'counts'>): string {
+  const lastDay = trend.dates.at(-1);
+  if (lastDay === undefined) return `${label} per day: no working days yet.`;
+  const days = trend.dates.length === 1 ? 'one working day' : plural(trend.dates.length, 'working day');
+  const range = `from ${formatCount(Math.min(...trend.counts))} to ${formatCount(Math.max(...trend.counts))}`;
+  return `${label} per day over ${days}, ${range}; ${formatCount(trend.counts.at(-1) ?? 0)} on ${formatReportDay(lastDay, false)}.`;
+}
+
 /** "What happened on today’s 360 calls", or "What happened on 2,120 calls" for any other period. */
 export function outcomesTitle(preset: TeamWindowPreset, calls: number): string {
   return preset === 'today' ? `What happened on today’s ${formatCount(calls)} calls` : `What happened on ${formatCount(calls)} calls`;
@@ -235,14 +247,10 @@ export function outcomeLabel(bar: { code: string | null; label: string | null })
   return bar.label?.trim() || bar.code;
 }
 
-/** A local date (`YYYY-MM-DD`) on the reader's clock, the clock `clockTime` reads. */
-function localDay(at: Date): string {
-  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
-}
-
 /**
  * How fresh the outcome bars are (TP13), a line of its own: "Dialler calls only · as of 2:10 PM",
- * with the day when that is not today ("as of 20 Nov, 11:58 PM").
+ * with the day when that is not today ("as of 20 Nov, 11:58 PM"), both on the reader's clock, the
+ * one `clockTime` reads.
  */
 export function rollupLine(rollupAsOf: string | null, now: Date = new Date()): string {
   if (!rollupAsOf) return 'Dialler calls only';
@@ -286,8 +294,14 @@ export const ONE_COLOUR_NOTE = 'Bars share one colour on purpose: this compares 
 
 export type TeamBadgeTone = 'best' | 'watch';
 
+/** A row's Worth a look badge. */
+export interface TeamBadge {
+  label: string;
+  tone: TeamBadgeTone;
+}
+
 /** A finding as a row's badge: "Stands out", "Low will-pay rate", "Slow to choose outcome". */
-export function findingBadge(finding: Pick<AgencyCompareFinding, 'code' | 'metric'>, label: string): { label: string; tone: TeamBadgeTone } | null {
+export function findingBadge(finding: Pick<AgencyCompareFinding, 'code' | 'metric'>, label: string): TeamBadge | null {
   if (finding.code === 'stands_out') return { label: 'Stands out', tone: 'best' };
   if (finding.code !== 'clear_gap') return null;
   if (finding.metric === 'choose_time') return { label: 'Slow to choose outcome', tone: 'watch' };

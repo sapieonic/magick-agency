@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type CSSProperties } from 'react';
 import { Check, TriangleAlert, Users } from 'lucide-react';
 import { COMPARE_PAGE_MAX_AGENTS } from '@magick-agency/contracts/api/agency/compare';
 import type { AgencyTeamAgentRow, AgencyTeamPerformance } from '@magick-agency/contracts/api/agency/team-performance';
@@ -19,9 +19,10 @@ import {
   picksLine,
   rateLabel,
   withheldWords,
-  type TeamBadgeTone,
+  type TeamBadge,
 } from '../../../utils/agency/team/teamCopy';
-import { rowName, sortTeamRows } from '../../../utils/agency/team/teamSort';
+import { rated, sortTeamRows } from '../../../utils/agency/team/teamSort';
+import { agentDisplayName } from '../../../utils/agencyAgentFloor';
 import { inlineScale, inlineShare } from '../../../utils/agency/team/teamCharts';
 import type { TeamSort } from '../../../utils/agency/team/teamUrl';
 import styles from './Team.module.css';
@@ -62,23 +63,30 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
   const titleId = useId();
   const sortId = useId();
   const reasonId = useId();
-  const rows = sortTeamRows(data.agents, sort);
+  const rows = useMemo(() => sortTeamRows(data.agents, sort), [data.agents, sort]);
   const floor = mainFloor(data.main_outcome.kind);
-  const callsScale = inlineScale(rows.map((r) => r.calls_handled), data.medians.calls_handled);
-  const rateScale = inlineScale(rows.map((r) => (r.main.reportable ? r.main.value : null)), data.medians.main_rate);
-  const widths = figureWidths(rows);
+  const { callsScale, rateScale, widths } = useMemo(
+    () => ({
+      callsScale: inlineScale(data.agents.map((r) => r.calls_handled), data.medians.calls_handled),
+      rateScale: inlineScale(data.agents.map(rated), data.medians.main_rate),
+      widths: figureWidths(data.agents),
+    }),
+    [data.agents, data.medians],
+  );
   const [wrapRef, overflows] = useOverflowsSideways();
   const full = picks.length >= COMPARE_PAGE_MAX_AGENTS;
   // Agents are picked only within one campaign (TP18, CP8): with All campaigns there are no boxes.
   const canPick = canCompare && data.comparable;
   const reason = compareDisabledReason(data.comparable, picks.length);
-  const badges = new Map<string, Array<{ label: string; tone: TeamBadgeTone }>>();
-  if (data.comparable) {
+  const badges = useMemo(() => {
+    const byAgent = new Map<string, TeamBadge[]>();
+    if (!data.comparable) return byAgent;
     for (const f of data.findings) {
       const badge = findingBadge(f, label);
-      if (badge) badges.set(f.agent_user_id, [...(badges.get(f.agent_user_id) ?? []), badge]);
+      if (badge) byAgent.set(f.agent_user_id, [...(byAgent.get(f.agent_user_id) ?? []), badge]);
     }
-  }
+    return byAgent;
+  }, [data.comparable, data.findings, label]);
   const sorts: Array<{ id: TeamSort; label: string }> = [
     { id: 'rate', label: rateLabel(label) },
     { id: 'calls', label: 'Calls handled' },
@@ -174,6 +182,7 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
             {rows.map((row, i) => {
               const picked = picks.includes(row.agent_user_id);
               const rowBadges = badges.get(row.agent_user_id) ?? [];
+              const name = agentDisplayName(row);
               return (
                 <tr key={row.agent_user_id} role="row" data-picked={picked || undefined} data-testid="team-row">
                   <th scope="row" role="rowheader" className={styles.agentCol}>
@@ -184,16 +193,16 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
                           className={styles.pickBox}
                           checked={picked}
                           disabled={!canPickNow || (!picked && full)}
-                          aria-label={pickLabel(rowName(row))}
+                          aria-label={pickLabel(name)}
                           onChange={() => onTogglePick(row.agent_user_id)}
                         />
                       ) : null}
                       <span className={styles.rank}>{i + 1}</span>
                       <span className={styles.avatar} aria-hidden="true">
-                        {initialsFor(rowName(row))}
+                        {initialsFor(name)}
                       </span>
-                      <span className={styles.agentName} title={rowName(row)}>
-                        {rowName(row)}
+                      <span className={styles.agentName} title={name}>
+                        {name}
                         {row.departed ? <span className={styles.left}> (left)</span> : null}
                       </span>
                     </span>
@@ -245,9 +254,9 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
 
 /**
  * Whether the node scrolls sideways: it scrolls (`overflow-x` neither `visible` nor `clip`) and is
- * wider inside than it shows (`scrollWidth > clientWidth`). Measured when it mounts, when it or its
- * content changes size (`ResizeObserver`, where there is one) and when the window is resized (which
- * is also when the phone layout comes or goes).
+ * wider inside than it shows (`scrollWidth > clientWidth`). Measured when it mounts and when it or
+ * its content changes size (`ResizeObserver`; the phone layout coming or going resizes both), or,
+ * without one, when the window is resized.
  */
 function useOverflowsSideways(): [(node: HTMLDivElement | null) => void, boolean] {
   const [node, setNode] = useState<HTMLDivElement | null>(null);
@@ -262,14 +271,14 @@ function useOverflowsSideways(): [(node: HTMLDivElement | null) => void, boolean
       setOverflows(scrolls && node.scrollWidth > node.clientWidth + 1);
     };
     check();
-    window.addEventListener('resize', check);
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(check);
-    observer?.observe(node);
-    if (node.firstElementChild) observer?.observe(node.firstElementChild);
-    return () => {
-      window.removeEventListener('resize', check);
-      observer?.disconnect();
-    };
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', check);
+      return () => window.removeEventListener('resize', check);
+    }
+    const observer = new ResizeObserver(check);
+    observer.observe(node);
+    if (node.firstElementChild) observer.observe(node.firstElementChild);
+    return () => observer.disconnect();
   }, [node]);
   return [ref, overflows];
 }
@@ -283,7 +292,7 @@ function useOverflowsSideways(): [(node: HTMLDivElement | null) => void, boolean
  */
 function figureWidths(rows: readonly AgencyTeamAgentRow[]): CSSProperties {
   const longest = (texts: string[]) => texts.reduce((n, t) => Math.max(n, t.length), 0);
-  const rates = rows.filter((r) => r.main.reportable && r.main.value !== null).map((r) => percent(r.main.value!).slice(0, -1));
+  const rates = rows.map(rated).filter((v) => v !== null).map((v) => percent(v).slice(0, -1));
   return {
     '--team-calls-ch': `${longest(rows.map((r) => formatCount(r.calls_handled))) + 0.25}ch`,
     '--team-main-ch': `${longest(rows.map((r) => formatCount(r.main.numerator))) + 0.25}ch`,
@@ -293,20 +302,18 @@ function figureWidths(rows: readonly AgencyTeamAgentRow[]): CSSProperties {
 
 /** The main outcome: its count and rate, with a bar; under the floor, words and no bar. */
 function MainCell({ row, floor, scale, median }: { row: AgencyTeamAgentRow; floor: number; scale: number; median: number | null }) {
-  const { main } = row;
-  if (!main.reportable || main.value === null) {
-    return (
-      <span className={styles.figure}>
-        <span className={`${styles.num} ${styles.mainNum}`}>{formatCount(main.numerator)}</span>
-        <span className={styles.withheld}>{withheldWords(main, floor)}</span>
-      </span>
-    );
-  }
+  const value = rated(row);
   return (
     <span className={styles.figure}>
-      <span className={`${styles.num} ${styles.mainNum}`}>{formatCount(main.numerator)}</span>
-      <span className={styles.rate}>{percent(main.value)}</span>
-      <InlineBar share={inlineShare(main.value, scale)} median={median} />
+      <span className={`${styles.num} ${styles.mainNum}`}>{formatCount(row.main.numerator)}</span>
+      {value === null ? (
+        <span className={styles.withheld}>{withheldWords(row.main, floor)}</span>
+      ) : (
+        <>
+          <span className={styles.rate}>{percent(value)}</span>
+          <InlineBar share={inlineShare(value, scale)} median={median} />
+        </>
+      )}
     </span>
   );
 }
@@ -323,7 +330,7 @@ function InlineBar({ share, median }: { share: number | null; median: number | n
 }
 
 /** A row's badges; `badges` is empty unless the answer is comparable (the one place that rule is applied, above). */
-function WorthALook({ badges }: { badges: ReadonlyArray<{ label: string; tone: TeamBadgeTone }> }) {
+function WorthALook({ badges }: { badges: readonly TeamBadge[] }) {
   if (badges.length === 0) return <span className={styles.muted}>—</span>;
   return (
     <span className={styles.badges}>

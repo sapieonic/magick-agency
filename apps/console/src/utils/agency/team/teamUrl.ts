@@ -93,9 +93,7 @@ export function teamStateToParams(state: TeamUrlState): URLSearchParams {
 }
 
 /** The window's local dates given today in the zone; null for a custom window not yet complete. */
-export function teamWindowDates(state: Pick<TeamUrlState, 'window' | 'from' | 'to'>, today: string): { from: string; to: string } | null {
-  return windowDates(state, today);
-}
+export const teamWindowDates = windowDates;
 
 /** Why the window cannot be read, in words, or null when it can (the reports' rule, RP2). */
 export const teamWindowError = windowError;
@@ -106,7 +104,7 @@ export function windowHoldsToday(dates: { from: string; to: string } | null, tod
 }
 
 /** The longest window the page reads again on its own (§2 States): a week. */
-export const TEAM_AUTO_REFRESH_MAX_DAYS = 7;
+const TEAM_AUTO_REFRESH_MAX_DAYS = 7;
 
 /**
  * The page reads this window again on its own (every minute while shown, on return to the page):

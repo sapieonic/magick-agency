@@ -324,7 +324,10 @@ describe('the agents', () => {
     expect(within(section).queryAllByRole('region', { name: /^Agents · / })).toHaveLength(0);
   });
 
-  it('makes the table a tab stop only while it scrolls sideways, so a phone’s cards get none', async () => {
+  it.each([
+    ['a ResizeObserver reports', true],
+    ['the window is resized, without a ResizeObserver', false],
+  ])('makes the table a tab stop only while it scrolls sideways, so a phone’s cards get none (measured when %s)', async (_, withObserver) => {
     const size = { scrollWidth: 380, clientWidth: 380 };
     const names = ['scrollWidth', 'clientWidth'] as const;
     const before = names.map((name) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, name));
@@ -336,13 +339,35 @@ describe('the agents', () => {
         },
       });
     }
+    // The box or the table changing size, as a browser's ResizeObserver reports it; or no
+    // observer at all, and the window's resize instead.
+    const observed = new Set<() => void>();
+    vi.stubGlobal(
+      'ResizeObserver',
+      withObserver
+        ? class {
+            private readonly fire: () => void;
+            constructor(callback: () => void) {
+              this.fire = () => callback();
+            }
+            observe() {
+              observed.add(this.fire);
+            }
+            unobserve() {}
+            disconnect() {
+              observed.delete(this.fire);
+            }
+          }
+        : undefined,
+    );
     try {
       renderView(`?campaign=${CAMPAIGN}`);
       const region = within(await screen.findByTestId('team-agents')).getByRole('region', { name: 'Agents table' });
       expect(region.hasAttribute('tabindex')).toBe(false);
       const resize = () =>
         act(() => {
-          window.dispatchEvent(new Event('resize'));
+          if (withObserver) for (const fire of observed) fire();
+          else window.dispatchEvent(new Event('resize'));
         });
       // A wide screen: the box scrolls, and the table is wider than it.
       region.style.overflowX = 'auto';
@@ -360,6 +385,7 @@ describe('the agents', () => {
       resize();
       expect(region.hasAttribute('tabindex')).toBe(false);
     } finally {
+      vi.unstubAllGlobals();
       names.forEach((name, i) => {
         const own = before[i];
         if (own) Object.defineProperty(HTMLElement.prototype, name, own);

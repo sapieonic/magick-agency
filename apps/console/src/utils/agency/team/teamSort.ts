@@ -14,40 +14,45 @@ import type { TeamSort } from './teamUrl';
  * Ties go to the name, so the order never jumps between two reads of the same figures.
  */
 
-/** The name the table shows for a row (an id that no longer resolves stays marked as one). */
-export function rowName(row: Pick<AgencyTeamAgentRow, 'agent_user_id' | 'agent_name'>): string {
-  return agentDisplayName({ agent_user_id: row.agent_user_id, agent_name: row.agent_name });
-}
-
-function byName(a: AgencyTeamAgentRow, b: AgencyTeamAgentRow): number {
-  return rowName(a).localeCompare(rowName(b), 'en-IN') || a.agent_user_id.localeCompare(b.agent_user_id);
-}
-
-function rated(row: AgencyTeamAgentRow): number | null {
+/** A row's main-outcome rate when it clears the floor, else null (said in words, not ranked or drawn). */
+export function rated(row: AgencyTeamAgentRow): number | null {
   return row.main.reportable && row.main.value !== null ? row.main.value : null;
 }
 
-const COMPARATORS: Readonly<Record<TeamSort, (a: AgencyTeamAgentRow, b: AgencyTeamAgentRow) => number>> = {
-  rate: (a, b) => {
-    const ra = rated(a);
-    const rb = rated(b);
-    if (ra !== null && rb !== null) return rb - ra || b.calls_handled - a.calls_handled || byName(a, b);
-    if (ra !== null) return -1;
-    if (rb !== null) return 1;
-    return b.calls_handled - a.calls_handled || byName(a, b);
-  },
-  calls: (a, b) => b.calls_handled - a.calls_handled || byName(a, b),
-  shortest: (a, b) => {
-    const sa = a.avg_call_seconds;
-    const sb = b.avg_call_seconds;
-    if (sa !== null && sb !== null) return sa - sb || byName(a, b);
-    if (sa !== null) return -1;
-    if (sb !== null) return 1;
-    return byName(a, b);
-  },
+const collator = new Intl.Collator('en-IN');
+
+/** A row with the name the table shows for it, worked out once for the whole sort. */
+interface Named {
+  row: AgencyTeamAgentRow;
+  name: string;
+}
+
+function byName(a: Named, b: Named): number {
+  return collator.compare(a.name, b.name) || a.row.agent_user_id.localeCompare(b.row.agent_user_id);
+}
+
+function byCalls(a: Named, b: Named): number {
+  return b.row.calls_handled - a.row.calls_handled || byName(a, b);
+}
+
+/** Two values by `both` when each has one, one with a value before one without, else by `neither`. */
+function nullsLast(x: number | null, y: number | null, both: (x: number, y: number) => number, neither: () => number): number {
+  if (x !== null && y !== null) return both(x, y);
+  if (x !== null) return -1;
+  if (y !== null) return 1;
+  return neither();
+}
+
+const COMPARATORS: Readonly<Record<TeamSort, (a: Named, b: Named) => number>> = {
+  rate: (a, b) => nullsLast(rated(a.row), rated(b.row), (x, y) => y - x || byCalls(a, b), () => byCalls(a, b)),
+  calls: byCalls,
+  shortest: (a, b) => nullsLast(a.row.avg_call_seconds, b.row.avg_call_seconds, (x, y) => x - y || byName(a, b), () => byName(a, b)),
 };
 
 /** The rows in `sort`'s order, as a new array. */
 export function sortTeamRows(rows: readonly AgencyTeamAgentRow[], sort: TeamSort): AgencyTeamAgentRow[] {
-  return [...rows].sort(COMPARATORS[sort]);
+  return rows
+    .map((row): Named => ({ row, name: agentDisplayName(row) }))
+    .sort(COMPARATORS[sort])
+    .map((n) => n.row);
 }

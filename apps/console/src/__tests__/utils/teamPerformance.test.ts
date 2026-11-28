@@ -39,7 +39,8 @@ import {
   trendLine,
   withheldWords,
 } from '../../utils/agency/team/teamCopy';
-import { rowName, sortTeamRows } from '../../utils/agency/team/teamSort';
+import { sortTeamRows } from '../../utils/agency/team/teamSort';
+import { agentDisplayName } from '../../utils/agencyAgentFloor';
 import {
   dayLabel,
   inlineScale,
@@ -263,7 +264,7 @@ describe('the words (teamCopy)', () => {
 });
 
 describe('the table’s order (teamSort, TP16)', () => {
-  const names = (sort: 'rate' | 'calls' | 'shortest') => sortTeamRows(TEAM_ONE_CAMPAIGN.agents, sort).map(rowName);
+  const names = (sort: 'rate' | 'calls' | 'shortest') => sortTeamRows(TEAM_ONE_CAMPAIGN.agents, sort).map(agentDisplayName);
 
   it('by the rate: rows over the floor first, highest first; the rest by calls', () => {
     expect(names('rate')).toEqual([
@@ -284,7 +285,7 @@ describe('the table’s order (teamSort, TP16)', () => {
   it('by calls handled, most first; by shortest calls, a row with no calls last', () => {
     expect(names('calls').slice(0, 3)).toEqual(['Lakshmi P', 'Swapna K', 'Arjun T']);
     const rows = [...TEAM_ONE_CAMPAIGN.agents, { ...TEAM_ONE_CAMPAIGN.agents[0]!, agent_user_id: 'z', agent_name: 'Nobody', calls_handled: 0, avg_call_seconds: null }];
-    const shortest = sortTeamRows(rows, 'shortest').map(rowName);
+    const shortest = sortTeamRows(rows, 'shortest').map(agentDisplayName);
     expect(shortest[0]).toBe('Lakshmi P');
     expect(shortest.at(-1)).toBe('Nobody');
   });
@@ -348,7 +349,7 @@ describe('the chart geometry (teamCharts)', () => {
   it(`draws the first ${TEAM_OUTCOME_BARS_MAX} outcomes and folds the rest into Other outcomes (TP13)`, () => {
     const bars = outcomeBars(TEAM_ALL_CAMPAIGNS.outcomes);
     expect(bars).toHaveLength(TEAM_OUTCOME_BARS_MAX + 1);
-    expect(bars.at(-1)).toMatchObject({ label: 'Other outcomes', conversations: 12 + 6 + 4, other: true });
+    expect(bars.at(-1)).toMatchObject({ key: '…other', label: 'Other outcomes', conversations: 12 + 6 + 4 });
     expect(bars[0]!.share).toBe(100);
     expect(outcomeBars(TEAM_ONE_CAMPAIGN.outcomes).map((b) => b.label)).toEqual([
       'Will pay',

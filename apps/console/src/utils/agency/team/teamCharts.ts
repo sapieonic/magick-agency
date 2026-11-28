@@ -4,6 +4,8 @@ import { columnPath } from '../../../components/agency/AgentBucketChart';
 import { labelledDateIndexes } from '../compare/compareCharts';
 import { isoWeekday } from '../../reports/reportWindow';
 import { outcomeLabel } from './teamCopy';
+import { clampPercent } from '../../format/number';
+import { ISO_WEEKDAY_SHORT } from '../../format/weekdays';
 
 /**
  * Team performance's chart geometry (`docs/team-performance.md` §2 item 3): pure functions from
@@ -27,11 +29,9 @@ const TREND_RIGHT = 8;
 /** The widest a column is drawn; a wider band keeps the rest as air. */
 const COLUMN_MAX = 34;
 
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
-
 /** A working day under its column: "Tue 10". */
 export function dayLabel(day: string): string {
-  return `${WEEKDAYS[isoWeekday(day) - 1]} ${Number(day.slice(8, 10))}`;
+  return `${ISO_WEEKDAY_SHORT[isoWeekday(day) - 1]} ${Number(day.slice(8, 10))}`;
 }
 
 /** Steps the per-day axis may take, times a power of ten. */
@@ -42,6 +42,9 @@ const AXIS_STEPS = [1, 2, 2.5, 3, 4, 5] as const;
  * gaps between its lines, choosing the lowest top (fewer lines when two tops tie), so the tallest
  * column fills most of the plot: 105 → 0, 40, 80, 120; 98 → 0, 25, 50, 75, 100. A chart with
  * nothing to draw, or a peak of 1, still gets a top of 2 and whole-number lines.
+ *
+ * Not Compare's `niceCountMax`: it always draws four gaps and a top of at least 4, so a peak of
+ * 105 gets 120 in steps of 30 rather than 40, and a peak of 1 fills a quarter of the plot.
  */
 export function trendAxis(max: number): { top: number; step: number } {
   if (!(max > 2)) return { top: 2, step: 1 };
@@ -130,14 +133,13 @@ function round(n: number): number {
 // ─── What happened on the calls ─────────────────────────────────────────────
 
 export interface OutcomeBarRow {
+  /** The outcome's code ('∅' for none), or '…other' for the folded remainder (TP13). */
   key: string;
   label: string;
   icon: AgencyTileIcon | null;
   conversations: number;
   /** The bar's length as a share of the longest, 0–100. */
   share: number;
-  /** The folded remainder (TP13). */
-  other: boolean;
 }
 
 /**
@@ -152,7 +154,6 @@ export function outcomeBars(outcomes: readonly AgencyTeamOutcomeBar[], max: numb
     label: outcomeLabel(o),
     icon: o.icon,
     conversations: o.conversations,
-    other: false,
   }));
   if (rest.length > 0) {
     rows.push({
@@ -160,7 +161,6 @@ export function outcomeBars(outcomes: readonly AgencyTeamOutcomeBar[], max: numb
       label: 'Other outcomes',
       icon: null,
       conversations: rest.reduce((sum, o) => sum + o.conversations, 0),
-      other: true,
     });
   }
   const longest = Math.max(0, ...rows.map((r) => r.conversations));
@@ -172,7 +172,7 @@ export function outcomeBars(outcomes: readonly AgencyTeamOutcomeBar[], max: numb
 /** A value as a share (0–100) of the column's scale; null for a value that is not drawn. */
 export function inlineShare(value: number | null, scale: number): number | null {
   if (value === null || !Number.isFinite(value) || scale <= 0) return null;
-  return round(Math.min(100, Math.max(0, (value / scale) * 100)));
+  return round(clampPercent((value / scale) * 100));
 }
 
 /**
