@@ -2955,18 +2955,26 @@ the real route on a seeded database; the test counts are in the PR.
 | Server | `GET /proxy/agency/team-performance`; the read in the primary in one read-only snapshot under an 8 s budget, two reads per tenant and Compare's share of the pool per process, a 30 s cache; metrics `agency_team_performance_read_seconds`, `agency_team_performance_reads_refused_total`, with a Team performance row on the overview dashboard. No migration |
 | Console | The tab (Team performance, Analytics, Compare agents, Exports), its search entry, Download Excel (the existing campaign or account report with the page's dates), Compare picked (up to three rows into Compare agents); a window holding today and at most 7 days long read again every minute, quietly; a note when some campaigns in scope record no Will pay (TP8) |
 
-The tiles are the table's sums; the per-day chart and the outcome bars are the whole team's in
-scope (TP14). Reviewed by three independent reviewers on 2026-11-27 (server, console, docs) and
-their findings fixed: the main outcome and `rollup_as_of` from the campaigns worked in the window,
+The tiles are the table's sums; the per-day chart and the outcome bars are the whole team's in scope
+(TP14). Reviewed by three independent reviewers on 2026-11-27 (server, console, docs) and their
+findings fixed: the main outcome and `rollup_as_of` from the campaigns worked in the window,
 `mixed`, Worth a look with no cap in all, refreshing only short live windows and never after a
 refusal or a timeout, a failed refresh said calmly, the picks held to the answer on screen, the
-export dialog's dates held to its own today, the bars aligned. Not built: a team-performance report
-kind (TP19's later phase); clickable rows; daily pre-processing ("Not built" below).
-Not verified: the screens have been looked at in a harness against the page's own answers, not
-against a deployed server; the mobile app's `dart test` was not run (no change to what it reads).
-All campaigns over a whole month on a busy account reads at the 8 s budget; Manas kept the live
-read for now (2026-11-27), with daily pre-processing as the follow-up (`team-performance.md` §4,
-§7). Every TP ruling is decided ([`decisions.md`](decisions.md), "Team performance (TP)"). Turning it on and what to watch:
+export dialog's dates held to its own today, the bars aligned. Three fresh reviewers went over it
+again on 2026-11-28 and their findings are fixed too: the outcome footnote's bar counted per
+campaign before the bars merge (`main_outcome.bar_conversations`), `rollup_as_of` over the chart's
+range only, how far the figures run decided from the answer rather than the clock, the read once
+more after a short window's last day, the call-backs' and the stale note's words, a failed read's
+words held while it is asked again, the picks cleared when the question changes, the empty period's
+per-day chart, the table's tab stop only while it scrolls. Not built: a team-performance report kind
+(TP19's later phase); clickable rows; daily pre-processing ("Not built" below). Not verified: the
+screens have been looked at in a harness against the page's own answers, not against a deployed
+server; the mobile app's `dart test` was not run (the platform fixture it reads gains one flag key,
+which `FeatureFlags.fromJson` accepts). All campaigns over a whole month on a busy account reads at
+the 8 s budget; Manas kept the live read for now (2026-11-27), with daily pre-processing as the
+follow-up (`team-performance.md` §4, §7). Every TP ruling is decided
+([`decisions.md`](decisions.md), "Team performance (TP)"); TP8's and TP15's wording was amended in
+review on 2026-11-28, for Manas to confirm. Turning it on and what to watch:
 [`operations.md`](operations.md), "Team performance".
 
 ## Not built

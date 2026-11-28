@@ -30,15 +30,15 @@ all) changed in review after that, on 2026-11-28; Manas is to confirm them.
 | TP4 | **Will pay follows CP2 exactly**: promises recorded on every call type, by `dispositioned_at`, credited to the agent who took the call, over the dialler conversations plus that agent's soft-phone conversations and answered inbound calls. When those other calls are in the figure, the tile's line says so ("counts 12 soft-phone and inbound calls") | Decided (default accepted, Manas, 2026-11-27) |
 | TP5 | **The cohort is who dialled in the window**, the roster's rows for the scope (`rosterAttemptTotals`), with the roster route's membership filter keeping a departed member (`filterRowsByMembership`, kept); a departed agent is flagged and shown "(left)" | Decided (ratified by Manas 2026-11-27) |
 | TP6 | **Its own flag**, `agency_team_performance_enabled`: boolean, off by default, global, tenant and account, client-exposed. Separate from `agency_compare_enabled` and `agency_reports_enabled`, because it runs in the primary over the whole account's cohort with its own guards | Decided (default accepted, Manas, 2026-11-27) |
-| TP7 | **All campaigns by default; agents are compared only within one campaign** (CP8). With All campaigns the page shows every figure and no badges, with the note "Choose one campaign to see who's worth a look"; with one campaign, findings mark rows. `comparable` on the answer is the rule | Decided (default accepted, Manas, 2026-11-27) |
-| TP8 | **The main outcome is the Live floor's rule.** If any campaign in scope has a catalog entry with `requires_promise` (its current catalog, or the default when it stores none: `effectiveCatalog`), the main outcome is promises (`promises_rate`); otherwise successes (`success_rate`, gated by `success_rate_reportable`). The campaigns that decide are those worked in the window (dialler conversations in the rollup, or promises recorded), and the whole scope only when none was: an idle or merely live promise campaign never makes a day of success-only calls promises (build, review fix S2). A mixed scope is promises, `main_outcome.mixed` is true when a campaign with dialler conversations in the window records no promises, and the page says so once, under the agents' heading, in the label's words: "Some campaigns here don’t record Will pay; their calls still count in the will-pay rate." (built, review fix C14). The server sends the label only when the counted codes carry exactly one distinct catalog label; otherwise the console writes "Will pay" or "Successes". Columns and the sort pill read "{label} rate" | Decided (default accepted, Manas, 2026-11-27); amended in review 2026-11-28 (Manas to confirm) |
+| TP7 | **All campaigns by default; agents are compared only within one campaign** (CP8). With All campaigns the page shows every figure and no badges, with the note "Choose one campaign to see who’s worth a look", or "Choose one campaign to see who’s worth a look and to compare agents." where Compare picked is offered (TP18); with one campaign, findings mark rows. `comparable` on the answer is the rule | Decided (default accepted, Manas, 2026-11-27) |
+| TP8 | **The main outcome is the Live floor's rule.** If any campaign in scope has a catalog entry with `requires_promise` (its current catalog, or the default when it stores none: `effectiveCatalog`), the main outcome is promises (`promises_rate`); otherwise successes (`success_rate`, gated by `success_rate_reportable`). The campaigns that decide are those worked in the window (dialler conversations in the rollup, or promises recorded), and the whole scope only when none was: an idle or merely live promise campaign never makes a day of success-only calls promises. A mixed scope is promises, `main_outcome.mixed` is true when a campaign with dialler conversations in the window records no promises, and the page says so once, under the agents' heading, in the label's words: "Some campaigns here don’t record Will pay; their calls still count in the will-pay rate." The server sends the label only when the counted codes carry exactly one distinct catalog label; otherwise the console writes "Will pay" or "Successes". Columns and the sort pill read "{label} rate" | Decided (default accepted, Manas, 2026-11-27); amended in review 2026-11-28 (Manas to confirm) |
 | TP9 | **"Stands out", not "Top performer"** (CP4: findings are for coaching, not appraisal) | Decided (default accepted, Manas, 2026-11-27) |
 | TP10 | **Call-backs on time counts dialler-booked call-backs only**, in IN4's classes, for call-backs booked by cohort agents whose booked time falls in the window | Decided (default accepted, Manas, 2026-11-27) |
-| TP11 | **Whole local days.** The window is local dates, both ends inclusive, under the reports' rule (`reportWindowProblem`: at most 30 days or exactly one calendar month, ending no later than today). A window that holds today runs to now, and the page says "Today, up to 2:15 PM". No custom time of day | Decided (default accepted, Manas, 2026-11-27) |
+| TP11 | **Whole local days.** The window is local dates, both ends inclusive, under the reports' rule (`reportWindowProblem`: at most 30 days or exactly one calendar month, ending no later than today). A window that holds today runs to now, and the page says "Today, up to 2:15 PM" (§2: decided from the answer's `as_of`). No custom time of day | Decided (default accepted, Manas, 2026-11-27) |
 | TP12 | **The per-day chart shows working days.** A working day is a local day with at least one dialler conversation in scope or a count that is not zero; a day off is left out, not drawn as 0. A window of fewer than 7 local days shows the last 7 working days ending at its last day, looking back at most 14 days; a longer window shows every working day of it. One colour; the last bar labelled | Decided (ratified by Manas 2026-11-27) |
-| TP13 | **"What happened on the calls" is dialler conversations only**, from the Insights rollup (`agency_insights_rollup_codes`), labelled from each campaign's catalog, and says how fresh the rollup is (`rollup_as_of`). The 7 largest outcomes are drawn one by one, the rest as "Other outcomes"; a null code and `no_disposition` are "No outcome chosen". The footnote that the bar and the main tile count differently is shown only when they differ | Decided (default accepted, Manas, 2026-11-27) |
+| TP13 | **"What happened on the calls" is dialler conversations only**, from the Insights rollup (`agency_insights_rollup_codes`), labelled from each campaign's catalog, and says how fresh the rollup is (`rollup_as_of`). The 7 largest outcomes are drawn one by one, the rest as "Other outcomes"; a null code and `no_disposition` are "No outcome chosen". The footnote that the bar and the main tile count differently is shown only when they differ (the bar's count: `main_outcome.bar_conversations`, §5) | Decided (default accepted, Manas, 2026-11-27) |
 | TP14 | **Soft-phone-only and inbound-only agents are not rows, and the tiles are the rows' sums.** An agent with no dialler call in the window has no row and is in no tile, so the tiles and the table always agree. The per-day chart and What happened on the calls are the whole team's in the scope, whoever took the calls (the page labels them "whole team" and "Dialler calls only"): the chart's promises per day count such an agent's promises too, so over the window it can pass the Will pay tile by those. Settled at D (2026-11-27): the first wording put their promises in the team's Will pay through nobody's row, which the contract's sums (`AgencyTeamTotals`) never did; the build keeps the sums | Decided (ratified by Manas 2026-11-27; wording settled at D and ratified) |
-| TP15 | **Worth a look is Compare's findings over the whole cohort**: `compareFindings` on the main rate and `choose_time`, every row picked with no cap in all (`max: Infinity`: Compare's 5 in all is for its three picks and would drop a large team's gaps and crowd out its praise; Compare's 3 per agent holds), keeping `stands_out` and `clear_gap` only (no `too_few_calls`, no `not_clear`, no breaks). Words: "Stands out"; a gap on the rate "Low {label} rate"; on the time to choose "Slow to choose outcome" | Decided (ratified by Manas 2026-11-27); amended in review 2026-11-28 (Manas to confirm) |
+| TP15 | **Worth a look is Compare's findings over the whole cohort**: `compareFindings` on the main rate and `choose_time`, every row picked with no cap in all (`max: Infinity`: Compare's 5 in all is for its three picks and would drop a large team's gaps and crowd out its praise; Compare's 3 per agent holds), keeping `stands_out` and `clear_gap` only (no `too_few_calls`, no `not_clear`, no breaks). Words: "Stands out"; a gap on the rate "Low {rate}" ("Low will-pay rate", "Low success rate"); on the time to choose "Slow to choose outcome" | Decided (ratified by Manas 2026-11-27); amended in review 2026-11-28 (Manas to confirm) |
 | TP16 | **The table is sorted in the browser**: by "{label} rate" (reportable rows first, highest first), Calls handled (most first) or Shortest calls (average call, shortest first, empty last). The rank is the position. Rows are not clickable in v1 | Decided (default accepted, Manas, 2026-11-27) |
 | TP17 | **The server sends data, the console writes words** (CP12, AS15): codes, counts, fractions, labels from the campaigns' own catalogs. Every sentence on the page is the console's, in simple Indian English | Decided (ratified by Manas 2026-11-27) |
 | TP18 | **Pick up to 3 rows and Compare picked** (CP1, `COMPARE_PAGE_MAX_AGENTS`): opens Compare agents with the campaign, the window and the picks. Shown only with `agency_compare_enabled` on; with All campaigns it is disabled and says why. Picks are not in the URL and clear when a filter changes | Decided (ratified by Manas 2026-11-27) |
@@ -51,54 +51,84 @@ Top to bottom:
 
 1. **Filters in one row:** When (Today, This week, Last 7 days, Last 30 days, Custom, Compare's
    presets), Campaign ("All campaigns" first, then the account's campaigns), and the line
-   "Everything below follows these two filters." **Download Excel** at the right of the header.
+   "Everything below follows these two filters." Beside them, what the figures cover: "Today, up
+   to 2:15 PM" when the answer runs to now, else the period alone (a custom window read after it
+   ended: "15 Nov to 17 Nov"). Whether it runs to now is the answer's, not the
+   clock's (TP11): its `as_of` falls on a day of its window, in its zone (`answerRunsToNow`), so
+   figures read before midnight still say how far they run after it. **Download Excel** at the
+   right of the header (TP19; with one campaign, in that campaign's zone, an archived campaign's
+   too).
 2. **Five tiles:** Calls handled ("by N agents"), the main outcome ("27% of calls handled", or "26%
    will-pay rate · counts 12 soft-phone and inbound calls" when such calls are in it), Average call
    ("min:sec of talking"), Time to choose outcome ("30 s allowed", "no time limit" or "allowed time
-   differs by campaign"), Call-backs on time ("due so far today" when the window holds now, else
-   "due in this period"; "No call-backs due yet" when none is due).
-3. **The main outcome per working day** (TP12) beside **What happened on the calls** (TP13).
+   differs by campaign"), Call-backs on time, worded by how far the answer runs: "due so far today"
+   (one day, still running), "due so far" (a longer window holding today), "due in this period" (a
+   window that has ended); with none due, "No call-backs due yet" while it runs ("No call-backs due
+   yet · 3 later today" when some are booked for later) and "No call-backs were due" once it has
+   ended.
+3. **The main outcome per working day** (TP12) beside **What happened on the calls** (TP13), whose
+   line says how fresh the bars are: "Dialler calls only · as of 2:10 PM", or "Dialler calls only ·
+   as of 20 Nov, 11:58 PM" when the rollup's last change is not today.
 4. **The agents:** one row per cohort agent: Agent (initials, name, "(left)"), Calls handled with
    the team median's tick, the main outcome's count, rate and bar ("Too few calls (12; needs 20)"
    under the floor, no bar), Average call, Choose outcome, Break (minutes), Worth a look (TP15).
    Sort pills (TP16) and pick boxes ("Pick {name} to compare", "N of 3 picked", TP18) above it;
-   with All campaigns, "Choose one campaign to see who’s worth a look" (TP7); with a mixed scope,
-   the line of TP8.
+   with All campaigns, "Choose one campaign to see who’s worth a look." (TP7), or "Choose one
+   campaign to see who’s worth a look and to compare agents." where Compare picked is offered; with
+   a mixed scope, the line of TP8.
 
 States: skeleton tiles on the first load, then the last answer kept while a new one loads
-("Updating…"); no calls in the period: "No calls in this period", offering Last 7 days; a failed
-read: the error's words, with Try again only for a failure that can clear by itself (busy, timed
-out, 5xx, the network), Compare's retry rule; `503 team_timed_out`: "Too much to read at once. Try
-a shorter period." While the rows on screen are not the answer to the filters above (a new filter
-loading, or after its read failed: "These are the last figures that loaded, for 11 Nov to 17 Nov,
-not for the filters above."), the pick boxes and Compare picked are disabled, so Compare never
-opens on the new window with the old window's agents (TP18).
+("Updating…"). No calls in the period: "No calls in this period", with the per-day chart still drawn
+when the server sends earlier working days (TP12, TP14: a window holding today with nobody dialled
+yet shows the days before it), and "Show the last 7 days" offered only for a window shorter than
+that. A failed read: the error's words, with Try again only for a failure that can clear by itself
+(busy, timed out, 5xx, the network), Compare's retry rule; `503 team_timed_out`: "Too much to read
+at once. Try a shorter period." The words are held while the same question is asked again, so they
+do not blink away and back with each try. Over the last figures kept after a new filter's read
+failed, a note says what they are for: "These are the last figures that loaded, for 11 Nov to 17
+Nov, not for the filters above.", with their campaign too when it is not the one chosen ("…, for Nov
+dues, 11 Nov to 17 Nov, …", "…, for all campaigns, 11 Nov to 17 Nov, …", or "…, for another
+campaign, …" when its name is not known). While the rows on screen are not the answer to the filters
+above (a new filter loading, or after its read failed), the pick boxes and Compare picked are
+disabled, so Compare never opens on the new window with the old window's agents (TP18). The picks
+clear whenever the question (its dates and campaign) changes, a preset's dates moving at midnight
+included; the sort is not part of the question.
 
 Reading again on its own: only a window that holds today **and** spans at most 7 local days
 (`windowAutoRefreshes`: Today, This week, Last 7 days, or a custom window that short ending today)
-is read again every 60 s while the page is visible and on return to the page. At local midnight
-only a custom window is read again: a preset's dates move with the day, so its question changes
-and is read anew. Last 30 days and any longer custom window, the heavy read (§4), are read once
-per question. These reads are quiet (no "Updating…"). A failed one keeps the figures up with a
-calm line, not an alert: "Couldn’t refresh. Showing figures up to 8:45 AM."; the next tick tries
-again when the failure can clear by itself (busy, 5xx, the network). After a timeout, or a refusal
-that would only repeat (404, 400, 403, `feature_disabled`), nothing is read on its own until the
-filters change or the reader presses Try again (offered on that line after a timeout).
+is read again every 60 s while the page is visible and on return to the page. Once the page's today
+passes the end of a window of at most 7 days whose answer still runs to now
+(`answerAwaitsFinalRead`), that question is read once more, so its last day is shown whole: once per
+question while the page is open, however the page learns that the day has turned. A preset never
+needs this: its dates move with the day, so its question changes and is read anew. Last 30 days and
+any longer custom window, the heavy read (§4), are read once per question; one read while it held
+today keeps saying "…, up to 2:15 PM" after the day turns. These reads are quiet (no "Updating…"). A
+failed one keeps the figures up with a calm line, not an alert, held while the next try is on its
+way: "Couldn’t refresh. Showing figures up to 8:45 AM."; the next tick tries again when the failure
+can clear by itself (busy, 5xx, the network). After a timeout, or a refusal that would only repeat
+(404, 400, 403, `feature_disabled`), nothing is read on its own until the filters change. The calm
+line offers Try again, for a failure that can clear, whenever nothing else would read again: after a
+timeout, or when the window is not read again on its own (the read after a window's last day).
 
 On a wide screen the tiles wrap (`repeat(auto-fit, minmax(160px, 1fr))`) and the table scrolls
-sideways inside its card with the Agent column held. The two charts stack below about 900 px.
-Below about 640 px the tiles go two to a row with an odd last one across both, the inline bars
-hide, the header's actions wrap, and each agent is a card made from the same table (CSS only): the
-pick box, rank and name, its badges, then the figures three to a row, each under its column's
-name. The table keeps its roles, so a screen reader still reads a table with its column heads.
+sideways inside its card with the Agent column held; the scrolling box is a tab stop (so a keyboard
+can scroll it) only while it is wider than its card, measured again on a resize. The two charts
+stack below about 900 px. Below about 640 px the tiles go two to a row with an odd last one across
+both, the inline bars hide, the header's actions wrap, and each agent is a card made from the same
+table (CSS only): the pick box, rank and name, its badges, then the figures three to a row, each
+under its column's name. The table keeps its roles, so a screen reader still reads a table with its
+column heads; as nothing scrolls there, the cards take no tab stop.
 
 The per-day chart's axis tops out just above its tallest column (`trendAxis`: a whole-number step
 of 1, 2, 2.5, 3, 4 or 5 × 10ⁿ, three or four gaps), not on `niceCeiling`'s coarser tops, which
-left a peak of 105 under an axis of 200. When the main outcome's bar and its tile differ, the
-footnote gives the likeliest reason in one line: "The tile also counts Will pay on soft-phone and
-inbound calls (98 vs 96 here)." when such calls are in the tile; else, for promises, that the tile
-counts a promise on the day it was given and the bars a call on the day it was made; for
-successes, that the bars are a few minutes behind the tile.
+left a peak of 105 under an axis of 200. When the main outcome's bar and its tile differ (the bar's
+count is `main_outcome.bar_conversations`, each campaign's own main codes counted before the bars
+merge campaigns by code, so a code that is the main outcome in one campaign and a plain one in
+another is counted only where it is the main one), the footnote gives the likeliest reason in one
+line: "The tile also counts Will pay on soft-phone and inbound calls (98 vs 96 here)." when such
+calls are in the tile; else, for promises, that the tile counts a promise on the day it was given
+and the bars a call on the day it was made; for successes, that the bars are a few minutes behind
+the tile.
 
 ## 3. Definitions
 
@@ -108,14 +138,14 @@ client; "Compare" names the Compare metric whose number it is (`COMPARE_BUILTIN_
 
 | Element | Source | Notes |
 |---|---|---|
-| Filters | Local `from`/`to` and the browser's `timezone` (Compare's model, TP11); campaigns from `listAgencyCampaigns` | "Today, up to 2:15 PM" from `as_of` |
+| Filters | Local `from`/`to` and the browser's `timezone` (Compare's model, TP11); campaigns from `listAgencyCampaigns` | "Today, up to 2:15 PM" when `as_of` falls on a day of the window, in its zone (`answerRunsToNow`, TP11) |
 | Calls handled, "by N agents" | Σ roster `connected` (`CONVERSATION_ATTEMPT_SQL`; Compare's `calls_handled`); N = the rows | |
 | Main outcome and its line | Σ promises or Σ successes (TP8); the pooled rate Σ numerator ÷ Σ denominator over every row, a row whose own rate is withheld (`counts_disagree`) included: the tile is the rows' sums (TP14), where Compare's pooled figure leaves such a row out. "27% of calls handled" when `other_conversations` is 0; else the rate with "counts N soft-phone and inbound calls" | Promises: Compare's `promises_rate`, denominator roster `connected` + soft-phone connected (`SOFTPHONE_CONNECTED_SQL`) + inbound answered. Successes: Compare's `success_rate` |
 | Average call | Σ `talk_seconds` ÷ Σ `connected` | "min:sec of talking" |
 | Time to choose outcome | Σ `wrapup_seconds` ÷ Σ `measured_wrapups` (`MEASURED_WRAPUP_ATTEMPT_SQL`; Compare's `choose_time`). Allowed: the campaigns' `wrapup_seconds` (default 30) over those with calls: one value, its seconds; 0, no time limit; several, "differs by campaign" | |
-| Call-backs on time | IN4's classes (`CALLBACK_BOOKING_COLUMNS_SQL`, `callbackClassSql`, as `COMPARE_CALLBACKS_SQL`) for call-backs booked by cohort agents with `callback_at` in the window. Due = on time + late + missed + pending due; on time within `AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES` (15) | Dialler-booked only (TP10) |
+| Call-backs on time | IN4's classes (`CALLBACK_BOOKING_COLUMNS_SQL`, `callbackClassSql`, as `COMPARE_CALLBACKS_SQL`) for call-backs booked by cohort agents with `callback_at` in the window. Due = on time + late + missed + pending due; on time within `AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES` (15) | Dialler-booked only (TP10); its line by how far the answer runs (§2) |
 | Main outcome per day | Promises: the team's promises per local day of `dispositioned_at`. Successes: the rollup's conversations per local day on the success codes. Working days and span as TP12 | |
-| What happened on the calls | `agency_insights_rollup_codes`, Σ by campaign and code over the scope; label and `icon` from each campaign's `effectiveCatalog`; a label clash goes to the campaign with most conversations on that code | Dialler only; `rollup_as_of` shown (TP13): the newest rollup change of the campaigns with conversations in the window, over the buckets of the chart's range (the window inside it), so an idle campaign or an old bucket never dates it; null with none |
+| What happened on the calls | `agency_insights_rollup_codes`, Σ by campaign and code over the scope; label and `icon` from each campaign's `effectiveCatalog`; a label clash goes to the campaign with most conversations on that code; `main_outcome.bar_conversations`, the conversations on a main code of their own campaign, summed before the merge (the footnote's bar) | Dialler only; `rollup_as_of` shown (TP13): the newest rollup change of the campaigns with conversations in the window, over the buckets of the chart's range (the window inside it), so an idle campaign or an old bucket never dates it; null with none |
 | Table: Calls handled, median tick | The row's `connected`; median by `cohortPercentiles` (`@magick-agency/domain/agent-compare/percentiles`) | |
 | Table: main outcome | The row's figure by the domain's `compareValue` (floor 20, Wilson interval); median over the reportable rows | Under the floor: "Too few calls (12; needs 20)", no bar |
 | Table: Avg call | `talk_seconds` ÷ `connected` | |
@@ -207,20 +237,24 @@ parallel worker), and the whole read under its 8 s budget, in Asia/Kolkata:
 | 31 days | one campaign | 2.8–3.1 s | 0.96 s | 2.83 s | 0.05 s, 0.06 s | 0.02 s, 0.02 s | 0.12 s |
 | 31 days | All campaigns | **7.7 s, or `503 team_timed_out` at 7.8 s** | 3.67 s | **5.68 s** | 0.05 s, 0.12 s | 0.01 s, 0.02 s | 0.23 s |
 
-(The scope's campaigns: under 0.02 s everywhere. The campaigns with promises in the window, added
-after the measurement by the review (TP8), was not timed here: it reads the promises statement's
-0050 indexes for the account (its plan held by the integration test), which take 0.02 s or less. "1 day" is a full busy day, as Today is at its end;
-its chart reads 14 days of rollup and promises.) The read is the roster's two statements: the whole
-cohort's occupancy (every state change of the window, its sort spilling to disk) and, across the
-account, the attempt aggregate without a campaign to narrow `idx_agency_attempts_billing` on. Every
-statement of the read's own is under a quarter of a second on 31 days, the promises on their 0050
-indexes (held by the integration test's plan). So on an account this busy, All campaigns over a
-whole month sits at the budget and answers `503 team_timed_out` about as often as not; a week, or
-one campaign for a month, answers well inside it. That is the roster screen's own cost for the same
-window (it has no timeout). **Decided (Manas, 2026-11-27): keep the live read as it is for
-now** (the console says "Too much to read at once. Try a shorter period."). The follow-up is to
-pre-process the figures once a day and serve the page from them, running the live read only when a
-supervisor asks for a refresh (§7).
+(Each statement's time is its own `EXPLAIN (ANALYZE, BUFFERS)`, whose timing overhead makes the
+statements sum past the whole read: read them as each statement's share of it. The scope's
+campaigns: under 0.02 s everywhere. The campaigns with promises in the window, added after the
+measurement by the first review (TP8), was not timed here: it reads the promises statement's 0050 indexes
+for the account (its plan held by the integration test), which take 0.02 s or less. Nor was the
+scope's campaigns statement timed again once the second review bounded its rollup dates to the
+chart's range: it now reads fewer buckets, on their primary key. "1 day" is a full busy day, as
+Today is at its end; its chart reads 14 days of rollup and promises.) The read is the roster's two
+statements: the whole cohort's occupancy (every state change of the window, its sort spilling to
+disk) and, across the account, the attempt aggregate without a campaign to narrow
+`idx_agency_attempts_billing` on. Every statement of the read's own is under a quarter of a second
+on 31 days, the promises on their 0050 indexes (held by the integration test's plan). So on an
+account this busy, All campaigns over a whole month sits at the budget and answers `503
+team_timed_out` about as often as not; a week, or one campaign for a month, answers well inside it.
+That is the roster screen's own cost for the same window (it has no timeout). **Decided (Manas,
+2026-11-27): keep the live read as it is for now** (the console says "Too much to read at once. Try
+a shorter period."). The follow-up is to pre-process the figures once a day and serve the page from
+them, running the live read only when a supervisor asks for a refresh (§7).
 
 ## 5. Contract
 
@@ -283,12 +317,15 @@ Refusals are `{ error, code, message }` (`AgencyTeamPerformanceErrorResponse`) w
 | C | The console tab (§2), its nav entry, search entry and Download Excel | **Built** (2026-11-27), against the contract and answers worked out by the shared domain rules (`__tests__/helpers/teamRecorded.ts`), held at D to answers recorded from the real route. The tabs read Team performance, Analytics, Compare agents, Exports: Analytics stays ahead of Compare agents so a supervisor with this flag off still lands on Analytics, not on Compare. The top bar's "Reports" crumb opens the first tab the reader may open, as the sidebar does, so a viewer's never points at this supervisor-only tab |
 | D | The docs around it (the doc map, modules, status, Compare's and Reports' docs, seams, operations) and a run end to end against the real route on a seeded database | **Built** (2026-11-27). Answers recorded from the real route over the integration test's seed (`__tests__/helpers/teamRouteRecorded.ts`); `__tests__/utils/teamAnswer.test.ts` holds them and the page tests' hand-made answers to the server's rules (the sums, the medians, Compare's values and findings, the trend's span). TP14 settled: the tiles are the rows' sums. The phone layout, the per-day axis and the outcome footnote polished (§2) |
 | Review | Three independent reviews of the built page (server, console, docs) | **Fixed** (2026-11-27). Server: the main outcome, `mixed` and `rollup_as_of` from the campaigns worked in the window (TP8, §3); Worth a look with no cap in all (TP15); the per-day chart's tenant and account bounds tested; the opt-in recorder (§8); the dashboard's Team performance row. Console: refreshing only short live windows and never after a refusal or a timeout, a failed refresh said calmly, the picks held to the answer on screen (§2 States); Download Excel's dates held to the dialog's today (`reports.md`); the bars aligned; "Success rate"; the mixed note (TP8) |
+| Review 2 | Three fresh reviews of the fixed page (server, console, docs) | **Fixed** (2026-11-28). Server: the outcome footnote's bar counted per campaign before the bars merge (`main_outcome.bar_conversations`, TP13); `rollup_as_of` over the chart's range only; the contract's comments on the worked-campaigns rule (TP8); TP8's and TP15's amended wording marked for Manas to confirm (§1). Console: how far the figures run decided from the answer (TP11), the call-backs' words, the read once more after a short window's last day, a failed read's words held, Try again wherever nothing else reads, the picks cleared when the question changes, the empty period's per-day chart, the stale note's campaign, the bars' "as of" with its day, the table's tab stop only while it scrolls, Download Excel in an archived campaign's zone (§2) |
 
 **Next (not built):** All campaigns over a whole month reads in about 7.7 s against the 8 s budget
 on a tenant as busy as the cost seed and answers `503 team_timed_out` about as often as not (§4
 "Cost, measured"). Manas ruled on 2026-11-27 to keep the live read for now and to follow with a
 daily job that pre-processes each day's figures per account and campaign; the page then reads
-those, and runs the live read only on a forced refresh.
+those, and runs the live read only on a forced refresh. A steady
+`agency_team_performance_reads_refused_total{reason="timed_out"}` (the overview dashboard's Team
+performance row, `operations.md` "Team performance") is the case for bringing it forward.
 
 ## 8. Tests
 
@@ -298,7 +335,8 @@ those, and runs the live read only on a forced refresh.
   server's `test/unit/feature-flags/registry.test.ts`, the super-admin catalog test and the flag
   service's integration test. Built.
 - Server (B): unit `test/unit/agency/team-performance/assemble.test.ts` (with the main outcome
-  decided by the campaigns worked, `mixed`, `rollup_as_of` over the campaigns with calls, and a team
+  decided by the campaigns worked, `mixed`, `rollup_as_of` over the campaigns with calls,
+  `bar_conversations` counting a code only on the campaigns where it is the main outcome, and a team
   of 30 with all 8 gaps and both praises named) and `read-guards.test.ts`;
   the route `test/unit/api/routes/proxy-agency-team-performance.routes.test.ts` (each refusal's
   order and body, the busy and timed-out bodies byte for byte); the route table and agent-reach
@@ -308,8 +346,9 @@ those, and runs the live read only on a forced refresh.
   calls at 23:50 and 00:10 in a zone other than UTC, the trend skipping a day off, a mixed scope,
   an agent with no row out of the tiles and in the chart (TP14), the main outcome decided by the
   campaigns worked in the window (an idle promise campaign beside a success-only day, then a
-  soft-phone promise on it: `mixed`), the per-day chart's tenant and account bounds, a legacy zone
-  echoed, the timeout's 503, and the plan of the promises statement using its index.
+  soft-phone promise on it: `mixed`), the per-day chart's tenant and account bounds, `rollup_as_of`
+  read only over the chart's range (a later change to an older bucket never dates the bars), a
+  legacy zone echoed, the timeout's 503, and the plan of the promises statement using its index.
   Mutation-checked: the comparable gate on findings, the working-day rule, the scope's tenant and
   account predicate, the tiles as the rows' sums (TP14), the cap in all on findings, the campaigns
   worked deciding the main outcome, `rollup_as_of` over the campaigns with calls, the per-day
@@ -321,18 +360,24 @@ those, and runs the live read only on a forced refresh.
   Re-record after a change to the answer's shape or its rules, and commit the file with it.
 - Console (C, D): the team utilities (`windowAutoRefreshes` and the copy included), the chart
   geometry (the per-day axis included), `pages/TeamPerformancePage.test.tsx` against the hand-made
-  answers (each figure cell named for the phone layout, the figure boxes' widths, which windows read
-  again on their own and after which failures, the quiet refresh failure's line, the picks disabled
-  while the figures are another question's, Download Excel held to the campaign zone's today, the
-  mixed note shown and hidden). The page tests fake `setInterval` for the 60 s timer and mock
-  `useAtLocalMidnight`, firing its timers on demand, for midnight. `utils/teamAnswer.test.ts` holds
-  those answers and the ones recorded from the real route (`helpers/teamRouteRecorded.ts`) to the
-  server's rules (Worth a look with no cap in all, `mixed` only with promises included);
-  `components/ExportReportDialog.test.tsx` (`initialDatesFor`); `navRouteGates.test.ts`,
-  `consoleSearch.test.ts`, `reportEntryPoints.test.tsx` (Download Excel's entry),
-  `api/teamPerformance.test.ts` (exactly the query the server validates) and a timezone test.
-  Mutation-checked: the nav gate, the three-pick limit, the comparable rule, the per-day axis, the
-  figures' names for the phone layout, the mixed note (shown, hidden) and `mixed` only with
+  answers (each figure cell named for the phone layout, the figure boxes' widths, the table a tab
+  stop only while it scrolls, which windows read again on their own and after which failures, the
+  read once more after a window's last day (once per question), how far the figures run decided from
+  the answer, the call-backs' words, the quiet refresh failure's line held and its Try again, a
+  failed read's words held while asked again, the picks disabled while the figures are another
+  question's and cleared when the question changes, the stale note naming its campaign, the empty
+  period still drawing earlier working days, Download Excel held to the campaign zone's today, the
+  mixed note shown and hidden). `components/OutcomeBreakdown.test.tsx`: the footnote compares the
+  tile with `main_outcome.bar_conversations`, never with the merged bars on the main codes. The page
+  tests fake `setInterval` for the 60 s timer and mock `useAtLocalMidnight`, firing its timers on
+  demand, for midnight. `utils/teamAnswer.test.ts` holds those answers and the ones recorded from
+  the real route (`helpers/teamRouteRecorded.ts`) to the server's rules (Worth a look with no cap in
+  all, `mixed` only with promises, `bar_conversations` at most the main bars and equal to them with
+  one campaign, included); `components/ExportReportDialog.test.tsx` (`initialDatesFor`);
+  `navRouteGates.test.ts`, `consoleSearch.test.ts`, `reportEntryPoints.test.tsx` (Download Excel's
+  entry), `api/teamPerformance.test.ts` (exactly the query the server validates) and a timezone
+  test. Mutation-checked: the nav gate, the three-pick limit, the comparable rule, the per-day axis,
+  the figures' names for the phone layout, the mixed note (shown, hidden) and `mixed` only with
   promises.
 - Mobile: the app does not read this route. The flag adds one key to the platform fixture's flag
   map (`fixtures/agent/platform.json`), which the app's `FeatureFlags.fromJson` reads whatever its
