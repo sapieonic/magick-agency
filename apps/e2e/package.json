@@ -1,6 +1,6 @@
 {
   "name": "@magick-agency/e2e",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "The golden end-to-end suite: Playwright over the whole stack with a simulated carrier, identity, mail, storage and AI. Run on demand, never in regular CI.",

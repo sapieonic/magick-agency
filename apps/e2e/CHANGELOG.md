@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1](https://github.com/sapieonic/magick-agency/compare/e2e-v0.2.0...e2e-v0.2.1) (2026-11-28)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @magick-agency/server bumped to 0.38.0
+
 ## [0.2.0](https://github.com/sapieonic/magick-agency/compare/e2e-v0.1.0...e2e-v0.2.0) (2026-11-27)
 
 

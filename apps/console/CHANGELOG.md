@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.37.0](https://github.com/sapieonic/magick-agency/compare/console-v0.36.0...console-v0.37.0) (2026-11-28)
+
+
+### Features
+
+* **console,server:** export the campaign call log with chosen analysis fields ([#136](https://github.com/sapieonic/magick-agency/issues/136)) ([33e4d15](https://github.com/sapieonic/magick-agency/commit/33e4d154ea580dcc6240e2d847023915dd3e340e))
+* **server,console,contracts,domain,observability:** Team performance on Reports, how the whole team did on one campaign or all (TP1–TP20) ([#138](https://github.com/sapieonic/magick-agency/issues/138)) ([0f40623](https://github.com/sapieonic/magick-agency/commit/0f40623bbe22c148633410f57c00e006ccfb5a48))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.33.0
+    * @magick-agency/domain bumped to 0.18.0
+
 ## [0.36.0](https://github.com/sapieonic/magick-agency/compare/console-v0.35.0...console-v0.36.0) (2026-11-26)
 
 
