@@ -3,7 +3,7 @@
  * doc comments, `packages/contracts/src/api/agency/team-performance.ts`). Pure: the route parses the
  * query with {@link teamPerformanceQuerySchema} (a query that fails it is the generic agency 400),
  * looks up the campaign, then asks {@link checkTeamWindow} which refusal, if any, applies, in the
- * contract's order. The zone and the window are Compare's rules (`checkCompareWindow`), answered
+ * contract's order. The zone and the window are Compare's rules (`checkReportWindow`), answered
  * with the team codes: one window rule for every Reports tab (TP11).
  *
  * The English fallback copy of every refusal is here too (`TEAM_ERROR_MESSAGES`): simple Indian
@@ -11,9 +11,9 @@
  */
 import { z } from 'zod';
 import { REPORT_MAX_WINDOW_DAYS } from '@magick-agency/contracts/api/agency/reports';
-import { teamWindowProblem, type AgencyTeamPerformanceErrorCode } from '@magick-agency/contracts/api/agency/team-performance';
+import type { AgencyTeamPerformanceErrorCode } from '@magick-agency/contracts/api/agency/team-performance';
 import { UUID_RE } from '../../utils/uuid.js';
-import { isRequestZone } from '../zone.js';
+import { checkReportWindow } from '../compare/validate.js';
 
 /** English fallback copy per code (AS15). The console shows its own words for a known code. */
 export const TEAM_ERROR_MESSAGES: Readonly<Record<AgencyTeamPerformanceErrorCode, string>> = Object.freeze({
@@ -37,21 +37,11 @@ export const teamPerformanceQuerySchema = z.object({
 });
 export type TeamPerformanceQuery = z.infer<typeof teamPerformanceQuerySchema>;
 
-/**
- * The zone and the window, in that order (`team_timezone_invalid`, `team_window_invalid`), as
- * `checkCompareWindow` checks them. The zone must pass `isRequestZone` (the reports' rule) AND be one
- * Postgres can cut days in: `databaseZone` is the name `postgresZoneName` found for it (its own, or a
- * legacy name's current one), null when it found none. The route asks Postgres only for a zone that
- * passes `isRequestZone`, and passes null for any other. `todayIn` is the local date of now in a zone.
- */
+/** {@link checkReportWindow} with the team codes (`team_timezone_invalid`, `team_window_invalid`). */
 export function checkTeamWindow(
   q: { from: string; to: string; timezone: string | undefined },
   databaseZone: string | null,
   todayIn: (zone: string) => string,
 ): { ok: true; timezone: string; databaseTimezone: string } | { ok: false; code: AgencyTeamPerformanceErrorCode } {
-  const tz = q.timezone;
-  if (!isRequestZone(tz) || databaseZone === null) return { ok: false, code: 'team_timezone_invalid' };
-  const problem = teamWindowProblem(q.from, q.to, todayIn(tz));
-  if (problem !== null) return { ok: false, code: problem };
-  return { ok: true, timezone: tz, databaseTimezone: databaseZone };
+  return checkReportWindow(q, databaseZone, todayIn, { zone: 'team_timezone_invalid', window: 'team_window_invalid' });
 }
