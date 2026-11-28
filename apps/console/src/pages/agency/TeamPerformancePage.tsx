@@ -24,14 +24,15 @@ import {
   teamStateFromParams,
   teamStateToParams,
   teamWindowDates,
+  answerRunsToNow,
   teamWindowError,
   togglePick,
   windowAutoRefreshes,
-  windowHoldsToday,
+  windowShorterThanWeek,
   type TeamUrlState,
   type TeamWindowPreset,
 } from '../../utils/agency/team/teamUrl';
-import { asOfWords, datesWords, mainLabel, periodWords, refreshFailedWords } from '../../utils/agency/team/teamCopy';
+import { asOfWords, datesWords, mainLabel, periodWords, refreshFailedWords, staleWords } from '../../utils/agency/team/teamCopy';
 import { browserZone, todayIn } from '../../utils/reports/reportWindow';
 import { TeamFilters } from '../../components/agency/team/TeamFilters';
 import { TeamTiles, TeamTilesSkeleton } from '../../components/agency/team/TeamTiles';
@@ -97,10 +98,6 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
   const today = useToday(zone, now);
   const scope = `${tenantId}/${accountId}`;
 
-  // ── Picks: not in the URL, cleared by any filter change (TP18) ──
-  const [picks, setPicks] = useState<string[]>([]);
-  useEffect(() => setPicks([]), [state.campaignId, state.window, state.from, state.to]);
-
   // ── Campaigns ──
   const campaignsRead = useCompareRead(scope, () => listAgencyCampaigns(tenantId, accountId));
   const campaigns = campaignsRead.status === 'error' ? [] : campaignsRead.data;
@@ -113,20 +110,23 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
   const dates = teamWindowDates(state, today);
   const dateError = teamWindowError(dates, today);
   const window = dateError === null ? dates : null;
-  const holdsToday = windowHoldsToday(window, today);
   const query: AgencyTeamPerformanceQuery | null = window
     ? { from: window.from, to: window.to, timezone: zone, ...(state.campaignId ? { campaign_id: state.campaignId } : {}) }
     : null;
-  const read = useTeamPerformance(query, {
-    tenantId,
-    accountId,
-    // A window that holds today and spans at most a week is read again on its own (§2 States).
-    autoRefresh: windowAutoRefreshes(window, today),
-    refreshAtMidnight: state.window === 'custom',
-    settleMs,
-  });
+  // A window that holds today and spans at most a week is read again on its own (§2 States).
+  const autoRefresh = windowAutoRefreshes(window, today);
+  const read = useTeamPerformance(query, { tenantId, accountId, autoRefresh, today, settleMs });
   const data = read.data;
   const label = data ? mainLabel(data.main_outcome) : 'Will pay';
+  // How far the figures run is the answer's (TP11), not the clock's: an answer read before
+  // midnight still runs to then after it.
+  const reach = data ? { runsToNow: answerRunsToNow(data), oneDay: data.from === data.to } : { runsToNow: false, oneDay: false };
+
+  // ── Picks: not in the URL, cleared whenever the question changes (TP18): a filter, or a preset's
+  // dates moving at midnight. The sort is not part of it. ──
+  const [picks, setPicks] = useState<string[]>([]);
+  const question = query ? `${query.from}/${query.to}/${query.campaign_id ?? ''}` : null;
+  useEffect(() => setPicks([]), [question]);
 
   const setWindow = (preset: TeamWindowPreset) =>
     update(preset === 'custom' ? { window: preset, from: dates?.from ?? today, to: dates?.to ?? today } : { window: preset, from: null, to: null });
@@ -135,12 +135,19 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
     ? {
         kind: 'campaign' as const,
         subject: { id: state.campaignId, name: campaign?.name ?? heldArchived?.name ?? null },
-        campaignTimezone: campaign?.default_timezone ?? null,
+        campaignTimezone: campaign?.default_timezone ?? heldArchived?.default_timezone ?? null,
       }
     : { kind: 'account' as const, subject: { id: accountId, name: accountName } };
 
   const empty = data !== null && read.current && data.agents.length === 0 && data.totals.calls_handled === 0;
   const stale = data !== null && !read.current && read.failed;
+  const staleCampaign = data
+    ? {
+        differs: data.campaign_id !== state.campaignId,
+        all: data.campaign_id === null,
+        name: campaigns?.find((c) => c.id === data.campaign_id)?.name ?? archived.data?.find((c) => c.id === data.campaign_id)?.name ?? null,
+      }
+    : null;
 
   return (
     <div className={styles.page}>
@@ -169,13 +176,13 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
         onWindow={setWindow}
         onDates={update}
         dateError={dateError}
-        summary={data && read.current && window ? asOfWords(state.window, window, data.as_of, holdsToday) : null}
+        summary={data && read.current && window ? asOfWords(state.window, window, data.as_of, reach.runsToNow) : null}
       />
 
       {read.failed ? <TeamReadError error={read.error} onRetry={read.retry} /> : null}
       {stale ? (
         <p className={teamStyles.note} role="status" data-testid="team-stale">
-          {`These are the last figures that loaded, for ${datesWords(data)}, not for the filters above.`}
+          {staleWords(data, staleCampaign!)}
         </p>
       ) : null}
       {/* A failed quiet refresh keeps the figures up and says so calmly (no alert): the next tick
@@ -183,7 +190,9 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
       {read.refreshFailed && data !== null ? (
         <div className={`${teamStyles.note} ${teamStyles.errorBox}`} role="status" data-testid="team-refresh-failed">
           <p className={teamStyles.errorText}>{refreshFailedWords(data.as_of)}</p>
-          {read.refreshStopped && isRetryableTeamError(read.error) ? (
+          {/* Try again when nothing else will read: refreshing has stopped, or this window is not
+              read again on its own (the one read once more after its last day). */}
+          {(read.refreshStopped || !autoRefresh) && isRetryableTeamError(read.error) ? (
             <button type="button" className={teamStyles.linkButton} onClick={read.retry} data-testid="team-retry">
               Try again
             </button>
@@ -202,24 +211,30 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
         </div>
       ) : null}
 
-      {empty ? (
-        <EmptyState
-          icon={<Users size={32} />}
-          title="No calls in this period"
-          description={state.campaignId ? 'Nobody took a dialler call on this campaign in this period.' : 'Nobody took a dialler call in this period.'}
-          action={
-            state.window !== 'last_7_days' ? (
-              <button type="button" className="btn-secondary" onClick={() => setWindow('last_7_days')} data-testid="team-try-7-days">
-                Show the last 7 days
-              </button>
-            ) : undefined
-          }
-        />
+      {empty && data !== null ? (
+        <div className={styles.answer}>
+          <EmptyState
+            icon={<Users size={32} />}
+            title="No calls in this period"
+            description={state.campaignId ? 'Nobody took a dialler call on this campaign in this period.' : 'Nobody took a dialler call in this period.'}
+            action={
+              // More days only where the window is shorter than the last 7 days.
+              windowShorterThanWeek(window) ? (
+                <button type="button" className="btn-secondary" onClick={() => setWindow('last_7_days')} data-testid="team-try-7-days">
+                  Show the last 7 days
+                </button>
+              ) : undefined
+            }
+          />
+          {/* The team's earlier working days are still drawn (TP12, TP14): a window holding today
+              with nobody dialled yet shows the days before it. */}
+          {data.trend.dates.length > 0 ? <MainOutcomePerDayChart trend={data.trend} label={label} /> : null}
+        </div>
       ) : null}
 
       {data !== null && !empty ? (
         <div className={styles.answer} aria-busy={read.updating || undefined}>
-          <TeamTiles data={data} label={label} holdsToday={holdsToday} />
+          <TeamTiles data={data} label={label} reach={reach} />
           <div className={styles.charts}>
             <MainOutcomePerDayChart trend={data.trend} label={label} />
             <OutcomeBreakdown data={data} label={label} preset={state.window} />

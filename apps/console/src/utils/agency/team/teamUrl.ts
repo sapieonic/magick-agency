@@ -1,5 +1,7 @@
 import { COMPARE_PAGE_MAX_AGENTS } from '@magick-agency/contracts/api/agency/compare';
 import { reportWindowDays } from '@magick-agency/contracts/api/agency/reports';
+import type { AgencyTeamPerformance } from '@magick-agency/contracts/api/agency/team-performance';
+import { todayIn } from '../../reports/reportWindow';
 import { COMPARE_PATH } from '../compare/compareFlag';
 import {
   COMPARE_WINDOW_PRESETS,
@@ -35,7 +37,6 @@ export const TEAM_WINDOW_PRESETS = COMPARE_WINDOW_PRESETS;
 
 /** The table's orders (TP16): the main outcome's rate, calls handled, shortest calls. */
 export type TeamSort = 'rate' | 'calls' | 'shortest';
-export const TEAM_SORTS: readonly TeamSort[] = ['rate', 'calls', 'shortest'];
 
 export interface TeamUrlState {
   /** Null: All campaigns. */
@@ -114,9 +115,47 @@ export const TEAM_AUTO_REFRESH_MAX_DAYS = 7;
  * once per question and again only when the reader asks.
  */
 export function windowAutoRefreshes(dates: { from: string; to: string } | null, today: string): boolean {
-  if (dates === null || !windowHoldsToday(dates, today)) return false;
+  return dates !== null && windowHoldsToday(dates, today) && shortWindow(dates);
+}
+
+/** The window is shorter than a week, so "Show the last 7 days" shows more of it (§2 States). */
+export function windowShorterThanWeek(dates: { from: string; to: string } | null): boolean {
+  if (dates === null) return false;
+  const days = reportWindowDays(dates.from, dates.to);
+  return days !== null && days < 7;
+}
+
+/** The window spans at most {@link TEAM_AUTO_REFRESH_MAX_DAYS} local days: the live windows' length. */
+function shortWindow(dates: { from: string; to: string }): boolean {
   const days = reportWindowDays(dates.from, dates.to);
   return days !== null && days <= TEAM_AUTO_REFRESH_MAX_DAYS;
+}
+
+// ─── What the answer covers (TP11) ──────────────────────────────────────────
+
+/**
+ * The answer runs to now (TP11): it was read inside its own window (`as_of`'s local date, in the
+ * answer's zone, between `from` and `to`), so its figures stop at `as_of`, not at the window's
+ * end. Decided from the answer, not from the clock: an answer read just before midnight still
+ * runs to then once the day has turned, and one read just after it covers its whole window even
+ * while the page's clock has not caught up.
+ */
+export function answerRunsToNow(answer: Pick<AgencyTeamPerformance, 'from' | 'to' | 'timezone' | 'as_of'>): boolean {
+  const asOf = new Date(answer.as_of);
+  if (Number.isNaN(asOf.getTime())) return false;
+  const day = todayIn(answer.timezone, asOf);
+  return answer.from <= day && day <= answer.to;
+}
+
+/**
+ * The answer on screen ran to now, its window has ended since (today is past `to`), and the
+ * window is one the page read again on its own (at most a week): it is read once more, so the
+ * last day is shown whole. A preset never gets here (its dates move with the day, so its question
+ * changes and is read anew); a longer window is the heavy read (§4), kept as it is, still saying
+ * how far it runs.
+ */
+export function answerAwaitsFinalRead(answer: Pick<AgencyTeamPerformance, 'from' | 'to' | 'timezone' | 'as_of'>, today: string): boolean {
+  return today > answer.to && shortWindow(answer) && answerRunsToNow(answer);
 }
 
 // ─── Picks for Compare picked (TP18) ────────────────────────────────────────

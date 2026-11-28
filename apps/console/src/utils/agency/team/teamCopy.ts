@@ -142,9 +142,23 @@ export function chooseLine(allowed: AgencyTeamWrapupAllowed): string {
   return words ? `average · ${words}` : 'average';
 }
 
-/** Call-backs on time: the figure and its line, or "No call-backs due yet" (TP10). */
-export function callbacksTile(callbacks: AgencyTeamCallbacks, holdsToday: boolean): { value: string; of: string | null; line: string } {
+/**
+ * How far the answer's figures run, for the words that depend on it (TP11): `runsToNow`, the
+ * answer was read inside its window (`answerRunsToNow`); `oneDay`, the window is one local day.
+ */
+export interface TeamAnswerReach {
+  runsToNow: boolean;
+  oneDay: boolean;
+}
+
+/**
+ * Call-backs on time: the figure and its line (TP10). A window still running says "due so far
+ * today" (one day) or "due so far" (longer), and "No call-backs due yet" with none due; a window
+ * that has ended says "due in this period", or "No call-backs were due".
+ */
+export function callbacksTile(callbacks: AgencyTeamCallbacks, reach: TeamAnswerReach): { value: string; of: string | null; line: string } {
   if (callbacks.due === 0) {
+    if (!reach.runsToNow) return { value: '—', of: null, line: 'No call-backs were due' };
     return {
       value: '—',
       of: null,
@@ -154,7 +168,7 @@ export function callbacksTile(callbacks: AgencyTeamCallbacks, holdsToday: boolea
   return {
     value: formatCount(callbacks.on_time),
     of: `of ${formatCount(callbacks.due)}`,
-    line: holdsToday ? 'due so far today' : 'due in this period',
+    line: !reach.runsToNow ? 'due in this period' : reach.oneDay ? 'due so far today' : 'due so far',
   };
 }
 
@@ -183,12 +197,22 @@ export function capitalise(text: string): string {
 }
 
 /**
- * What the figures cover, beside the filters: "Today, up to 2:15 PM" when the window holds now
- * (TP11: it runs to now), else the dates.
+ * What the figures cover, beside the filters: "Today, up to 2:15 PM" when the answer runs to now
+ * (TP11, `answerRunsToNow`), else the period alone.
  */
-export function asOfWords(preset: TeamWindowPreset, dates: { from: string; to: string }, asOf: string, holdsToday: boolean): string {
+export function asOfWords(preset: TeamWindowPreset, dates: { from: string; to: string }, asOf: string, runsToNow: boolean): string {
   const period = capitalise(periodWords(preset, dates));
-  return holdsToday ? `${period}, up to ${clockTime(new Date(asOf))}` : period;
+  return runsToNow ? `${period}, up to ${clockTime(new Date(asOf))}` : period;
+}
+
+/**
+ * Said over figures that are not the answer to the filters above (§2 States): the dates they are
+ * for, and their campaign too when it is not the one chosen ("for Nov dues, 11 Nov to 17 Nov";
+ * "for all campaigns, 11 Nov to 17 Nov").
+ */
+export function staleWords(dates: { from: string; to: string }, campaign: { differs: boolean; all: boolean; name: string | null }): string {
+  const what = campaign.differs ? `${campaign.all ? 'all campaigns' : (campaign.name ?? 'another campaign')}, ${datesWords(dates)}` : datesWords(dates);
+  return `These are the last figures that loaded, for ${what}, not for the filters above.`;
 }
 
 // ─── The charts ─────────────────────────────────────────────────────────────
@@ -211,9 +235,21 @@ export function outcomeLabel(bar: { code: string | null; label: string | null })
   return bar.label?.trim() || bar.code;
 }
 
-/** How fresh the outcome bars are (TP13), a line of its own: "Dialler calls only · as of 2:10 PM". */
-export function rollupLine(rollupAsOf: string | null): string {
-  return rollupAsOf ? `Dialler calls only · as of ${clockTime(new Date(rollupAsOf))}` : 'Dialler calls only';
+/** A local date (`YYYY-MM-DD`) on the reader's clock, the clock `clockTime` reads. */
+function localDay(at: Date): string {
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * How fresh the outcome bars are (TP13), a line of its own: "Dialler calls only · as of 2:10 PM",
+ * with the day when that is not today ("as of 20 Nov, 11:58 PM").
+ */
+export function rollupLine(rollupAsOf: string | null, now: Date = new Date()): string {
+  if (!rollupAsOf) return 'Dialler calls only';
+  const at = new Date(rollupAsOf);
+  const day = localDay(at);
+  const when = day === localDay(now) ? clockTime(at) : `${formatReportDay(day, false)}, ${clockTime(at)}`;
+  return `Dialler calls only · as of ${when}`;
 }
 
 /**

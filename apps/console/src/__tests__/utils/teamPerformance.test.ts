@@ -5,6 +5,8 @@ import { ApiError } from '../../api/client';
 import { isRetryableTeamError, teamErrorMessage } from '../../api/teamPerformance';
 import { compareStateFromParams } from '../../utils/agency/compare/compareUrl';
 import {
+  answerAwaitsFinalRead,
+  answerRunsToNow,
   comparePickedPath,
   teamStateFromParams,
   teamStateToParams,
@@ -13,6 +15,7 @@ import {
   togglePick,
   windowAutoRefreshes,
   windowHoldsToday,
+  windowShorterThanWeek,
 } from '../../utils/agency/team/teamUrl';
 import {
   allowedWords,
@@ -34,6 +37,7 @@ import {
   rateWords,
   refreshFailedWords,
   rollupLine,
+  staleWords,
   trendLine,
   withheldWords,
 } from '../../utils/agency/team/teamCopy';
@@ -92,6 +96,34 @@ describe('the URL (teamUrl)', () => {
     expect(windowAutoRefreshes({ from: '2026-10-19', to: today }, today)).toBe(false);
     expect(windowAutoRefreshes({ from: '2026-11-01', to: '2026-11-07' }, today)).toBe(false);
     expect(windowAutoRefreshes(null, today)).toBe(false);
+  });
+
+  it('offers the last 7 days on an empty period only when the window is shorter than that (§2 States)', () => {
+    expect(windowShorterThanWeek({ from: '2026-11-17', to: '2026-11-17' })).toBe(true);
+    expect(windowShorterThanWeek({ from: '2026-11-12', to: '2026-11-17' })).toBe(true);
+    expect(windowShorterThanWeek({ from: '2026-11-11', to: '2026-11-17' })).toBe(false);
+    expect(windowShorterThanWeek({ from: '2026-10-19', to: '2026-11-17' })).toBe(false);
+    expect(windowShorterThanWeek(null)).toBe(false);
+  });
+
+  it('says an answer runs to now from the answer itself: read inside its window, in its zone (TP11)', () => {
+    const answer = { from: '2026-11-15', to: '2026-11-17', timezone: 'Asia/Kolkata' };
+    // 18:00 UTC on 17 Nov is 23:30 in Kolkata: still the window's last day.
+    expect(answerRunsToNow({ ...answer, as_of: '2026-11-17T18:00:00.000Z' })).toBe(true);
+    // 18:40 UTC is 00:10 on 18 Nov in Kolkata: read after the window ended, so it covers all of it.
+    expect(answerRunsToNow({ ...answer, as_of: '2026-11-17T18:40:00.000Z' })).toBe(false);
+    expect(answerRunsToNow({ ...answer, as_of: '2026-11-20T08:00:00.000Z' })).toBe(false);
+    expect(answerRunsToNow({ ...answer, as_of: 'not a time' })).toBe(false);
+  });
+
+  it('reads a short window once more when the day has passed its end under an answer that ran to now', () => {
+    const ranToNow = { from: '2026-11-15', to: '2026-11-17', timezone: 'UTC', as_of: '2026-11-17T23:50:00.000Z' };
+    expect(answerAwaitsFinalRead(ranToNow, '2026-11-17')).toBe(false);
+    expect(answerAwaitsFinalRead(ranToNow, '2026-11-18')).toBe(true);
+    // Already read after the window ended: nothing more to read.
+    expect(answerAwaitsFinalRead({ ...ranToNow, as_of: '2026-11-18T00:01:00.000Z' }, '2026-11-18')).toBe(false);
+    // A month is the heavy read: kept as it is.
+    expect(answerAwaitsFinalRead({ ...ranToNow, from: '2026-10-19' }, '2026-11-18')).toBe(false);
   });
 
   it(`picks at most ${COMPARE_PAGE_MAX_AGENTS}: a fourth changes nothing, and unpicking frees a place`, () => {
@@ -153,10 +185,18 @@ describe('the words (teamCopy)', () => {
     expect(chooseLine(TEAM_ONE_CAMPAIGN.totals.wrapup_allowed)).toBe('average · 30 s allowed');
     expect(allowedWords({ seconds: 0, varies: false })).toBe('no time limit');
     expect(chooseLine(TEAM_ALL_CAMPAIGNS.totals.wrapup_allowed)).toBe('average · allowed time differs by campaign');
-    expect(callbacksTile(TEAM_ONE_CAMPAIGN.totals.callbacks, true)).toEqual({ value: '21', of: 'of 28', line: 'due so far today' });
-    expect(callbacksTile(TEAM_ONE_CAMPAIGN.totals.callbacks, false).line).toBe('due in this period');
-    expect(callbacksTile({ due: 0, on_time: 0, late: 0, missed: 0, pending_due: 0, upcoming: 0 }, true).line).toBe('No call-backs due yet');
     expect(percent(0.2722)).toBe('27%');
+  });
+
+  it('words Call-backs on time by how far the answer runs (TP10, TP11)', () => {
+    const { callbacks } = TEAM_ONE_CAMPAIGN.totals;
+    const none = { due: 0, on_time: 0, late: 0, missed: 0, pending_due: 0, upcoming: 0 };
+    expect(callbacksTile(callbacks, { runsToNow: true, oneDay: true })).toEqual({ value: '21', of: 'of 28', line: 'due so far today' });
+    expect(callbacksTile(callbacks, { runsToNow: true, oneDay: false }).line).toBe('due so far');
+    expect(callbacksTile(callbacks, { runsToNow: false, oneDay: true }).line).toBe('due in this period');
+    expect(callbacksTile(none, { runsToNow: true, oneDay: true }).line).toBe('No call-backs due yet');
+    expect(callbacksTile({ ...none, upcoming: 4 }, { runsToNow: true, oneDay: false }).line).toBe('No call-backs due yet · 4 later today');
+    expect(callbacksTile(none, { runsToNow: false, oneDay: false })).toEqual({ value: '—', of: null, line: 'No call-backs were due' });
   });
 
   it('says the period and how far it runs (TP11)', () => {
@@ -170,9 +210,26 @@ describe('the words (teamCopy)', () => {
     expect(datesWords({ from: '2026-11-17', to: '2026-11-17' })).toBe('17 Nov');
   });
 
+  it('names what stale figures are for: their dates, and their campaign when it is not the one chosen', () => {
+    const dates = { from: '2026-11-11', to: '2026-11-17' };
+    expect(staleWords(dates, { differs: false, all: false, name: 'Nov dues' })).toBe(
+      'These are the last figures that loaded, for 11 Nov to 17 Nov, not for the filters above.',
+    );
+    expect(staleWords(dates, { differs: true, all: false, name: 'Nov dues' })).toBe(
+      'These are the last figures that loaded, for Nov dues, 11 Nov to 17 Nov, not for the filters above.',
+    );
+    expect(staleWords(dates, { differs: true, all: true, name: null })).toBe(
+      'These are the last figures that loaded, for all campaigns, 11 Nov to 17 Nov, not for the filters above.',
+    );
+    expect(staleWords(dates, { differs: true, all: false, name: null })).toContain('for another campaign, 11 Nov to 17 Nov');
+  });
+
   it('says how fresh the bars are, as a line of its own, and a failed refresh calmly', () => {
-    expect(rollupLine('2026-11-17T08:40:00.000Z')).toBe('Dialler calls only · as of 8:40 AM');
-    expect(rollupLine(null)).toBe('Dialler calls only');
+    const now = new Date('2026-11-17T08:50:00.000Z');
+    expect(rollupLine('2026-11-17T08:40:00.000Z', now)).toBe('Dialler calls only · as of 8:40 AM');
+    // Not today's: the day too.
+    expect(rollupLine('2026-11-16T23:58:00.000Z', now)).toBe('Dialler calls only · as of 16 Nov, 11:58 PM');
+    expect(rollupLine(null, now)).toBe('Dialler calls only');
     expect(refreshFailedWords('2026-11-17T08:45:12.000Z')).toBe('Couldn’t refresh. Showing figures up to 8:45 AM.');
   });
 

@@ -78,20 +78,29 @@ function Where() {
 const where = () => screen.getByTestId('where').textContent!;
 const params = () => new URLSearchParams(where().split('?')[1] ?? '');
 
-function renderView(search = '', canCompare = true) {
-  return render(
+/**
+ * The page at `search`, on the clock `now` (`'real'`: the page reads the clock itself, which a
+ * test fakes). `at(later)` moves the page's clock, as its own minute check would.
+ */
+function renderView(search = '', canCompare = true, now: Date | 'real' = NOW) {
+  const tree = (at: Date | undefined) => (
     <MemoryRouter initialEntries={[`/agency/team-performance${search}`]}>
       <Where />
       <Routes>
         <Route
           path="/agency/team-performance"
-          element={<TeamPerformanceView tenantId="t-1" accountId="a-1" accountName="North" canCompare={canCompare} now={NOW} settleMs={10} />}
+          element={<TeamPerformanceView tenantId="t-1" accountId="a-1" accountName="North" canCompare={canCompare} now={at} settleMs={10} />}
         />
         <Route path="/agency/compare" element={<p>compare page</p>} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+  const view = render(tree(now === 'real' ? undefined : now));
+  return { ...view, at: (later: Date) => view.rerender(tree(later)) };
 }
+
+/** The day after {@link NOW}, mid-morning. */
+const NEXT_DAY = new Date('2026-11-18T08:50:00.000Z');
 
 function tenant(role: string) {
   mocks.useTenant.mockReturnValue({ role, tenantId: 't-1', accountId: 'a-1', accounts: [{ id: 'a-1', name: 'North' }], accountResolution: 'ready' });
@@ -237,6 +246,9 @@ describe('the figures', () => {
   });
 
   it('lists what happened on the calls, folds past the seventh, and footnotes a main bar that differs from its tile', async () => {
+    // The rollup line reads the reader's clock for its day: the answer's.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
     renderView(`?campaign=${CAMPAIGN}`);
     const outcomes = await screen.findByTestId('team-outcomes');
     expect(within(outcomes).getByRole('heading').textContent).toBe('What happened on today’s 360 calls');
@@ -405,6 +417,18 @@ describe('picking for Compare agents (TP18)', () => {
     expect(screen.getByTestId('team-picks').textContent).toBe('0 of 3 picked');
   });
 
+  it('clears the picks when a preset’s dates move with the day, its question changing under the same filters', async () => {
+    const view = renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-agents');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Pick Lakshmi P to compare' }));
+    expect(screen.getByTestId('team-picks').textContent).toBe('1 of 3 picked');
+    view.at(NEXT_DAY);
+    await waitFor(() => expect(lastQuery()).toMatchObject({ from: '2026-11-18', to: '2026-11-18' }));
+    await waitFor(() => expect((screen.getAllByRole('checkbox') as HTMLInputElement[]).every((b) => !b.disabled)).toBe(true));
+    expect(screen.getByTestId('team-picks').textContent).toBe('0 of 3 picked');
+    expect((screen.getByRole('checkbox', { name: 'Pick Lakshmi P to compare' }) as HTMLInputElement).checked).toBe(false);
+  });
+
   it('disables the picks and Compare picked while the rows on screen are another filter’s', async () => {
     renderView(`?campaign=${CAMPAIGN}`);
     await screen.findByTestId('team-agents');
@@ -424,7 +448,8 @@ describe('picking for Compare agents (TP18)', () => {
     await screen.findByTestId('team-agents');
     mocks.getTeamPerformance.mockRejectedValue(refusal(503, 'team_timed_out'));
     fireEvent.change(screen.getByTestId('team-when'), { target: { value: 'this_week' } });
-    await screen.findByTestId('team-stale');
+    const stale = await screen.findByTestId('team-stale');
+    expect(stale.textContent).toBe('These are the last figures that loaded, for 17 Nov, not for the filters above.');
     expect((screen.getAllByRole('checkbox') as HTMLInputElement[]).every((b) => b.disabled)).toBe(true);
   });
 
@@ -464,8 +489,57 @@ describe('the states', () => {
     renderView();
     expect(await screen.findByText('No calls in this period')).toBeTruthy();
     expect(screen.queryByTestId('team-tiles')).toBeNull();
+    // No working days to draw either.
+    expect(screen.queryByTestId('team-trend')).toBeNull();
     fireEvent.click(screen.getByTestId('team-try-7-days'));
     expect(params().get('when')).toBe('7d');
+  });
+
+  it('still draws the team’s earlier working days on a day nobody has dialled yet (TP12, TP14)', async () => {
+    mocks.getTeamPerformance.mockResolvedValue({ ...TEAM_EMPTY, trend: TEAM_ONE_CAMPAIGN.trend });
+    renderView();
+    expect(await screen.findByText('No calls in this period')).toBeTruthy();
+    expect(screen.queryByTestId('team-tiles')).toBeNull();
+    expect(screen.queryByTestId('team-agents')).toBeNull();
+    expect(screen.getByTestId('team-trend-chart').getAttribute('aria-label')).toBe('Will pay per day over 7 working days, from 74 to 106; 98 on 17 Nov.');
+  });
+
+  it('offers the last 7 days on an empty period only when the window is shorter than that', async () => {
+    mocks.getTeamPerformance.mockResolvedValue(TEAM_EMPTY);
+    for (const [when, offered] of [['week', true], ['7d', false], ['30d', false]] as const) {
+      const { unmount } = renderView(`?when=${when}`);
+      await screen.findByText('No calls in this period');
+      expect(screen.queryByTestId('team-try-7-days') !== null, `when=${when}`).toBe(offered);
+      unmount();
+    }
+  });
+
+  it('names the campaign of stale figures when it is not the one chosen', async () => {
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-tiles');
+    await waitFor(() => expect((screen.getByTestId('team-campaign') as HTMLSelectElement).value).toBe(CAMPAIGN));
+    mocks.getTeamPerformance.mockRejectedValue(refusal(503, 'team_timed_out'));
+    fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: '' } });
+    expect((await screen.findByTestId('team-stale')).textContent).toBe(
+      'These are the last figures that loaded, for Nov dues, 17 Nov, not for the filters above.',
+    );
+  });
+
+  it('says how far the figures run from the answer, not the clock: one read after the window ended covers all of it (TP11)', async () => {
+    mocks.getTeamPerformance.mockImplementation(async (q: AgencyTeamPerformanceQuery) => ({ ...answerFor(q), as_of: '2026-11-18T00:00:05.000Z' }));
+    // The page's clock still says 17 Nov; the server's answer was read on the 18th.
+    renderView(`?campaign=${CAMPAIGN}&when=custom&from=2026-11-15&to=2026-11-17`);
+    const tiles = await screen.findByTestId('team-tiles');
+    await waitFor(() => expect(screen.getByTestId('team-summary').textContent).toBe('15 Nov to 17 Nov'));
+    expect(within(tiles).getByTestId('team-tile-callbacks').textContent).toBe('Call-backs on time21 of 28due in this period');
+  });
+
+  it('says “due so far” for a longer window still running, and “due so far today” for one day', async () => {
+    const { unmount } = renderView(`?campaign=${CAMPAIGN}&when=custom&from=2026-11-15&to=2026-11-17`);
+    expect(within(await screen.findByTestId('team-tiles')).getByTestId('team-tile-callbacks').textContent).toBe('Call-backs on time21 of 28due so far');
+    unmount();
+    renderView(`?campaign=${CAMPAIGN}`);
+    expect(within(await screen.findByTestId('team-tiles')).getByTestId('team-tile-callbacks').textContent).toBe('Call-backs on time21 of 28due so far today');
   });
 
   it('words a timed-out read and offers Try again, which reads again', async () => {
@@ -574,6 +648,33 @@ describe('reading again on its own (§2 States)', () => {
     expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3);
   });
 
+  it('holds the calm line while the next minute’s read is on its way, so it does not blink', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    renderView(`?campaign=${CAMPAIGN}`);
+    await screen.findByTestId('team-tiles');
+    mocks.getTeamPerformance.mockRejectedValueOnce(refusal(429, 'team_busy'));
+    aMinute();
+    await screen.findByTestId('team-refresh-failed');
+    mocks.getTeamPerformance.mockImplementation(() => new Promise(() => {}));
+    aMinute();
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3));
+    await settle();
+    expect(screen.getByTestId('team-refresh-failed').textContent).toBe('Couldn’t refresh. Showing figures up to 8:45 AM.');
+  });
+
+  it('holds a failed first read’s words while it is asked again, with no skeleton in their place', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    mocks.getTeamPerformance.mockRejectedValueOnce(refusal(429, 'team_busy'));
+    renderView();
+    await screen.findByTestId('team-error');
+    mocks.getTeamPerformance.mockImplementation(() => new Promise(() => {}));
+    aMinute();
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2));
+    await settle();
+    expect(screen.getByTestId('team-error').textContent).toContain('Too many reports are being worked out right now.');
+    expect(screen.queryByTestId('team-tiles-skeleton')).toBeNull();
+  });
+
   it('after a quiet refresh times out, keeps the figures and offers Try again, as nothing else will read', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     renderView();
@@ -590,19 +691,51 @@ describe('reading again on its own (§2 States)', () => {
     expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3);
   });
 
-  it('at midnight reads a custom window again, but not a preset, whose question moves with the day', async () => {
-    const { unmount } = renderView();
+  it('past midnight reads a custom window once more, its last day whole; a preset reads its new day instead', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    // As the server: the figures run to the moment they were read.
+    mocks.getTeamPerformance.mockImplementation(async (q: AgencyTeamPerformanceQuery) => ({ ...answerFor(q), as_of: new Date().toISOString() }));
+    const preset = renderView('', true, 'real');
     await screen.findByTestId('team-tiles');
+    vi.setSystemTime(new Date('2026-11-18T00:00:30.000Z'));
     midnight();
+    await waitFor(() => expect(lastQuery()).toMatchObject({ from: '2026-11-18', to: '2026-11-18' }));
     await settle();
-    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
-    unmount();
+    // One read of the new day, none of the old day again.
+    expect(mocks.getTeamPerformance.mock.calls.map(([q]) => q.from)).toEqual(['2026-11-17', '2026-11-18']);
+    preset.unmount();
+
     mocks.getTeamPerformance.mockClear();
-    renderView('?when=custom&from=2026-11-15&to=2026-11-17');
+    vi.setSystemTime(NOW);
+    renderView('?when=custom&from=2026-11-15&to=2026-11-17', true, 'real');
     await screen.findByTestId('team-tiles');
     expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(new Date('2026-11-18T00:00:30.000Z'));
     midnight();
     await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId('team-summary').textContent).toBe('15 Nov to 17 Nov'));
+    await settle();
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads a custom window once more however the page learns the day has turned, and only once', async () => {
+    let answer: (a: AgencyTeamPerformance) => void = () => {};
+    const view = renderView('?when=custom&from=2026-11-15&to=2026-11-17');
+    await screen.findByTestId('team-tiles');
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+    mocks.getTeamPerformance.mockImplementation(() => new Promise((r) => (answer = r)));
+    // The page's clock moves (its minute check, a return to the tab), no midnight timer.
+    view.at(NEXT_DAY);
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2));
+    // While it reads, the figures on screen still say how far they ran.
+    expect(screen.getByTestId('team-summary').textContent).toBe('15 Nov to 17 Nov, up to 8:45 AM');
+    // An answer that still ran to then is not read again and again.
+    act(() => answer(answerFor(lastQuery())));
+    await settle();
+    view.at(new Date('2026-11-18T09:50:00.000Z'));
+    await settle();
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2);
   });
 });
 

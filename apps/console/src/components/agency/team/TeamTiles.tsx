@@ -7,6 +7,7 @@ import {
   clockOrDash,
   mainFloor,
   mainLine,
+  type TeamAnswerReach,
 } from '../../../utils/agency/team/teamCopy';
 import styles from './Team.module.css';
 
@@ -15,9 +16,9 @@ import styles from './Team.module.css';
  * the main outcome, Average call, Time to choose outcome, Call-backs on time. Each figure is the
  * team's (sums over every row, TP2); the lines are the console's words.
  */
-export function TeamTiles({ data, label, holdsToday }: { data: AgencyTeamPerformance; label: string; holdsToday: boolean }) {
+export function TeamTiles({ data, label, reach }: { data: AgencyTeamPerformance; label: string; reach: TeamAnswerReach }) {
   const { totals } = data;
-  const callbacks = callbacksTile(totals.callbacks, holdsToday);
+  const callbacks = callbacksTile(totals.callbacks, reach);
   const tiles: Array<{ id: string; title: string; value: string; of?: string | null; line: string }> = [
     { id: 'calls', title: 'Calls handled', value: formatCount(totals.calls_handled), line: callsLine(totals.agents) },
     {
