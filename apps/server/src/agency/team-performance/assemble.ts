@@ -104,8 +104,24 @@ function outcomeOf(kind: AgencyTeamMainOutcomeKind, entries: readonly AgencyDisp
   return { kind, codes, label: labels.size === 1 ? [...labels][0]! : null, mixed };
 }
 
+/** Whether a catalog entry counts as `kind`: `requires_promise` for promises, `is_success` for successes. */
+const countsAs = (kind: AgencyTeamMainOutcomeKind, e: AgencyDisposition): boolean =>
+  (kind === 'promises' ? e.requires_promise === true : e.is_success === true);
+
 /** A campaign whose catalog records promises (an entry with `requires_promise`). */
-export const recordsPromises = (c: TeamCampaign): boolean => c.catalog.some((e) => e.requires_promise === true);
+export const recordsPromises = (c: TeamCampaign): boolean => c.catalog.some((e) => countsAs('promises', e));
+
+/** `n` added to `key`'s count in `m`. */
+function addTo<K>(m: Map<K, number>, key: K, n: number): void {
+  m.set(key, (m.get(key) ?? 0) + n);
+}
+
+/** The campaigns with dialler conversations in the window (the rollup's codes). */
+function campaignsWithCalls(codes: readonly TeamRollupCodeRow[]): Set<string> {
+  const conversations = new Map<string, number>();
+  for (const r of codes) addTo(conversations, r.campaign_id, r.conversations);
+  return new Set([...conversations].filter(([, n]) => n > 0).map(([id]) => id));
+}
 
 /** The scope's campaigns worked in the window: with dialler conversations (the rollup), or with promises recorded. */
 export interface TeamWorkedCampaigns {
@@ -116,7 +132,7 @@ export interface TeamWorkedCampaigns {
 /** The campaigns with dialler conversations in the window ({@link TeamRollupCodeRow}s) and those with promises in it. */
 export function workedCampaigns(codes: readonly TeamRollupCodeRow[], promiseCampaignIds: readonly string[]): TeamWorkedCampaigns {
   return {
-    conversations: new Set([...conversationsByCampaign(codes)].filter(([, n]) => n > 0).map(([id]) => id)),
+    conversations: campaignsWithCalls(codes),
     promises: new Set(promiseCampaignIds),
   };
 }
@@ -133,12 +149,12 @@ export function mainOutcomeFor(campaigns: readonly TeamCampaign[], worked: TeamW
   const active = campaigns.filter((c) => worked.conversations.has(c.id) || worked.promises.has(c.id));
   const deciding = active.length > 0 ? active : campaigns;
   const entries = deciding.flatMap((c) => c.catalog);
-  const promises = entries.filter((e) => e.requires_promise === true);
+  const promises = entries.filter((e) => countsAs('promises', e));
   if (promises.length > 0) {
     const mixed = campaigns.some((c) => worked.conversations.has(c.id) && !recordsPromises(c));
     return outcomeOf('promises', promises, mixed);
   }
-  return outcomeOf('successes', entries.filter((e) => e.is_success === true), false);
+  return outcomeOf('successes', entries.filter((e) => countsAs('successes', e)), false);
 }
 
 /** A built-in Compare metric as the shared rules take it. */
@@ -193,7 +209,7 @@ export function teamAgentRow(kind: AgencyTeamMainOutcomeKind, a: TeamAgentSource
 const sum = <T>(rows: readonly T[], of: (row: T) => number): number => rows.reduce((s, row) => s + of(row), 0);
 
 /** The call-backs of every cohort agent in IN4's classes (TP10); `upcoming` is not due. */
-export function teamCallbacks(agents: readonly TeamAgentSources[]): AgencyTeamCallbacks {
+function teamCallbacks(agents: readonly TeamAgentSources[]): AgencyTeamCallbacks {
   const on_time = sum(agents, (a) => a.callbacks.on_time);
   const late = sum(agents, (a) => a.callbacks.late);
   const missed = sum(agents, (a) => a.callbacks.missed);
@@ -201,20 +217,13 @@ export function teamCallbacks(agents: readonly TeamAgentSources[]): AgencyTeamCa
   return { due: on_time + late + missed + pending_due, on_time, late, missed, pending_due, upcoming: sum(agents, (a) => a.callbacks.pending_future) };
 }
 
-/** Conversations per campaign in the window (the rollup's). */
-function conversationsByCampaign(codes: readonly TeamRollupCodeRow[]): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const r of codes) out.set(r.campaign_id, (out.get(r.campaign_id) ?? 0) + r.conversations);
-  return out;
-}
-
 /**
  * The allowed time to choose an outcome over the scope's campaigns with conversations in the window
  * (the rollup's): their one value, else `varies`; null with no campaign that had calls.
  */
 export function wrapupAllowed(campaigns: readonly TeamCampaign[], codes: readonly TeamRollupCodeRow[]): AgencyTeamWrapupAllowed {
-  const withCalls = conversationsByCampaign(codes);
-  const values = new Set(campaigns.filter((c) => (withCalls.get(c.id) ?? 0) > 0).map((c) => c.wrapup_seconds));
+  const withCalls = campaignsWithCalls(codes);
+  const values = new Set(campaigns.filter((c) => withCalls.has(c.id)).map((c) => c.wrapup_seconds));
   if (values.size === 1) return { seconds: [...values][0]!, varies: false };
   return { seconds: null, varies: values.size > 1 };
 }
@@ -224,7 +233,7 @@ export function wrapupAllowed(campaigns: readonly TeamCampaign[], codes: readonl
  * with the table, and an agent with no row (soft-phone or inbound only) is in no tile (TP14). The
  * per-day chart and the bars are the whole team's in scope ({@link teamTrend}, {@link outcomeBars}).
  */
-export function teamTotals(
+function teamTotals(
   kind: AgencyTeamMainOutcomeKind,
   agents: readonly TeamAgentSources[],
   wrapup: AgencyTeamWrapupAllowed,
@@ -247,7 +256,7 @@ const values = (xs: ReadonlyArray<number | null>): number[] => xs.filter((x): x 
 const reportableValue = (v: AgencyCompareValue): number | null => (v.reportable ? v.value : null);
 
 /** The medians the table's ticks are drawn at (`cohortPercentiles`, the roster's method). */
-export function teamMedians(rows: readonly AgencyTeamAgentRow[]): AgencyTeamMedians {
+function teamMedians(rows: readonly AgencyTeamAgentRow[]): AgencyTeamMedians {
   return {
     calls_handled: cohortPercentiles(rows.map((r) => r.calls_handled)).median,
     main_rate: cohortPercentiles(values(rows.map((r) => reportableValue(r.main)))).median,
@@ -270,7 +279,7 @@ export function outcomeBars(campaigns: readonly TeamCampaign[], codes: readonly 
   for (const r of codes) {
     const code = barCode(r.disposition_code);
     const perCampaign = byCode.get(code) ?? new Map<string, number>();
-    perCampaign.set(r.campaign_id, (perCampaign.get(r.campaign_id) ?? 0) + r.conversations);
+    addTo(perCampaign, r.campaign_id, r.conversations);
     byCode.set(code, perCampaign);
   }
   const bars: AgencyTeamOutcomeBar[] = [];
@@ -294,8 +303,7 @@ export function outcomeBars(campaigns: readonly TeamCampaign[], codes: readonly 
  * counts it).
  */
 function ownCodes(kind: AgencyTeamMainOutcomeKind, campaigns: readonly TeamCampaign[]): Map<string, Set<string>> {
-  const counts = (e: AgencyDisposition): boolean => (kind === 'promises' ? e.requires_promise === true : e.is_success === true);
-  return new Map(campaigns.map((c) => [c.id, new Set(c.catalog.filter(counts).map((e) => e.code))]));
+  return new Map(campaigns.map((c) => [c.id, new Set(c.catalog.filter((e) => countsAs(kind, e)).map((e) => e.code))]));
 }
 
 /**
@@ -304,7 +312,7 @@ function ownCodes(kind: AgencyTeamMainOutcomeKind, campaigns: readonly TeamCampa
  * campaign's catalog, counted per campaign before the bars merge campaigns by code. A code that is
  * the main outcome in one campaign and not in another counts only where it is.
  */
-export function mainBarConversations(kind: AgencyTeamMainOutcomeKind, campaigns: readonly TeamCampaign[], codes: readonly TeamRollupCodeRow[]): number {
+function mainBarConversations(kind: AgencyTeamMainOutcomeKind, campaigns: readonly TeamCampaign[], codes: readonly TeamRollupCodeRow[]): number {
   const own = ownCodes(kind, campaigns);
   return sum(codes, (r) => {
     const code = barCode(r.disposition_code);
@@ -330,9 +338,9 @@ export function teamTrend(
   const conversations = new Map<string, number>();
   const counts = new Map<string, number>(kind === 'promises' ? promiseDays : []);
   for (const r of days) {
-    conversations.set(r.date, (conversations.get(r.date) ?? 0) + r.conversations);
+    addTo(conversations, r.date, r.conversations);
     if (kind === 'successes' && r.disposition_code !== null && successes.get(r.campaign_id)?.has(r.disposition_code) === true) {
-      counts.set(r.date, (counts.get(r.date) ?? 0) + r.conversations);
+      addTo(counts, r.date, r.conversations);
     }
   }
   const working = localDates(range.from, range.to).filter((d) => (conversations.get(d) ?? 0) > 0 || (counts.get(d) ?? 0) !== 0);
@@ -346,7 +354,7 @@ export function teamTrend(
  * `TEAM_FINDING_CODES` only. A row withheld on a
  * figure is out of that figure's cohort, as Compare leaves it out.
  */
-export function teamFindings(kind: AgencyTeamMainOutcomeKind, rows: readonly AgencyTeamAgentRow[]): AgencyCompareFinding[] {
+function teamFindings(kind: AgencyTeamMainOutcomeKind, rows: readonly AgencyTeamAgentRow[]): AgencyCompareFinding[] {
   const counted = (pick: (r: AgencyTeamAgentRow) => AgencyCompareValue) =>
     rows.filter((r) => pick(r).withheld !== 'counts_disagree').map((r) => ({ agent_user_id: r.agent_user_id, ...pick(r) }));
   const { findings } = compareFindings({
@@ -364,10 +372,10 @@ export function teamFindings(kind: AgencyTeamMainOutcomeKind, rows: readonly Age
  * the window (the rollup's codes). A campaign idle in the window never holds it back; null when no
  * campaign had conversations in it.
  */
-export function rollupAsOf(campaigns: readonly TeamCampaign[], codes: readonly TeamRollupCodeRow[]): string | null {
-  const withCalls = conversationsByCampaign(codes);
+function rollupAsOf(campaigns: readonly TeamCampaign[], codes: readonly TeamRollupCodeRow[]): string | null {
+  const withCalls = campaignsWithCalls(codes);
   const known = values(campaigns
-    .filter((c) => (withCalls.get(c.id) ?? 0) > 0)
+    .filter((c) => withCalls.has(c.id))
     .map((c) => (c.rollup_as_of === null ? null : Date.parse(c.rollup_as_of))));
   return known.length === 0 ? null : new Date(Math.max(...known)).toISOString();
 }

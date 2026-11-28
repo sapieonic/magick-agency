@@ -182,6 +182,19 @@ export const TEAM_ROLLUP_DAYS_SQL = `
    GROUP BY 1, 2, 3`;
 
 /**
+ * A call table's rows (`t`) with a promise recorded (`dispositioned_at`) in `[$3, $4)` in scope:
+ * tenant `$1`, account `$2`, the call's campaign column (`campaignColumn`) on the campaign
+ * (`campaignParam`) or on any ({@link onCampaign}). The predicate each table's 0050 index
+ * (`idx_*_promise_written`) serves, shared by {@link promisedRowsSql} and
+ * {@link teamPromiseCampaignsSql}.
+ */
+function promisedIn(t: string, campaignColumn: string, scope: TeamScope, campaignParam: string): string {
+  return `${t}.tenant_id = $1::uuid AND ${t}.account_id = $2::uuid AND ${t}.promise_date IS NOT NULL
+       AND ${t}.dispositioned_at >= $3::timestamptz AND ${t}.dispositioned_at < $4::timestamptz
+       AND ${onCampaign(campaignColumn, scope, campaignParam)}`;
+}
+
+/**
  * Every promise recorded in `[$3, $4)` in scope on the three call tables, each by the agent who took
  * the call, tenant `$1` and account `$2`: `(agent_user_id, at)`. A copy of the rows
  * `COMPARE_PROMISES_SQL` counts (Compare's constants are not edited: their plans are pinned), with
@@ -194,22 +207,16 @@ function promisedRowsSql(scope: TeamScope, campaignParam: string, cohort: boolea
     SELECT s.agent_user_id, p.dispositioned_at AS at
       FROM agency_call_attempts p
       JOIN agency_agent_sessions s ON s.id = p.reserved_agent_id
-     WHERE p.tenant_id = $1::uuid AND p.account_id = $2::uuid AND p.promise_date IS NOT NULL
-       AND p.dispositioned_at >= $3::timestamptz AND p.dispositioned_at < $4::timestamptz
-       AND ${onCampaign('p.campaign_id', scope, campaignParam)}
+     WHERE ${promisedIn('p', 'p.campaign_id', scope, campaignParam)}
        AND s.tenant_id = $1::uuid AND s.account_id = $2::uuid${of('s.agent_user_id')}
     UNION ALL
     SELECT m.agent_user_id, m.dispositioned_at
       FROM agency_manual_calls m
-     WHERE m.tenant_id = $1::uuid AND m.account_id = $2::uuid AND m.promise_date IS NOT NULL
-       AND m.dispositioned_at >= $3::timestamptz AND m.dispositioned_at < $4::timestamptz
-       AND ${onCampaign('m.campaign_id', scope, campaignParam)}${of('m.agent_user_id')}
+     WHERE ${promisedIn('m', 'm.campaign_id', scope, campaignParam)}${of('m.agent_user_id')}
     UNION ALL
     SELECT i.answered_by_user_id, i.dispositioned_at
       FROM agency_inbound_calls i
-     WHERE i.tenant_id = $1::uuid AND i.account_id = $2::uuid AND i.promise_date IS NOT NULL
-       AND i.dispositioned_at >= $3::timestamptz AND i.dispositioned_at < $4::timestamptz
-       AND ${onCampaign('i.matched_campaign_id', scope, campaignParam)}${of('i.answered_by_user_id')}`;
+     WHERE ${promisedIn('i', 'i.matched_campaign_id', scope, campaignParam)}${of('i.answered_by_user_id')}`;
 }
 
 /**
@@ -272,21 +279,15 @@ export function teamPromiseCampaignsSql(scope: TeamScope): string {
     FROM (
       SELECT p.campaign_id
         FROM agency_call_attempts p
-       WHERE p.tenant_id = $1::uuid AND p.account_id = $2::uuid AND p.promise_date IS NOT NULL
-         AND p.dispositioned_at >= $3::timestamptz AND p.dispositioned_at < $4::timestamptz
-         AND ${onCampaign('p.campaign_id', scope, '$5')}
+       WHERE ${promisedIn('p', 'p.campaign_id', scope, '$5')}
       UNION ALL
       SELECT m.campaign_id
         FROM agency_manual_calls m
-       WHERE m.tenant_id = $1::uuid AND m.account_id = $2::uuid AND m.promise_date IS NOT NULL
-         AND m.dispositioned_at >= $3::timestamptz AND m.dispositioned_at < $4::timestamptz
-         AND ${onCampaign('m.campaign_id', scope, '$5')}
+       WHERE ${promisedIn('m', 'm.campaign_id', scope, '$5')}
       UNION ALL
       SELECT i.matched_campaign_id
         FROM agency_inbound_calls i
-       WHERE i.tenant_id = $1::uuid AND i.account_id = $2::uuid AND i.promise_date IS NOT NULL
-         AND i.dispositioned_at >= $3::timestamptz AND i.dispositioned_at < $4::timestamptz
-         AND ${onCampaign('i.matched_campaign_id', scope, '$5')}
+       WHERE ${promisedIn('i', 'i.matched_campaign_id', scope, '$5')}
     ) x`;
 }
 
