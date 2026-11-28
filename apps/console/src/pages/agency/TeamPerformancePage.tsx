@@ -7,13 +7,11 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import type { AgencyTeamPerformanceQuery } from '@magick-agency/contracts/api/agency/team-performance';
 import { useTenant } from '../../contexts/TenantContext';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
-import { COMPARE_SETTLE_MS, useCompareRead } from '../../hooks/useCompareRead';
+import { COMPARE_SETTLE_MS } from '../../hooks/useCompareRead';
 import { useTeamPerformance } from '../../hooks/useTeamPerformance';
-import { useRefetchOnReturn } from '../../hooks/useRefetchOnReturn';
-import { useVisibleInterval } from '../../hooks/useVisibleInterval';
-import { useAtLocalMidnight } from '../../hooks/useAtLocalMidnight';
+import { useHeldCampaigns } from '../../hooks/useHeldCampaigns';
+import { useZoneToday } from '../../hooks/useZoneToday';
 import { hasPermission } from '../../utils/permissions';
-import { listAgencyCampaigns, listArchivedAgencyCampaigns } from '../../api/agencyCampaigns';
 import { pickerCampaignName } from '../../utils/agencyCampaignArchive';
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
 import { ExportReportButton } from '../../components/agency/reports/ExportReportButton';
@@ -33,14 +31,14 @@ import {
   type TeamWindowPreset,
 } from '../../utils/agency/team/teamUrl';
 import { asOfWords, datesWords, mainLabel, periodWords, refreshFailedWords, staleWords } from '../../utils/agency/team/teamCopy';
-import { browserZone, todayIn } from '../../utils/reports/reportWindow';
+import { browserZone } from '../../utils/reports/reportWindow';
 import { TeamFilters } from '../../components/agency/team/TeamFilters';
 import { TeamTiles, TeamTilesSkeleton } from '../../components/agency/team/TeamTiles';
 import { MainOutcomePerDayChart } from '../../components/agency/team/MainOutcomePerDayChart';
 import { OutcomeBreakdown } from '../../components/agency/team/OutcomeBreakdown';
 import { TeamAgentsTable } from '../../components/agency/team/TeamAgentsTable';
 import { TeamReadError } from '../../components/agency/team/TeamReadError';
-import { isRetryableTeamError } from '../../api/teamPerformance';
+import { teamErrors } from '../../api/teamPerformance';
 import teamStyles from '../../components/agency/team/Team.module.css';
 import styles from './TeamPerformancePage.module.css';
 
@@ -95,16 +93,8 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
     [setParams],
   );
   const [zone] = useState(browserZone);
-  const today = useToday(zone, now);
-  const scope = `${tenantId}/${accountId}`;
-
-  // ── Campaigns ──
-  const campaignsRead = useCompareRead(scope, () => listAgencyCampaigns(tenantId, accountId));
-  const campaigns = campaignsRead.status === 'error' ? [] : campaignsRead.data;
-  const campaign = campaigns?.find((c) => c.id === state.campaignId) ?? null;
-  const heldMissing = campaigns !== null && state.campaignId !== null && campaign === null;
-  const archived = useCompareRead(heldMissing ? scope : null, () => listArchivedAgencyCampaigns(tenantId, accountId));
-  const heldArchived = heldMissing ? (archived.data?.find((c) => c.id === state.campaignId) ?? null) : null;
+  const today = useZoneToday(zone, now);
+  const { campaigns, heldArchived, campaignNamed } = useHeldCampaigns(tenantId, accountId, state.campaignId);
 
   // ── The window and the read ──
   const dates = teamWindowDates(state, today);
@@ -131,23 +121,18 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
   const setWindow = (preset: TeamWindowPreset) =>
     update(preset === 'custom' ? { window: preset, from: dates?.from ?? today, to: dates?.to ?? today } : { window: preset, from: null, to: null });
 
+  const chosen = campaignNamed(state.campaignId);
   const exportTarget = state.campaignId
     ? {
         kind: 'campaign' as const,
-        subject: { id: state.campaignId, name: campaign?.name ?? heldArchived?.name ?? null },
-        campaignTimezone: campaign?.default_timezone ?? heldArchived?.default_timezone ?? null,
+        subject: { id: state.campaignId, name: chosen?.name ?? null },
+        campaignTimezone: chosen?.default_timezone ?? null,
       }
     : { kind: 'account' as const, subject: { id: accountId, name: accountName } };
 
   const empty = data !== null && read.current && data.agents.length === 0 && data.totals.calls_handled === 0;
-  const stale = data !== null && !read.current && read.failed;
-  const staleCampaign = data
-    ? {
-        differs: data.campaign_id !== state.campaignId,
-        all: data.campaign_id === null,
-        name: campaigns?.find((c) => c.id === data.campaign_id)?.name ?? archived.data?.find((c) => c.id === data.campaign_id)?.name ?? null,
-      }
-    : null;
+  // `failed` holds only when the answer on screen is not the current question's.
+  const stale = data !== null && read.failed;
 
   return (
     <div className={styles.page}>
@@ -182,7 +167,11 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
       {read.failed ? <TeamReadError error={read.error} onRetry={read.retry} /> : null}
       {stale ? (
         <p className={teamStyles.note} role="status" data-testid="team-stale">
-          {staleWords(data, staleCampaign!)}
+          {staleWords(data, {
+            differs: data.campaign_id !== state.campaignId,
+            all: data.campaign_id === null,
+            name: campaignNamed(data.campaign_id)?.name ?? null,
+          })}
         </p>
       ) : null}
       {/* A failed quiet refresh keeps the figures up and says so calmly (no alert): the next tick
@@ -192,7 +181,7 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
           <p className={teamStyles.errorText}>{refreshFailedWords(data.as_of)}</p>
           {/* Try again when nothing else will read: refreshing has stopped, or this window is not
               read again on its own (the one read once more after its last day). */}
-          {(read.refreshStopped || !autoRefresh) && isRetryableTeamError(read.error) ? (
+          {(read.refreshStopped || !autoRefresh) && teamErrors.isRetryable(read.error) ? (
             <button type="button" className={teamStyles.linkButton} onClick={read.retry} data-testid="team-retry">
               Try again
             </button>
@@ -211,7 +200,7 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
         </div>
       ) : null}
 
-      {empty && data !== null ? (
+      {empty ? (
         <div className={styles.answer}>
           <EmptyState
             icon={<Users size={32} />}
@@ -259,20 +248,4 @@ export function TeamPerformanceView({ tenantId, accountId, accountName, canCompa
       ) : null}
     </div>
   );
-}
-
-/**
- * Today in `zone`, kept current: checked each minute while the tab is shown, when it is shown or
- * focused again, and at local midnight, so a page left open past midnight moves Today with it.
- * `now` (tests) fixes the clock.
- */
-function useToday(zone: string, now: Date | undefined): string {
-  const [, setDay] = useState(() => todayIn(zone, now ?? new Date()));
-  const check = () => {
-    if (!now) setDay(todayIn(zone, new Date()));
-  };
-  useVisibleInterval(check, 60_000, !now);
-  useRefetchOnReturn(check);
-  useAtLocalMidnight(check, !now);
-  return todayIn(zone, now ?? new Date());
 }

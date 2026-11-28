@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import type { AgencyTeamPerformance, AgencyTeamPerformanceQuery } from '@magick-agency/contracts/api/agency/team-performance';
+import {
+  TEAM_PERFORMANCE_CACHE_TTL_MS,
+  type AgencyTeamPerformance,
+  type AgencyTeamPerformanceQuery,
+} from '@magick-agency/contracts/api/agency/team-performance';
 import { ApiError } from '../../api/client';
 import { TEAM_ALL_CAMPAIGNS, TEAM_EMPTY, TEAM_ONE_CAMPAIGN, TEAM_AGENT } from '../helpers/teamRecorded';
 
@@ -640,6 +644,22 @@ describe('reading again on its own (§2 States)', () => {
       expect(mocks.getTeamPerformance.mock.calls.length > 1, `when=${when}`).toBe(again);
       unmount();
     }
+  });
+
+  it('does not read again on return while the answer is younger than the server’s cache', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    // As the server: the figures run to the moment they were read.
+    mocks.getTeamPerformance.mockImplementation(async (q: AgencyTeamPerformanceQuery) => ({ ...answerFor(q), as_of: new Date().toISOString() }));
+    renderView();
+    await screen.findByTestId('team-tiles');
+    vi.setSystemTime(NOW.getTime() + TEAM_PERFORMANCE_CACHE_TTL_MS - 1_000);
+    fireEvent.focus(window);
+    await settle();
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(NOW.getTime() + TEAM_PERFORMANCE_CACHE_TTL_MS);
+    fireEvent.focus(window);
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2));
   });
 
   it('does not ask again, on the timer or on return, after a refusal that would only repeat', async () => {

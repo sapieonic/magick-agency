@@ -14,10 +14,9 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { COMPARE_SETTLE_MS, useCompareRead, useSettledKey } from '../../hooks/useCompareRead';
-import { useRefetchOnReturn } from '../../hooks/useRefetchOnReturn';
-import { useVisibleInterval } from '../../hooks/useVisibleInterval';
+import { useHeldCampaigns } from '../../hooks/useHeldCampaigns';
+import { useZoneToday } from '../../hooks/useZoneToday';
 import { hasPermission } from '../../utils/permissions';
-import { listAgencyCampaigns, listArchivedAgencyCampaigns } from '../../api/agencyCampaigns';
 import { pickerCampaignName } from '../../utils/agencyCampaignArchive';
 import { getCompareOptions, listCompareViews, queryCompare } from '../../api/compare';
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
@@ -38,7 +37,7 @@ import {
 import { applyToCatalog, droppedNote } from '../../utils/agency/compare/compareMetrics';
 import { resolveShape, type CompareShape } from '../../utils/agency/compare/compareShape';
 import { defaultRosterCampaign } from '../../utils/agencyAgentRoster';
-import { browserZone, todayIn } from '../../utils/reports/reportWindow';
+import { browserZone } from '../../utils/reports/reportWindow';
 import { CompareAgentChips, cohortAgentName } from '../../components/agency/compare/CompareAgentChips';
 import { agentName } from '../../utils/agency/compare/compareFindingsCopy';
 import { CompareBoard } from '../../components/agency/compare/CompareBoard';
@@ -118,7 +117,7 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
     [setParams],
   );
   const [zone] = useState(browserZone);
-  const today = useToday(zone, now);
+  const today = useZoneToday(zone, now);
   const pickerId = useId();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [viewNote, setViewNote] = useState<string | null>(null);
@@ -128,20 +127,12 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
   const scope = `${tenantId}/${accountId}`;
 
   // ── Campaigns ──
-  const campaignsRead = useCompareRead(scope, () => listAgencyCampaigns(tenantId, accountId));
-  const campaignsFailed = campaignsRead.status === 'error';
-  const campaigns = campaignsFailed ? [] : campaignsRead.data;
+  const { campaigns, failed: campaignsFailed, campaign, heldArchived } = useHeldCampaigns(tenantId, accountId, state.campaignId);
   useEffect(() => {
     if (state.campaignId || !campaigns || campaigns.length === 0) return;
     const first = defaultRosterCampaign(campaigns);
     if (first) update({ campaignId: first });
   }, [state.campaignId, campaigns, update]);
-  const campaign = campaigns?.find((c) => c.id === state.campaignId) ?? null;
-  // A campaign the URL holds that the list leaves out may be archived since: it is named
-  // "(archived)", as every other picker names one, rather than by its name alone.
-  const heldMissing = campaigns !== null && state.campaignId !== null && campaign === null;
-  const archived = useCompareRead(heldMissing ? scope : null, () => listArchivedAgencyCampaigns(tenantId, accountId));
-  const heldArchived = heldMissing ? (archived.data?.find((c) => c.id === state.campaignId) ?? null) : null;
 
   // ── The window ──
   const dates = windowDates(state, today);
@@ -402,20 +393,4 @@ export function CompareAgentsView({ tenantId, accountId, userId, canListen, now,
       ) : null}
     </div>
   );
-}
-
-/**
- * Today in `zone`, kept current: read on every render, and the page re-renders when the day
- * turns (checked each minute while the tab is shown, and when it is shown or focused again), so a
- * page left open past midnight moves Today, the presets and the date pickers' latest day with
- * it. `now` (tests) fixes the clock.
- */
-function useToday(zone: string, now: Date | undefined): string {
-  const [, setDay] = useState(() => todayIn(zone, now ?? new Date()));
-  const check = () => {
-    if (!now) setDay(todayIn(zone, new Date()));
-  };
-  useVisibleInterval(check, 60_000, !now);
-  useRefetchOnReturn(check);
-  return todayIn(zone, now ?? new Date());
 }

@@ -337,6 +337,3 @@ export const TEAM_ERROR_MESSAGES: Readonly<Record<TeamRefusalCode, string>> = {
 
 /** A 403 without a code. */
 export const TEAM_FORBIDDEN_MESSAGE = 'You don’t have permission to see the team’s figures.';
-
-/** No answer from the server at all. */
-export const TEAM_NETWORK_MESSAGE = 'Couldn’t reach the server. Check your connection and try again.';

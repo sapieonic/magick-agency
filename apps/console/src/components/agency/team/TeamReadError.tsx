@@ -1,4 +1,4 @@
-import { isRetryableTeamError, teamErrorMessage } from '../../../api/teamPerformance';
+import { teamErrors } from '../../../api/teamPerformance';
 import styles from './Team.module.css';
 
 /**
@@ -7,10 +7,10 @@ import styles from './Team.module.css';
  * refusal needs the reader to change a filter first, so asking again would only fail again.
  */
 export function TeamReadError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
-  const canRetry = isRetryableTeamError(error);
+  const canRetry = teamErrors.isRetryable(error);
   return (
     <div className={`${styles.note} ${styles.errorBox}`} role="alert" data-testid="team-error">
-      <p className={styles.errorText}>{teamErrorMessage(error, 'The team’s figures couldn’t be loaded.')}</p>
+      <p className={styles.errorText}>{teamErrors.message(error, 'The team’s figures couldn’t be loaded.')}</p>
       {canRetry ? (
         <button type="button" className={styles.linkButton} onClick={onRetry} data-testid="team-retry">
           Try again

@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { COMPARE_PAGE_MAX_AGENTS } from '@magick-agency/contracts/api/agency/compare';
 import { TEAM_OUTCOME_BARS_MAX } from '@magick-agency/contracts/api/agency/team-performance';
-import { ApiError } from '../../api/client';
-import { isRetryableTeamError, teamErrorMessage } from '../../api/teamPerformance';
 import { compareStateFromParams } from '../../utils/agency/compare/compareUrl';
 import {
   answerAwaitsFinalRead,
@@ -261,20 +259,6 @@ describe('the words (teamCopy)', () => {
     expect(compareDisabledReason(false, 2)).toBe('Choose one campaign to see who’s worth a look and to compare agents.');
     expect(compareDisabledReason(true, 0)).toBe('Pick up to 3 agents to compare.');
     expect(compareDisabledReason(true, 1)).toBeNull();
-  });
-
-  it('words each refusal, and offers Try again only for one that can clear by itself', () => {
-    const refusal = (status: number, code?: string) => new ApiError(status, code ? { error: 'x', code, message: 'fallback' } : { error: 'x', message: 'fallback' });
-    expect(teamErrorMessage(refusal(503, 'team_timed_out'), 'f')).toBe('Too much to read at once. Try a shorter period.');
-    expect(isRetryableTeamError(refusal(503, 'team_timed_out'))).toBe(true);
-    expect(isRetryableTeamError(refusal(429, 'team_busy'))).toBe(true);
-    expect(isRetryableTeamError(refusal(400, 'team_window_invalid'))).toBe(false);
-    expect(isRetryableTeamError(refusal(404, 'team_campaign_not_found'))).toBe(false);
-    expect(isRetryableTeamError(refusal(403, 'feature_disabled'))).toBe(false);
-    expect(isRetryableTeamError(refusal(502))).toBe(true);
-    expect(isRetryableTeamError(new TypeError('Failed to fetch'))).toBe(true);
-    expect(teamErrorMessage(new TypeError('Failed to fetch'), 'f')).toMatch(/Couldn’t reach the server/);
-    expect(teamErrorMessage(refusal(403), 'f')).toBe('You don’t have permission to see the team’s figures.');
   });
 });
 

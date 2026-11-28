@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useRef } from 'react';
-import type { AgencyTeamPerformance, AgencyTeamPerformanceQuery } from '@magick-agency/contracts/api/agency/team-performance';
-import { getTeamPerformance, isRetryableTeamError, teamErrorCode } from '../api/teamPerformance';
+import { useEffect, useRef } from 'react';
+import {
+  TEAM_PERFORMANCE_CACHE_TTL_MS,
+  type AgencyTeamPerformance,
+  type AgencyTeamPerformanceQuery,
+} from '@magick-agency/contracts/api/agency/team-performance';
+import { getTeamPerformance, teamErrors } from '../api/teamPerformance';
 import { answerAwaitsFinalRead } from '../utils/agency/team/teamUrl';
 import { COMPARE_SETTLE_MS, useCompareRead, useSettledKey } from './useCompareRead';
 import { useVisibleInterval } from './useVisibleInterval';
@@ -43,7 +47,16 @@ interface TeamPerformanceRead {
  * the filters to change or for the reader's Try again.
  */
 function refreshMayFollow(error: unknown): boolean {
-  return isRetryableTeamError(error) && teamErrorCode(error) !== 'team_timed_out';
+  return teamErrors.isRetryable(error) && teamErrors.code(error) !== 'team_timed_out';
+}
+
+/**
+ * The answer was worked out less than the server's cache life ago (`as_of`), so asking the same
+ * question again now would get the same answer back. A clock behind the server's counts as not.
+ */
+function withinCache(data: AgencyTeamPerformance, nowMs: number): boolean {
+  const age = nowMs - Date.parse(data.as_of);
+  return age >= 0 && age < TEAM_PERFORMANCE_CACHE_TTL_MS;
 }
 
 /**
@@ -55,7 +68,8 @@ function refreshMayFollow(error: unknown): boolean {
  *   and the last answer stays on screen, marked as updating;
  * - `autoRefresh` (the page's rule, `windowAutoRefreshes`: the window holds today and spans at
  *   most 7 local days) reads the same question again every {@link TEAM_REFRESH_MS} while the page
- *   is visible and when the reader comes back to it. Those reads keep the answer up quietly (no
+ *   is visible, and when the reader comes back to it unless the answer on screen is younger than
+ *   the server's cache ({@link withinCache}). Those reads keep the answer up quietly (no
  *   "Updating…": the question has not changed), and a failed one leaves the figures up
  *   (`refreshFailed`). After a failure that asking again would only repeat, or a timeout, nothing
  *   is read on its own until the question changes or the reader presses Try again
@@ -86,31 +100,26 @@ export function useTeamPerformance(
     askedKey !== key,
   );
 
-  // The last failure of the question asked, held while that question is asked again and until it
-  // answers or the question changes (derived each render, so it is the same however often React
-  // renders).
-  const held = useRef<{ key: string; error: unknown } | null>(null);
-  if (read.status === 'error' && askedKey !== null && read.doneKey === askedKey) held.current = { key: askedKey, error: read.error };
-  else if (read.status !== 'loading' || held.current?.key !== askedKey) held.current = null;
-  const failure = held.current;
-  const lastFailed = failure !== null;
-  const stopped = lastFailed && !refreshMayFollow(failure.error);
+  // The last failure of the question asked: `useCompareRead` keeps it while the same question is
+  // asked again, until it answers or the question changes.
+  const failure = read.doneKey === askedKey ? read.error : null;
+  const stopped = failure !== null && !refreshMayFollow(failure);
+  const current = read.data !== null && read.dataKey === key;
 
   // A refresh never stacks on a read in flight (it would cancel it and start the same read again),
-  // and never follows a failure it may not (refreshMayFollow).
-  const blocked = useRef(false);
-  blocked.current = read.status === 'loading' || stopped;
+  // and never follows a failure it may not (refreshMayFollow). Both hooks read it through a ref,
+  // so this render's closure is the one called.
   const { retry } = read;
-  const refresh = useCallback(() => {
-    if (!blocked.current) retry();
-  }, [retry]);
   const on = autoRefresh && askedKey !== null;
+  const refresh = () => {
+    if (on && read.status !== 'loading' && !stopped) retry();
+  };
   useVisibleInterval(refresh, TEAM_REFRESH_MS, on);
+  // Coming back to an answer younger than the server's cache would be answered from it: nothing
+  // new to show, so only the minute's refresh reads it again.
   useRefetchOnReturn(() => {
-    if (on) refresh();
+    if (!(current && withinCache(read.data!, Date.now()))) refresh();
   });
-
-  const current = read.data !== null && read.dataKey === key;
 
   // The window has ended under an answer that ran to now: read it once more, once per question
   // while the page is open, whatever that read answers. The answer can still run to then (the
@@ -123,15 +132,15 @@ export function useTeamPerformance(
     retry();
   }, [awaitsFinal, key, retry]);
 
-  const failedHere = lastFailed && askedKey === key;
+  const failedHere = failure !== null && askedKey === key;
   return {
     data: read.data,
     current,
     updating: !current && !failedHere && key !== null,
-    error: failedHere ? failure.error : null,
+    error: failedHere ? failure : null,
     failed: failedHere && !current,
     refreshFailed: failedHere && current,
-    refreshStopped: failedHere && stopped,
+    refreshStopped: stopped && askedKey === key,
     retry,
   };
 }

@@ -20,7 +20,7 @@ vi.mock('../../api/client', async () => {
   return { ...actual, apiFetch: mocks.apiFetch };
 });
 
-import { getTeamPerformance, isRetryableTeamError, teamErrorMessage } from '../../api/teamPerformance';
+import { getTeamPerformance, teamErrors } from '../../api/teamPerformance';
 import { ApiError } from '../../api/client';
 import { TEAM_ERROR_MESSAGES } from '../../utils/agency/team/teamCopy';
 
@@ -61,15 +61,23 @@ describe('refusals', () => {
 
   it('words every refusal code as the console, never the server', () => {
     for (const code of AGENCY_TEAM_PERFORMANCE_ERROR_CODES) {
-      expect(teamErrorMessage(refusal(code), 'fallback')).toBe(TEAM_ERROR_MESSAGES[code]);
+      expect(teamErrors.message(refusal(code), 'fallback')).toBe(TEAM_ERROR_MESSAGES[code]);
     }
-    expect(teamErrorMessage(refusal('team_timed_out'), 'fallback')).toBe('Too much to read at once. Try a shorter period.');
+    expect(teamErrors.message(refusal('team_timed_out'), 'fallback')).toBe('Too much to read at once. Try a shorter period.');
   });
 
   it('offers Try again only for busy (429) and timed out (503) among the codes', () => {
-    const retryable = AGENCY_TEAM_PERFORMANCE_ERROR_CODES.filter((code) => isRetryableTeamError(refusal(code)));
+    const retryable = AGENCY_TEAM_PERFORMANCE_ERROR_CODES.filter((code) => teamErrors.isRetryable(refusal(code)));
     expect(retryable.sort()).toEqual(['team_busy', 'team_timed_out']);
     expect(AGENCY_TEAM_PERFORMANCE_ERROR_STATUS.team_busy).toBe(429);
     expect(AGENCY_TEAM_PERFORMANCE_ERROR_STATUS.team_timed_out).toBe(503);
+  });
+
+  it('offers Try again for a 5xx without a code and for no answer, and words a plain 403 and the network', () => {
+    expect(teamErrors.isRetryable(new ApiError(502, { error: 'x', message: 'fallback' }))).toBe(true);
+    expect(teamErrors.isRetryable(new TypeError('Failed to fetch'))).toBe(true);
+    expect(teamErrors.isRetryable(new ApiError(403, { error: 'x', code: 'feature_disabled', message: 'fallback' }))).toBe(false);
+    expect(teamErrors.message(new TypeError('Failed to fetch'), 'f')).toBe('Couldn’t reach the server. Check your connection and try again.');
+    expect(teamErrors.message(new ApiError(403, { error: 'x', message: 'fallback' }), 'f')).toBe('You don’t have permission to see the team’s figures.');
   });
 });
