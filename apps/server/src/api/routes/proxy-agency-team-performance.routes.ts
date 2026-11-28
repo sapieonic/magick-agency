@@ -45,10 +45,7 @@ export function defaultTeamPerformanceRouteDeps(): TeamPerformanceRouteDeps {
       tenantId: request.tenantId!,
       ...(request.accountId ? { accountId: request.accountId } : {}),
     }),
-    async campaignInAccount(tenantId, accountId, campaignId) {
-      const row = await agencyCampaignRepository.findById(campaignId);
-      return row !== null && row.tenant_id === tenantId && row.account_id === accountId;
-    },
+    campaignInAccount: (tenantId, accountId, campaignId) => agencyCampaignRepository.existsInAccount(tenantId, accountId, campaignId),
     databaseZone: postgresZoneName,
     today: (zone) => localDateOf(new Date(), zone),
   };

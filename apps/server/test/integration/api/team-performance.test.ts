@@ -48,7 +48,7 @@ import {
   type Actor, type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
 import { bulkInsert } from '../agency/insights-rollup-world.js';
-import { agencyInsightsRollupRepository, agencyTeamPerformanceReadRepository } from '../../../src/db/repositories/agency.repository.js';
+import { agencyCampaignRepository, agencyInsightsRollupRepository, agencyTeamPerformanceReadRepository } from '../../../src/db/repositories/agency.repository.js';
 import { teamPromiseCampaignsSql, teamPromisesSql } from '../../../src/db/repositories/agency/team-performance-reads.js';
 import { localDateOf, localDayBounds, localInstant } from '../../../src/agency/reports/schedule.js';
 import { teamTrendRange } from '../../../src/agency/team-performance/assemble.js';
@@ -663,6 +663,17 @@ describe('isolation', () => {
     expect((await asB(url({ campaign_id: c0 }))).statusCode).toBe(404);
     const theirs = await asB(url({ campaign_id: campaignB }));
     expect((theirs.json() as AgencyTeamPerformance).trend).toEqual({ span: 'last_working_days', dates: [WORK[1]], counts: [1] });
+  });
+
+  it('the route\'s campaign probe: the tenant\'s AND the account\'s campaign, else none', async () => {
+    const exists = (tenant: string, account: string, id: string) => agencyCampaignRepository.existsInAccount(tenant, account, id);
+    expect(await exists(floor.tenant, floor.account, c0)).toBe(true);
+    expect(await exists(floor.tenant, accountB, campaignB)).toBe(true);
+    expect(await exists(floor.tenant, accountB, c0)).toBe(false);
+    expect(await exists(floor.tenant, floor.account, campaignB)).toBe(false);
+    expect(await exists(other.tenant, other.account, c0)).toBe(false);
+    expect(await exists(floor.tenant, floor.account, other.campaigns[0]!)).toBe(false);
+    expect(await exists(floor.tenant, floor.account, randomUUID())).toBe(false);
   });
 });
 
