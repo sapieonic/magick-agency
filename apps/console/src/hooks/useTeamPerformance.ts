@@ -112,13 +112,14 @@ export function useTeamPerformance(
 
   const current = read.data !== null && read.dataKey === key;
 
-  // The window has ended under an answer that ran to now: read it once more (once per question,
-  // whether that read answers or not).
-  const finalised = useRef<string | null>(null);
+  // The window has ended under an answer that ran to now: read it once more, once per question
+  // while the page is open, whatever that read answers. The answer can still run to then (the
+  // server's 30 s cache), and a question asked again after another must not read twice more.
+  const finalised = useRef(new Set<string>());
   const awaitsFinal = current && key === askedKey && answerAwaitsFinalRead(read.data!, today);
   useEffect(() => {
-    if (!awaitsFinal || key === null || finalised.current === key) return;
-    finalised.current = key;
+    if (!awaitsFinal || key === null || finalised.current.has(key)) return;
+    finalised.current.add(key);
     retry();
   }, [awaitsFinal, key, retry]);
 

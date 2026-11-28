@@ -765,12 +765,23 @@ describe('reading again on its own (§2 States)', () => {
     await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2));
     // While it reads, the figures on screen still say how far they ran.
     expect(screen.getByTestId('team-summary').textContent).toBe('15 Nov to 17 Nov, up to 8:45 AM');
-    // An answer that still ran to then is not read again and again.
+    // An answer that still ran to then (the server's 30 s cache) is not read again and again.
     act(() => answer(answerFor(lastQuery())));
     await settle();
     view.at(new Date('2026-11-18T09:50:00.000Z'));
     await settle();
     expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2);
+    // Nor once more when the reader comes back to it from another campaign.
+    mocks.getTeamPerformance.mockImplementation(async (q: AgencyTeamPerformanceQuery) => answerFor(q));
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Nov dues' })).toBeTruthy());
+    fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: CAMPAIGN } });
+    // That campaign's own read, and its one read more.
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(4));
+    fireEvent.change(screen.getByTestId('team-campaign'), { target: { value: '' } });
+    await waitFor(() => expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(5));
+    await settle();
+    await settle();
+    expect(mocks.getTeamPerformance.mock.calls.map(([q]) => q.campaign_id ?? 'all')).toEqual(['all', 'all', CAMPAIGN, CAMPAIGN, 'all']);
   });
 });
 
