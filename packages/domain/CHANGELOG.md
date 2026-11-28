@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.18.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.17.1...domain-v0.18.0) (2026-11-28)
+
+
+### Features
+
+* **server,console,contracts,domain,observability:** Team performance on Reports, how the whole team did on one campaign or all (TP1–TP20) ([#138](https://github.com/sapieonic/magick-agency/issues/138)) ([0f40623](https://github.com/sapieonic/magick-agency/commit/0f40623bbe22c148633410f57c00e006ccfb5a48))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.33.0
+
 ## [0.17.1](https://github.com/sapieonic/magick-agency/compare/domain-v0.17.0...domain-v0.17.1) (2026-11-26)
 
 

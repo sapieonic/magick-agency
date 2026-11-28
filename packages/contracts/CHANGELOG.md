@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.32.0...contracts-v0.33.0) (2026-11-28)
+
+
+### Features
+
+* **console,server:** export the campaign call log with chosen analysis fields ([#136](https://github.com/sapieonic/magick-agency/issues/136)) ([33e4d15](https://github.com/sapieonic/magick-agency/commit/33e4d154ea580dcc6240e2d847023915dd3e340e))
+* **server,console,contracts,domain,observability:** Team performance on Reports, how the whole team did on one campaign or all (TP1–TP20) ([#138](https://github.com/sapieonic/magick-agency/issues/138)) ([0f40623](https://github.com/sapieonic/magick-agency/commit/0f40623bbe22c148633410f57c00e006ccfb5a48))
+
 ## [0.32.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.31.0...contracts-v0.32.0) (2026-11-26)
 
 

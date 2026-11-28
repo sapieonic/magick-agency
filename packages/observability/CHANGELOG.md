@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.20.0...observability-v0.21.0) (2026-11-28)
+
+
+### Features
+
+* **server,console,contracts,domain,observability:** Team performance on Reports, how the whole team did on one campaign or all (TP1–TP20) ([#138](https://github.com/sapieonic/magick-agency/issues/138)) ([0f40623](https://github.com/sapieonic/magick-agency/commit/0f40623bbe22c148633410f57c00e006ccfb5a48))
+
 ## [0.20.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.19.0...observability-v0.20.0) (2026-11-26)
 
 
