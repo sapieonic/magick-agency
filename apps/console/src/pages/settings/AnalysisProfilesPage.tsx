@@ -18,10 +18,10 @@ import { formatDate } from '@magick-agency/web-ui/format';
 import { toDimensionKey } from '../../utils/snake-case';
 import type { CallAnalysisProfile, AnalyticsDimension } from '../../types/call-analysis-profile';
 import { MAX_ANALYSIS_DIMENSIONS } from '../../types/call-analysis-profile';
+import { DIMENSION_TYPE_LABELS } from '../../utils/analysisDimensionTypes';
 import {
   EMPTY_PROFILE_FORM,
   EMPTY_DIMENSION,
-  DIMENSION_TYPE_LABELS,
   profileToForm,
   toValidDimensions,
   buildCreatePayload,

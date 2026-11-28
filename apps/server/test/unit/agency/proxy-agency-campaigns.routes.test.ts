@@ -2350,6 +2350,9 @@ describe('every campaign route carries its RBAC permission', () => {
     // The Call log (CL11): the attempt list's record with the soft-phone calls logged to the
     // campaign beside it, on the attempt list's floor. Never lower: it carries every number.
     ['get', '/campaigns/:id/call-log', 'agency.supervise'],
+    // What Export with fields can add (docs/call-log.md §10): the export's own floor. The
+    // analysis groups are further behind the account's analytics setting, inside the route.
+    ['get', '/campaigns/:id/call-log/export-fields', 'agency.supervise'],
     ['get', '/campaigns/:id/contacts', 'agency.supervise'],
     ['get', '/campaigns/:id/contacts/:contactId', 'agency.supervise'],
     // The exports carry every phone number on the campaign in one file. They

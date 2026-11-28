@@ -1,4 +1,5 @@
 import type { AgencyAttemptCallDetail as WireAttemptCallDetail } from '@magick-agency/contracts/api/agency/attempt-call';
+import type { AgencyCallExportFieldsResponse } from '@magick-agency/contracts/api/agency/call-export-fields';
 import { API_BASE } from '../config';
 import { apiFetch, ApiError } from './client';
 import { buildAuthHeaders } from './authHeaders';
@@ -415,4 +416,23 @@ export async function downloadSpineCsv(
   accountId?: string,
 ): Promise<SpineCsvDownload> {
   return fetchCsvExport(`${AGENCY_BASE}/campaigns/${campaignId}/${kind}.csv${toQuery(filters)}`, tenantId, accountId);
+}
+
+/**
+ * Export with fields (`docs/call-log.md` §10): what can be added to the campaign call export of
+ * the calls `query` matches. `query` is the export's own (`callLogExportQuery`), so the list is
+ * of exactly the calls the file holds. `agency.supervise`.
+ */
+export async function getCallExportFields(
+  campaignId: string,
+  query: Record<string, string | string[] | undefined>,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyCallExportFieldsResponse> {
+  return apiFetch<AgencyCallExportFieldsResponse>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/call-log/export-fields${toQuery(query)}`,
+    {},
+    tenantId,
+    accountId,
+  );
 }

@@ -8,10 +8,9 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { hasPermission } from '@magick-agency/contracts/rbac';
 import type { AgencyManualCall } from '@magick-agency/contracts/agency';
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
-import { accountSettingsRepository } from '@magick-agency/db/repositories/account-settings.repository';
 import { createChildLogger } from '@magick-agency/observability';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
-import { DEFAULT_ALLOW_RECORDING, DEFAULT_ANALYZE_CALLS } from '../../../settings/agency-account-settings.js';
+import { readAccountMediaGrants } from '../helpers/account-media-grants.js';
 import type { CoreCallResult } from '../../core-dispatch.js';
 import { isSoftphoneCoreAnswer, softphoneRefusalBody } from '../agency/softphone-answer.js';
 
@@ -192,14 +191,7 @@ export async function accountMediaGrants(request: FastifyRequest): Promise<{ rec
   const tenantId = request.tenantId;
   const accountId = request.accountId;
   if (!tenantId || !accountId) return { recording: false, analytics: false };
-  try {
-    const row = await accountSettingsRepository.findByTenantAndAccount(tenantId, accountId);
-    return {
-      recording: (row?.allow_recording ?? DEFAULT_ALLOW_RECORDING) === true,
-      analytics: (row?.analyze_calls ?? DEFAULT_ANALYZE_CALLS) === true,
-    };
-  } catch (err) {
+  return readAccountMediaGrants(tenantId, accountId, (err) => {
     log.error({ err, tenantId }, 'soft-phone: account settings resolve failed — failing closed');
-    return { recording: false, analytics: false };
-  }
+  });
 }

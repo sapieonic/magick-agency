@@ -152,6 +152,8 @@ const EXPECTED_CAMPAIGN_ROUTES = [
   'GET /proxy/agency/campaigns/:id/attempts.csv',
   // The Call log's one list of every call type (CL11, docs/call-log.md).
   'GET /proxy/agency/campaigns/:id/call-log',
+  // What Export with fields can add to the call export (docs/call-log.md §10, CL45).
+  'GET /proxy/agency/campaigns/:id/call-log/export-fields',
   'GET /proxy/agency/campaigns/:id/contacts',
   'GET /proxy/agency/campaigns/:id/contacts.csv',
   'GET /proxy/agency/campaigns/:id/contacts/:contactId',
