@@ -1,7 +1,9 @@
 /**
  * Team performance's read, with its guards (docs/team-performance.md §4, TP20): it runs in the
  * primary against the live database over the whole account's cohort, so it is bounded on every side
- * by Compare agents' guards (`agency/compare/read.ts`, whose rules this reuses rather than restates):
+ * by Compare agents' guards (`agency/compare/read.ts`, whose rules this reuses rather than restates),
+ * through the same mechanics (`agency/budgeted-read.ts`) with Team performance's limits, codes and
+ * metrics:
  *
  *  - **One snapshot, one deadline.** Every statement runs on one connection in a read-only REPEATABLE
  *    READ transaction (`withCancellableRead`), so the figures agree with each other, under
@@ -33,8 +35,6 @@
  * Metrics: `agency_team_performance_read_seconds{result}` per read that ran,
  * `agency_team_performance_reads_refused_total{reason}` per guard refusal.
  */
-import type { PoolClient } from 'pg';
-import { withCancellableRead } from '@magick-agency/db/utils/cancellable-read';
 import { TtlCache } from '@magick-agency/db/utils/ttl-cache';
 import {
   TEAM_PERFORMANCE_CACHE_TTL_MS,
@@ -45,7 +45,6 @@ import {
 import {
   agencyTeamPerformanceReadSeconds,
   agencyTeamPerformanceReadsRefusedTotal,
-  type CompareReadResult,
 } from '@magick-agency/observability/metrics/agency';
 import {
   agencyTeamPerformanceReadRepository as repo,
@@ -55,21 +54,17 @@ import {
   type TeamScope,
 } from '../../db/repositories/agency.repository.js';
 import { foldOccupancy, rosterParams } from '../agent-record.js';
-import { agentNamesOrNone, filterRowsByMembership } from '../agency-agent-identity.js';
+import { agentNamesOrNone } from '../agency-agent-identity.js';
+import { BudgetedReads, SharedReads } from '../budgeted-read.js';
 import { effectiveCatalog } from '../disposition-policy.js';
 import { localDayBounds } from '../reports/schedule.js';
 import {
-  COMPARE_CANCEL_GRACE_MS,
-  COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER,
-  COMPARE_STATEMENT_TIMEOUT_MARGIN_MS,
-  COMPARE_STATEMENT_TIMEOUT_SLACK_MS,
+  COMPARE_STATEMENT_BUDGET,
+  cohortMembership,
   compareGlobalReadLimit,
   defaultCompareReadDeps,
-  isStatementTimeout,
-  readDeadline,
-  TenantReadLimiter,
+  groupBy,
   type CompareReadDeps,
-  type ReadDeadline,
 } from '../compare/read.js';
 import {
   assembleTeamPerformance,
@@ -127,25 +122,9 @@ export function teamPerformanceCacheKey(q: TeamPerformanceRead): string {
   return JSON.stringify([q.tenantId, q.accountId, q.campaignId, q.from, q.to, q.timezone]);
 }
 
-/**
- * One read in flight, shared by every request for its key that arrives before it settles (a joiner
- * takes no slot). It holds ONE slot, released when it settles; aborted when every request waiting on
- * it has gone.
- */
-interface SharedLoad {
-  promise: Promise<AgencyTeamPerformance>;
-  controller: AbortController;
-  waiters: number;
-  settled: boolean;
-}
-
-const noop = (): void => undefined;
-
 export class TeamPerformanceReads {
-  private readonly cache: TtlCache<AgencyTeamPerformance>;
-  private readonly loads = new Map<string, SharedLoad>();
-  private readonly limiter: TenantReadLimiter;
-  private readonly timeoutMs: number;
+  private readonly answers: SharedReads<AgencyTeamPerformance>;
+  private readonly reads: BudgetedReads;
   private readonly deps: TeamReadDeps;
 
   constructor(opts: {
@@ -157,14 +136,20 @@ export class TeamPerformanceReads {
     timeoutMs?: number;
   } = {}) {
     this.deps = { ...defaultTeamReadDeps(), ...opts.deps };
-    this.cache = new TtlCache<AgencyTeamPerformance>({
-      ttlMs: opts.ttlMs ?? TEAM_PERFORMANCE_CACHE_TTL_MS, maxEntries: TEAM_PERFORMANCE_CACHE_MAX_ENTRIES, name: 'agency-team-performance',
+    this.reads = new BudgetedReads({
+      deps: this.deps,
+      perTenant: opts.perTenant ?? TEAM_PERFORMANCE_TENANT_CONCURRENT_READS,
+      global: opts.global ?? (() => compareGlobalReadLimit(this.deps.poolMax())),
+      timeoutMs: opts.timeoutMs ?? TEAM_PERFORMANCE_READ_TIMEOUT_MS,
+      budget: COMPARE_STATEMENT_BUDGET,
+      busy: () => new TeamRefusal('team_busy'),
+      timedOut: () => new TeamRefusal('team_timed_out'),
+      aborted: () => new TeamAborted(),
+      refused: (reason) => agencyTeamPerformanceReadsRefusedTotal.inc({ reason }),
     });
-    this.limiter = new TenantReadLimiter(
-      opts.perTenant ?? TEAM_PERFORMANCE_TENANT_CONCURRENT_READS,
-      opts.global ?? (() => compareGlobalReadLimit(this.deps.poolMax())),
-    );
-    this.timeoutMs = opts.timeoutMs ?? TEAM_PERFORMANCE_READ_TIMEOUT_MS;
+    this.answers = new SharedReads(this.reads, new TtlCache<AgencyTeamPerformance>({
+      ttlMs: opts.ttlMs ?? TEAM_PERFORMANCE_CACHE_TTL_MS, maxEntries: TEAM_PERFORMANCE_CACHE_MAX_ENTRIES, name: 'agency-team-performance',
+    }));
   }
 
   /**
@@ -172,116 +157,22 @@ export class TeamPerformanceReads {
    * under the limits. Throws {@link TeamRefusal}; {@link TeamAborted} when `signal` aborts first.
    */
   async read(q: TeamPerformanceRead, signal?: AbortSignal): Promise<AgencyTeamPerformance> {
-    if (signal?.aborted) throw new TeamAborted();
-    const key = teamPerformanceCacheKey(q);
-    return this.cache.get(key) ?? this.wait(this.loadFor(key, q), key, signal);
+    return this.answers.get(teamPerformanceCacheKey(q), q.tenantId, (gone) => this.readAnswer(q, gone), signal);
   }
 
   /** Slots the tenant holds now. Test and diagnostic use. */
   inFlight(tenantId: string): number {
-    return this.limiter.inFlight(tenantId);
+    return this.reads.inFlight(tenantId);
   }
 
   /** Drop every cached answer. */
   clear(): void {
-    this.cache.clear();
-  }
-
-  /** The read in flight for `key`, or a new one holding a slot (`team_busy` when none is free). */
-  private loadFor(key: string, q: TeamPerformanceRead): SharedLoad {
-    const running = this.loads.get(key);
-    if (running) return running;
-    const release = this.limiter.tryAcquire(q.tenantId);
-    if (release === null) {
-      agencyTeamPerformanceReadsRefusedTotal.inc({ reason: 'busy' });
-      throw new TeamRefusal('team_busy');
-    }
-    const controller = new AbortController();
-    const load: SharedLoad = {
-      controller, waiters: 0, settled: false,
-      promise: this.readAnswer(q, controller.signal).then((out) => {
-        // An aborted read's answer is nobody's; an answer is kept for the TTL.
-        if (!controller.signal.aborted) this.cache.set(key, out);
-        return out;
-      }),
-    };
-    this.loads.set(key, load);
-    load.promise
-      .finally(() => {
-        // The read has settled: its statement has ended (or its connection was abandoned).
-        load.settled = true;
-        release();
-        if (this.loads.get(key) === load) this.loads.delete(key);
-      })
-      .catch(noop);
-    return load;
-  }
-
-  /** Wait for `load` as one of its requests; the last to leave (an abort) aborts the load. */
-  private wait(load: SharedLoad, key: string, signal: AbortSignal | undefined): Promise<AgencyTeamPerformance> {
-    load.waiters += 1;
-    let done = false;
-    return new Promise<AgencyTeamPerformance>((resolve, reject) => {
-      const leave = (): void => {
-        if (done) return;
-        done = true;
-        load.waiters -= 1;
-        if (load.waiters === 0 && !load.settled) {
-          // Nobody is left to answer: stop the statement. The slot comes back when the load settles.
-          if (this.loads.get(key) === load) this.loads.delete(key);
-          load.controller.abort();
-        }
-        reject(new TeamAborted());
-      };
-      signal?.addEventListener('abort', leave, { once: true });
-      load.promise.then(
-        (value) => { signal?.removeEventListener('abort', leave); if (!done) { done = true; resolve(value); } },
-        (err: unknown) => { signal?.removeEventListener('abort', leave); if (!done) { done = true; reject(err); } },
-      );
-    });
-  }
-
-  /**
-   * `fn` in one read-only snapshot under Compare's statement budget, timed, stopped by `gone` (the
-   * client went away: {@link TeamAborted}) or the deadline (`team_timed_out`, as is a statement past
-   * its `statement_timeout`).
-   */
-  private async snapshot<T>(fn: (db: PoolClient) => Promise<T>, gone: AbortSignal, deadline: ReadDeadline): Promise<T> {
-    const started = performance.now();
-    let result: CompareReadResult = 'failed';
-    const signal = AbortSignal.any([gone, deadline.signal]);
-    try {
-      signal.throwIfAborted();
-      const out = await withCancellableRead(this.deps.pool, {
-        signal,
-        cancel: (pid) => this.deps.cancelBackend(pid),
-        timeout: { deadlineAt: deadline.at, marginMs: COMPARE_STATEMENT_TIMEOUT_MARGIN_MS, slackMs: COMPARE_STATEMENT_TIMEOUT_SLACK_MS },
-        ceiling: 'session',
-        settings: { max_parallel_workers_per_gather: COMPARE_MAX_PARALLEL_WORKERS_PER_GATHER },
-        graceMs: COMPARE_CANCEL_GRACE_MS,
-      }, (tx) => fn(tx.client));
-      result = 'ok';
-      return out;
-    } catch (err) {
-      if (gone.aborted) {
-        result = 'aborted';
-        throw new TeamAborted();
-      }
-      if (deadline.signal.aborted || isStatementTimeout(err)) {
-        result = 'timed_out';
-        agencyTeamPerformanceReadsRefusedTotal.inc({ reason: 'timed_out' });
-        throw new TeamRefusal('team_timed_out');
-      }
-      throw err;
-    } finally {
-      agencyTeamPerformanceReadSeconds.observe({ result }, (performance.now() - started) / 1000);
-    }
+    this.answers.clear();
   }
 
   /** The snapshot (module note), then the membership filter and the names on the pool, then the answer. */
   private async readAnswer(q: TeamPerformanceRead, gone: AbortSignal): Promise<AgencyTeamPerformance> {
     const asOf = this.deps.now();
-    const deadline = readDeadline(this.timeoutMs);
     const window = localDayBounds(q.from, q.to, q.timezone);
     const trendRange = teamTrendRange(q.from, q.to);
     const trendStart = localDayBounds(trendRange.from, trendRange.to, q.timezone).start;
@@ -289,7 +180,7 @@ export class TeamPerformanceReads {
     const tenancy = { tenantId: q.tenantId, accountId: q.accountId };
     const params = rosterParams({ from: window.start, to: window.end, ...(q.campaignId === null ? {} : { campaignId: q.campaignId }) });
 
-    const read = await this.snapshot(async (db) => {
+    const read = await this.reads.snapshot(async (db) => {
       const campaigns: TeamCampaign[] = (await repo.scopeCampaigns(db, { ...tenancy, scope, range: { from: trendStart, to: window.end } }))
         .map((c) => ({ id: c.id, wrapup_seconds: c.wrapup_seconds, catalog: effectiveCatalog(c.disposition_catalog), rollup_as_of: c.rollup_as_of }));
       const campaignIds = campaigns.map((c) => c.id);
@@ -311,21 +202,15 @@ export class TeamPerformanceReads {
         : [];
       const callbacks = await repo.callbacks(db, { ...cohort, now: asOf });
       return { campaigns, main, attempts, occupancy, rollupCodes, rollupDays, promises, promiseDays, callbacks };
-    }, gone, deadline);
+    }, gone, (result, seconds) => agencyTeamPerformanceReadSeconds.observe({ result }, seconds));
     if (gone.aborted) throw new TeamAborted();
 
-    const memberships = await this.deps.memberships(read.attempts.map((r) => r.agent_user_id), q.tenantId);
-    const agentOf = (r: { agent_user_id: string }): string => r.agent_user_id;
-    const rows = filterRowsByMembership(read.attempts, memberships, q.accountId, true, agentOf).rows;
-    const active = new Set(filterRowsByMembership(rows, memberships, q.accountId, false, agentOf).rows.map(agentOf));
-    const names = await this.deps.names(rows.map(agentOf), q.tenantId);
+    // The memberships and the names together, on the pool: names are looked up only for the rows kept.
+    const ids = read.attempts.map((r) => r.agent_user_id);
+    const [memberships, names] = await Promise.all([this.deps.memberships(ids, q.tenantId), this.deps.names(ids, q.tenantId)]);
+    const { rows, active } = cohortMembership(read.attempts, memberships, q.accountId);
 
-    const occupancyByAgent = new Map<string, { state: string; seconds: number }[]>();
-    for (const o of read.occupancy) {
-      const list = occupancyByAgent.get(o.agent_user_id);
-      if (list) list.push(o);
-      else occupancyByAgent.set(o.agent_user_id, [o]);
-    }
+    const occupancyByAgent = groupBy(read.occupancy, (o) => o.agent_user_id);
     const promisesByAgent = new Map((read.promises ?? []).map((p) => [p.agent_user_id, p]));
     const agents: TeamAgentSources[] = rows.map((r) => {
       // Folded exactly as the roster folds each row (`foldOccupancy`): the same shift and break seconds.

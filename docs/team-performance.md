@@ -179,7 +179,7 @@ this order: the scope's campaigns, the rollup by code, the campaigns with promis
 (All campaigns only, and only when a campaign of the scope records promises; on the 0050 indexes),
 then the main outcome from them (TP8), `rosterAttemptTotals`, `rosterOccupancyTotals`, the rollup by
 day, the promises and the promises per day (promises only), the call-backs.
-After the transaction, on the pool: the membership and the names (`filterRowsByMembership`,
+After the transaction, on the pool: the membership and the names together (`filterRowsByMembership`,
 `agentNamesOrNone`). A 30 s in-process cache (`TEAM_PERFORMANCE_CACHE_TTL_MS`) keyed by tenant,
 account, campaign or all, window and zone; an identical read already running is joined, and a
 cached or joined answer takes no slot. Every statement is scoped by tenant and account; the optional
