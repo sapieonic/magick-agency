@@ -98,6 +98,15 @@ function problems(a: AgencyTeamPerformance): string[] {
     if (next) check(o.conversations > next.conversations || (o.conversations === next.conversations && o.code !== null), `outcomes[${i}] order`);
   });
 
+  // What the bars hold of the main outcome (TP13's footnote), counted per campaign before the bars
+  // merge campaigns by code: never more than the bars on the main codes, and all of them with one
+  // campaign, where every code means what its one catalog says.
+  const mainBars = sum(a.outcomes.filter((o) => o.code !== null && a.main_outcome.codes.includes(o.code)).map((o) => o.conversations));
+  const barMain = a.main_outcome.bar_conversations;
+  check(Number.isInteger(barMain) && barMain >= 0, 'main_outcome.bar_conversations a count');
+  check(barMain <= mainBars && mainBars <= sum(a.outcomes.map((o) => o.conversations)), 'main_outcome.bar_conversations within the main bars');
+  if (a.campaign_id !== null) check(barMain === mainBars, 'main_outcome.bar_conversations: every main bar with one campaign');
+
   // The per-day chart: working days in order, one count each, inside its span (TP12).
   const { span, dates, counts } = a.trend;
   check(AGENCY_TEAM_TREND_SPANS.includes(span), 'trend.span');
@@ -153,16 +162,23 @@ describe('the team performance answers the console is tested on keep the server\
   it('the rules catch a broken answer', () => {
     const broken: AgencyTeamPerformance = {
       ...TEAM_ROUTE_ONE_CAMPAIGN,
+      main_outcome: { ...TEAM_ROUTE_ONE_CAMPAIGN.main_outcome, bar_conversations: TEAM_ROUTE_ONE_CAMPAIGN.main_outcome.bar_conversations - 1 },
       totals: { ...TEAM_ROUTE_ONE_CAMPAIGN.totals, calls_handled: TEAM_ROUTE_ONE_CAMPAIGN.totals.calls_handled + 1 },
       comparable: false,
     };
-    expect(problems(broken)).toEqual(expect.arrayContaining(['totals.calls_handled', 'comparable is campaign_id !== null', 'findings only when comparable']));
+    expect(problems(broken)).toEqual(expect.arrayContaining([
+      'totals.calls_handled', 'comparable is campaign_id !== null', 'findings only when comparable',
+      'main_outcome.bar_conversations: every main bar with one campaign',
+    ]));
+    const past = { ...TEAM_ROUTE_ALL_CAMPAIGNS, main_outcome: { ...TEAM_ROUTE_ALL_CAMPAIGNS.main_outcome, bar_conversations: 10_000 } };
+    expect(problems(past)).toEqual(['main_outcome.bar_conversations within the main bars']);
   });
 
   it('the hand-made answers hold every field the route sends, and no other', () => {
     const keys = (o: object) => Object.keys(o).sort();
     for (const a of [TEAM_ONE_CAMPAIGN, TEAM_ALL_CAMPAIGNS, TEAM_EMPTY]) {
       expect(keys(a)).toEqual(keys(TEAM_ROUTE_ONE_CAMPAIGN));
+      expect(keys(a.main_outcome)).toEqual(keys(TEAM_ROUTE_ONE_CAMPAIGN.main_outcome));
       expect(keys(a.totals)).toEqual(keys(TEAM_ROUTE_ONE_CAMPAIGN.totals));
       expect(keys(a.medians)).toEqual(keys(TEAM_ROUTE_ONE_CAMPAIGN.medians));
       for (const r of a.agents) expect(keys(r)).toEqual(keys(TEAM_ROUTE_ONE_CAMPAIGN.agents[0]!));

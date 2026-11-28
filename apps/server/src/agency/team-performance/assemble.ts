@@ -91,8 +91,14 @@ export function teamTrendRange(from: string, to: string): TeamTrendRange {
   return { span: 'last_working_days', from: addDays(to, 1 - TEAM_TREND_LOOKBACK_DAYS), to };
 }
 
+/**
+ * The main outcome as the campaigns decide it ({@link mainOutcomeFor}); the answer adds what the bars
+ * hold of it (`bar_conversations`, {@link mainBarConversations}).
+ */
+export type TeamMainOutcomeDecision = Omit<AgencyTeamMainOutcome, 'bar_conversations'>;
+
 /** The distinct codes, sorted, and the one label they carry when they carry exactly one. */
-function outcomeOf(kind: AgencyTeamMainOutcomeKind, entries: readonly AgencyDisposition[], mixed: boolean): AgencyTeamMainOutcome {
+function outcomeOf(kind: AgencyTeamMainOutcomeKind, entries: readonly AgencyDisposition[], mixed: boolean): TeamMainOutcomeDecision {
   const codes = [...new Set(entries.map((e) => e.code))].sort();
   const labels = new Set(entries.map((e) => e.label));
   return { kind, codes, label: labels.size === 1 ? [...labels][0]! : null, mixed };
@@ -106,9 +112,6 @@ export interface TeamWorkedCampaigns {
   conversations: ReadonlySet<string>;
   promises: ReadonlySet<string>;
 }
-
-/** Nothing worked in the window: the main outcome is decided over the whole scope. */
-export const NO_WORKED_CAMPAIGNS: TeamWorkedCampaigns = Object.freeze({ conversations: new Set<string>(), promises: new Set<string>() });
 
 /** The campaigns with dialler conversations in the window ({@link TeamRollupCodeRow}s) and those with promises in it. */
 export function workedCampaigns(codes: readonly TeamRollupCodeRow[], promiseCampaignIds: readonly string[]): TeamWorkedCampaigns {
@@ -126,7 +129,7 @@ export function workedCampaigns(codes: readonly TeamRollupCodeRow[], promiseCamp
  * never turns a successes day into promises. `mixed`: promises, and a campaign with conversations
  * in the window records none.
  */
-export function mainOutcomeFor(campaigns: readonly TeamCampaign[], worked: TeamWorkedCampaigns = NO_WORKED_CAMPAIGNS): AgencyTeamMainOutcome {
+export function mainOutcomeFor(campaigns: readonly TeamCampaign[], worked: TeamWorkedCampaigns): TeamMainOutcomeDecision {
   const active = campaigns.filter((c) => worked.conversations.has(c.id) || worked.promises.has(c.id));
   const deciding = active.length > 0 ? active : campaigns;
   const entries = deciding.flatMap((c) => c.catalog);
@@ -285,9 +288,28 @@ export function outcomeBars(campaigns: readonly TeamCampaign[], codes: readonly 
     || (a.code ?? '').localeCompare(b.code ?? ''));
 }
 
-/** Per campaign, its success codes (a code is a success in its own campaign's catalog, as the roster counts it). */
-function successCodes(campaigns: readonly TeamCampaign[]): Map<string, Set<string>> {
-  return new Map(campaigns.map((c) => [c.id, new Set(c.catalog.filter((e) => e.is_success === true).map((e) => e.code))]));
+/**
+ * Per campaign, the codes of its own catalog that count as `kind`: `requires_promise` for promises,
+ * `is_success` for successes (a code is a success in its own campaign's catalog, as the roster
+ * counts it).
+ */
+function ownCodes(kind: AgencyTeamMainOutcomeKind, campaigns: readonly TeamCampaign[]): Map<string, Set<string>> {
+  const counts = (e: AgencyDisposition): boolean => (kind === 'promises' ? e.requires_promise === true : e.is_success === true);
+  return new Map(campaigns.map((c) => [c.id, new Set(c.catalog.filter(counts).map((e) => e.code))]));
+}
+
+/**
+ * What the bars hold of the main outcome (TP13's footnote): the window's dialler conversations (the
+ * rollup's codes, as {@link outcomeBars} reads them) ending in a code that is `kind` in its OWN
+ * campaign's catalog, counted per campaign before the bars merge campaigns by code. A code that is
+ * the main outcome in one campaign and not in another counts only where it is.
+ */
+export function mainBarConversations(kind: AgencyTeamMainOutcomeKind, campaigns: readonly TeamCampaign[], codes: readonly TeamRollupCodeRow[]): number {
+  const own = ownCodes(kind, campaigns);
+  return sum(codes, (r) => {
+    const code = barCode(r.disposition_code);
+    return code !== null && own.get(r.campaign_id)?.has(code) === true ? r.conversations : 0;
+  });
 }
 
 /**
@@ -304,7 +326,7 @@ export function teamTrend(
   days: readonly TeamRollupDayRow[],
   promiseDays: ReadonlyMap<string, number>,
 ): AgencyTeamTrend {
-  const successes = successCodes(campaigns);
+  const successes = ownCodes('successes', campaigns);
   const conversations = new Map<string, number>();
   const counts = new Map<string, number>(kind === 'promises' ? promiseDays : []);
   for (const r of days) {
@@ -357,7 +379,7 @@ export interface TeamAssembleInput {
   to: string;
   timezone: string;
   asOf: Date;
-  main: AgencyTeamMainOutcome;
+  main: TeamMainOutcomeDecision;
   campaigns: readonly TeamCampaign[];
   /** Every cohort agent, in the order the rows are sent. */
   agents: readonly TeamAgentSources[];
@@ -382,7 +404,7 @@ export function assembleTeamPerformance(input: TeamAssembleInput): AgencyTeamPer
     timezone: input.timezone,
     as_of: input.asOf.toISOString(),
     rollup_as_of: rollupAsOf(input.campaigns, input.rollupCodes),
-    main_outcome: input.main,
+    main_outcome: { ...input.main, bar_conversations: mainBarConversations(kind, input.campaigns, input.rollupCodes) },
     totals: teamTotals(kind, input.agents, wrapupAllowed(input.campaigns, input.rollupCodes)),
     medians: teamMedians(rows),
     outcomes: outcomeBars(input.campaigns, input.rollupCodes),

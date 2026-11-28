@@ -417,8 +417,8 @@ describe('one campaign: every figure equals the seed, the roster and Compare', (
     expect(a.agents.filter((r) => r.departed).map((r) => r.agent_user_id)).toEqual([agent(4).id]);
     expect(rowOf(a, 0).agent_name).toBe('agent 0.0');
     expect(a).toMatchObject({ campaign_id: c0, from: FROM, to: TO, timezone: ZONE, comparable: true });
-    // One campaign recording promises: never mixed.
-    expect(a.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false });
+    // One campaign recording promises: never mixed. The bars hold its every will_pay conversation (TP13).
+    expect(a.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false, bar_conversations: codes.c0.get('will_pay') });
     expect(a.totals.wrapup_allowed).toEqual({ seconds: 30, varies: false });
     expect(a.rollup_as_of).not.toBeNull();
   });
@@ -514,7 +514,7 @@ describe('one campaign: every figure equals the seed, the roster and Compare', (
 
   it('a campaign without promises is successes: Compare\'s success rate, no other conversations', async () => {
     const s = await team({ campaign_id: c1 });
-    expect(s.main_outcome).toEqual({ kind: 'successes', codes: ['interested'], label: 'Interested', mixed: false });
+    expect(s.main_outcome).toEqual({ kind: 'successes', codes: ['interested'], label: 'Interested', mixed: false, bar_conversations: codes.c1.get('interested') });
     expect(s.agents.map((r) => r.agent_user_id).sort()).toEqual([agent(1).id, agent(5).id].sort());
     const c = await compare(c1, [agent(1).id, agent(5).id], ['success_rate']);
     for (const ca of c.agents) expect(s.agents.find((r) => r.agent_user_id === ca.agent_user_id)!.main).toEqual(ca.values['success_rate']);
@@ -533,7 +533,8 @@ describe('All campaigns', () => {
   it('a mixed scope is promises and says so (TP8); the allowed time differs; nobody is compared (TP7)', () => {
     expect(a).toMatchObject({ campaign_id: null, comparable: false, findings: [] });
     // c1 had conversations in the window and records no promises: mixed.
-    expect(a.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: true });
+    // The bars' main outcome is c0's will_pay alone: c1's successes are not the main outcome (TP13).
+    expect(a.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: true, bar_conversations: codes.c0.get('will_pay') });
     expect(a.totals.wrapup_allowed).toEqual({ seconds: null, varies: true });
   });
 
@@ -576,7 +577,7 @@ describe('All campaigns', () => {
     expect(now.trend).toMatchObject({ span: 'last_working_days', dates: [EARLIER, ...WORK] });
     // Nothing worked today: the main outcome is the whole scope's (promises, c0's catalog), not
     // mixed; and nothing to date the bars by.
-    expect(now.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false });
+    expect(now.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false, bar_conversations: 0 });
     expect(now.outcomes).toEqual([]);
     expect(now.rollup_as_of).toBeNull();
   });
@@ -585,13 +586,14 @@ describe('All campaigns', () => {
     const sup2 = other.supervisors[0]!;
     // Only the success campaign dialled; the promise campaign is live but idle: successes.
     const idle = await team({ from: OTHER_SUCCESS_DAY, to: OTHER_SUCCESS_DAY }, sup2, other);
-    expect(idle.main_outcome).toEqual({ kind: 'successes', codes: ['interested'], label: 'Interested', mixed: false });
+    expect(idle.main_outcome).toEqual({ kind: 'successes', codes: ['interested'], label: 'Interested', mixed: false, bar_conversations: 1 });
     expect(idle.agents.map((r) => r.agent_user_id)).toEqual([other.agents[1]!.id]);
     expect(idle.agents[0]!.main).toMatchObject({ numerator: 1, denominator: 4 });
     // A soft-phone promise recorded on the promise campaign is work on it: promises, and mixed,
     // the success campaign's conversations in the rate's calls.
     const mixed = await team({ from: OTHER_MIXED_DAY, to: OTHER_MIXED_DAY }, sup2, other);
-    expect(mixed.main_outcome).toEqual({ kind: 'promises', codes: ['promised'], label: 'Promised (other)', mixed: true });
+    // Its one interested conversation is no promise: nothing on the bars is the main outcome.
+    expect(mixed.main_outcome).toEqual({ kind: 'promises', codes: ['promised'], label: 'Promised (other)', mixed: true, bar_conversations: 0 });
     expect(mixed.agents[0]!.main).toMatchObject({ numerator: 1, denominator: 5 });
   });
 
@@ -616,7 +618,7 @@ describe('isolation', () => {
     expect((await team()).main_outcome.codes).toEqual(['will_pay']);
     const theirs = await team({}, other.supervisors[0]!, other);
     expect(theirs.agents.map((r) => r.agent_user_id)).toEqual([other.agents[0]!.id]);
-    expect(theirs.main_outcome).toEqual({ kind: 'promises', codes: ['promised'], label: 'Promised (other)', mixed: false });
+    expect(theirs.main_outcome).toEqual({ kind: 'promises', codes: ['promised'], label: 'Promised (other)', mixed: false, bar_conversations: 5 });
     expect(foreignIdsIn(JSON.stringify(theirs), foreignIdsOf([floor, other, dark], other))).toEqual([]);
     const res = await call(loaded.app, 'GET', url({ campaign_id: other.campaigns[0]! }), sup(), floor);
     expect(res.statusCode).toBe(404);
@@ -723,8 +725,22 @@ function inline(v: unknown): string {
   return JSON.stringify(v);
 }
 
+/**
+ * The answer with its rows sorted by name, then id, and its findings by their agent's place, then
+ * metric and code: the server sends both in no particular order (the console sorts, TP16), and the
+ * seed's ids are new on every run, so a re-record would otherwise reorder them.
+ */
+function inStableOrder(a: AgencyTeamPerformance): AgencyTeamPerformance {
+  const agents = [...a.agents].sort((x, y) => (x.agent_name ?? '').localeCompare(y.agent_name ?? '') || x.agent_user_id.localeCompare(y.agent_user_id));
+  const place = new Map(agents.map((r, i) => [r.agent_user_id, i]));
+  const findings = [...a.findings].sort((x, y) => (place.get(x.agent_user_id) ?? -1) - (place.get(y.agent_user_id) ?? -1)
+    || x.metric.localeCompare(y.metric) || x.code.localeCompare(y.code));
+  return { ...a, agents, findings };
+}
+
 /** One answer as a TypeScript constant: a line per field, `totals` a line per figure, a line per outcome, row and finding. */
-function recorded(name: string, doc: string, a: AgencyTeamPerformance): string {
+function recorded(name: string, doc: string, answer: AgencyTeamPerformance): string {
+  const a = inStableOrder(answer);
   const lines = Object.entries(a).map(([k, v]) => {
     if (k === 'totals') return `  ${k}: {\n${Object.entries(v as object).map(([t, x]) => `    ${t}: ${inline(x)},`).join('\n')}\n  },`;
     if (Array.isArray(v) && v.length > 0 && typeof v[0] === 'object') return `  ${k}: [\n${v.map((x) => `    ${inline(x)},`).join('\n')}\n  ],`;
@@ -743,11 +759,12 @@ if (RECORD_TO) {
 
 /**
  * Team performance answers recorded from the real route (\`GET /proxy/agency/team-performance\`, the
- * server over a seeded Postgres, ${localDateOf(new Date(), 'UTC')}), kept exactly as the server sent them. The seed is the
- * server's integration test's (\`apps/server/test/integration/api/team-performance.test.ts\`): eight
- * agents of one account over five local days in Asia/Kolkata with a day off, one campaign recording
- * promises (Will pay) and one not, a departed agent, a thin one, soft-phone and inbound promises,
- * and a supervisor's soft-phone promise with no row (TP14). Rewritten by that test with
+ * server over a seeded Postgres, ${localDateOf(new Date(), 'UTC')}), kept as the server sent them but for the order of the
+ * rows (by name) and of the findings (by row), which the server sends in no particular order. The
+ * seed is the server's integration test's (\`apps/server/test/integration/api/team-performance.test.ts\`):
+ * eight agents of one account over five local days in Asia/Kolkata with a day off, one campaign
+ * recording promises (Will pay) and one not, a departed agent, a thin one, soft-phone and inbound
+ * promises, and a supervisor's soft-phone promise with no row (TP14). Rewritten by that test with
  * \`RECORD_TEAM_ANSWERS\` set (docs/team-performance.md §8); do not edit by hand.
  *
  * \`__tests__/utils/teamAnswer.test.ts\` holds these and the hand-made answers of \`teamRecorded.ts\`

@@ -230,7 +230,9 @@ does not change. Flag `agency_team_performance_enabled` (TP6).
 - `campaign_id` (null for All campaigns), `from`, `to`, `timezone` (the request's, echoed as sent,
   a legacy alias too), `as_of`, `rollup_as_of`;
 - `main_outcome`: `kind` (`AgencyTeamMainOutcomeKind`: `promises`, `successes`), `codes`, `label`,
-  `mixed` (promises, and a campaign with dialler conversations in the window records none; TP8);
+  `mixed` (promises, and a campaign with dialler conversations in the window records none; TP8),
+  `bar_conversations` (the bars' conversations on a main code of their own campaign, counted
+  before the bars merge campaigns by code: what TP13's footnote compares with the tile);
   `TEAM_MAIN_OUTCOME_METRIC` maps the kind to its Compare metric (`promises_rate`,
   `success_rate`);
 - `totals`: `agents`, `calls_handled`, `main` (an `AgencyCompareValue` over the sums),

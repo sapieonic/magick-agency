@@ -106,12 +106,14 @@ export const TEAM_OUTCOME_BARS_MAX = 7;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * What the scope's main outcome counts (TP8), the Live floor's rule:
- * - `promises`: some campaign in scope has a catalog entry with `requires_promise`. The count is
- *   promises recorded (CP2: every call type, by `dispositioned_at`, credited to the agent who took
- *   the call); the rate is Compare's `promises_rate`.
- * - `successes`: no campaign in scope records promises. The count is the roster's `successes`
- *   (`is_success` codes); the rate is Compare's `success_rate`.
+ * What the scope's main outcome counts (TP8), the Live floor's rule over the campaigns that decide
+ * it: the scope's campaigns WORKED in the window (dialler conversations in it, or promises recorded
+ * in it), or every campaign of the scope when none was ({@link AgencyTeamMainOutcome}).
+ * - `promises`: one of them has a catalog entry with `requires_promise`. The count is promises
+ *   recorded (CP2: every call type, by `dispositioned_at`, credited to the agent who took the call);
+ *   the rate is Compare's `promises_rate`.
+ * - `successes`: none of them records promises. The count is the roster's `successes` (`is_success`
+ *   codes); the rate is Compare's `success_rate`.
  */
 export type AgencyTeamMainOutcomeKind = 'promises' | 'successes';
 export const AGENCY_TEAM_MAIN_OUTCOME_KINDS = ['promises', 'successes'] as const satisfies readonly AgencyTeamMainOutcomeKind[];
@@ -207,9 +209,11 @@ export interface AgencyTeamAgentRow {
 export interface AgencyTeamMainOutcome {
   kind: AgencyTeamMainOutcomeKind;
   /**
-   * The outcome codes it counts across the scope's campaigns, sorted, distinct: the
-   * `requires_promise` codes for `promises`, the `is_success` codes for `successes`. The per-day
-   * chart of `successes` counts these codes in the rollup.
+   * The codes of the campaigns that decided it (worked in the window, else every campaign of the
+   * scope), sorted, distinct: their `requires_promise` codes for `promises`, their `is_success`
+   * codes for `successes`. `label` is read off them. The per-day chart of `successes` does not count
+   * this list: it counts each conversation ending in a success code of its OWN campaign, over every
+   * campaign of the scope, the short window's look-back days included ({@link AgencyTeamTrend}).
    */
   codes: string[];
   /**
@@ -225,6 +229,16 @@ export interface AgencyTeamMainOutcome {
    * false for `successes`, and with no conversations in the window.
    */
   mixed: boolean;
+  /**
+   * What the bars of {@link AgencyTeamPerformance.outcomes} hold of the main outcome: the dialler
+   * conversations in the window (the rollup, as `outcomes`) ending in a code that is the main
+   * outcome in its OWN campaign's catalog (`requires_promise` for `promises`, `is_success` for
+   * `successes`), counted per campaign before the bars merge campaigns by code. The console
+   * compares it with `totals.main.numerator` for TP13's footnote; a sum of `outcomes` over `codes`
+   * would also count a code that is the main outcome in one campaign and not in another. At most the
+   * sum of `outcomes` over `codes`; equal to it with one campaign. 0 with no conversations.
+   */
+  bar_conversations: number;
 }
 
 /**
@@ -329,9 +343,9 @@ export interface AgencyTeamTrend {
    */
   dates: string[];
   /**
-   * The team's count per date, `dates.length` long: promises recorded that local day (every call
-   * type, by whoever took the call, an agent with no row included: TP14), or conversations ending
-   * in a success code (the rollup).
+   * The team's count per date, `dates.length` long, over every campaign of the scope: promises
+   * recorded that local day (every call type, by whoever took the call, an agent with no row
+   * included: TP14), or the rollup's conversations ending in a success code of their own campaign.
    */
   counts: number[];
 }

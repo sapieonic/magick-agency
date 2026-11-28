@@ -33,12 +33,14 @@ const _rowChoose: Equals<AgencyTeamAgentRow['choose'], AgencyCompareValue> = tru
 const _totalsMain: Equals<AgencyTeamPerformance['totals']['main'], AgencyCompareValue> = true;
 const _findings: Equals<AgencyTeamPerformance['findings'], AgencyCompareFinding[]> = true;
 const _icon: Equals<AgencyTeamPerformance['outcomes'][number]['icon'], AgencyTileIcon | null> = true;
-// The main outcome's fields, exactly: `mixed` is required, so every answer says whether the note shows (TP8).
-const _mainKeys: Equals<keyof AgencyTeamMainOutcome, 'kind' | 'codes' | 'label' | 'mixed'> = true;
+// The main outcome's fields, exactly: `mixed` is required, so every answer says whether the note shows (TP8);
+// `bar_conversations` is required, so the console never sums merged bars for TP13's footnote.
+const _mainKeys: Equals<keyof AgencyTeamMainOutcome, 'kind' | 'codes' | 'label' | 'mixed' | 'bar_conversations'> = true;
 const _mixed: Equals<AgencyTeamMainOutcome['mixed'], boolean> = true;
+const _barConversations: Equals<AgencyTeamMainOutcome['bar_conversations'], number> = true;
 // Reached through the AgencyApi namespace like its siblings.
 const _namespaced: Equals<AgencyApi.AgencyTeamPerformance, AgencyTeamPerformance> = true;
-void [_kinds, _spans, _mainKeys, _mixed, _rowMain, _rowChoose, _totalsMain, _findings, _icon, _namespaced];
+void [_kinds, _spans, _mainKeys, _mixed, _barConversations, _rowMain, _rowChoose, _totalsMain, _findings, _icon, _namespaced];
 
 describe('team performance vocabularies (SNAPSHOT, written out by hand)', () => {
   it('main outcome kinds and trend spans', () => {

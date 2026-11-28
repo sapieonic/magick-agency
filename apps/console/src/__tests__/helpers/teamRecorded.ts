@@ -31,7 +31,8 @@ export const TEAM_ONE_CAMPAIGN: AgencyTeamPerformance = {
       'will_pay'
     ],
     label: 'Will pay',
-    mixed: false
+    mixed: false,
+    bar_conversations: 96
   },
   totals: {
     agents: 10,
@@ -498,7 +499,8 @@ export const TEAM_ALL_CAMPAIGNS: AgencyTeamPerformance = {
       'will_pay'
     ],
     label: null,
-    mixed: true
+    mixed: true,
+    bar_conversations: 96
   },
   totals: {
     agents: 10,
@@ -937,6 +939,7 @@ export const TEAM_ALL_CAMPAIGNS: AgencyTeamPerformance = {
 export const TEAM_EMPTY: AgencyTeamPerformance = {
   ...TEAM_ONE_CAMPAIGN,
   rollup_as_of: null,
+  main_outcome: { ...TEAM_ONE_CAMPAIGN.main_outcome, bar_conversations: 0 },
   totals: {
     agents: 0,
     calls_handled: 0,

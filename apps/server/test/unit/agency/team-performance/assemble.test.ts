@@ -24,6 +24,8 @@ import {
 
 const WILL_PAY: AgencyDisposition = { code: 'will_pay', label: 'Will pay', requires_promise: true };
 const SALE: AgencyDisposition = { code: 'sale', label: 'Sale', is_success: true, icon: 'thumbs_up' };
+/** Nothing worked in the window: the main outcome is decided over the whole scope. */
+const NONE = workedCampaigns([], []);
 const campaign = (id: string, catalog: AgencyDisposition[], o: Partial<TeamCampaign> = {}): TeamCampaign =>
   ({ id, wrapup_seconds: 30, catalog, rollup_as_of: null, ...o });
 
@@ -41,7 +43,7 @@ function agent(id: string, o: { connected?: number; successes?: number; promises
 function input(o: Partial<TeamAssembleInput> = {}): TeamAssembleInput {
   return {
     campaignId: 'c1', from: '2026-11-01', to: '2026-11-07', timezone: 'Asia/Kolkata', asOf: new Date('2026-11-07T10:00:00Z'),
-    main: mainOutcomeFor([campaign('c1', [SALE])]),
+    main: mainOutcomeFor([campaign('c1', [SALE])], NONE),
     campaigns: [campaign('c1', [SALE])], agents: [agent('a')], rollupCodes: [],
     trendRange: teamTrendRange('2026-11-01', '2026-11-07'), rollupDays: [], promiseDays: new Map(), ...o,
   };
@@ -67,22 +69,21 @@ describe('the main outcome (TP8)', () => {
 
   it('nothing worked in the window: decided over the whole scope, never mixed', () => {
     const cs = [campaign('a', [SALE]), campaign('b', [SALE, WILL_PAY])];
-    expect(mainOutcomeFor(cs)).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false });
-    expect(mainOutcomeFor(cs, workedCampaigns([], []))).toEqual(mainOutcomeFor(cs));
+    expect(mainOutcomeFor(cs, NONE)).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: false });
     // A rollup row with no conversations is no work.
-    expect(mainOutcomeFor(cs, workedCampaigns([{ campaign_id: 'a', disposition_code: 'x', conversations: 0 }], []))).toEqual(mainOutcomeFor(cs));
+    expect(mainOutcomeFor(cs, workedCampaigns([{ campaign_id: 'a', disposition_code: 'x', conversations: 0 }], []))).toEqual(mainOutcomeFor(cs, NONE));
   });
 
   it('else successes, with their codes sorted and distinct', () => {
     const won = { code: 'won', label: 'Sale', is_success: true };
-    expect(mainOutcomeFor([campaign('a', [SALE, won]), campaign('b', [SALE])])).toEqual({ kind: 'successes', codes: ['sale', 'won'], label: 'Sale', mixed: false });
+    expect(mainOutcomeFor([campaign('a', [SALE, won]), campaign('b', [SALE])], NONE)).toEqual({ kind: 'successes', codes: ['sale', 'won'], label: 'Sale', mixed: false });
   });
 
   it('sends the label only when the codes carry exactly one', () => {
     const promised = { code: 'promised', label: 'Promised', requires_promise: true };
-    expect(mainOutcomeFor([campaign('a', [WILL_PAY]), campaign('b', [promised])]).label).toBeNull();
-    expect(mainOutcomeFor([]).label).toBeNull();
-    expect(mainOutcomeFor([])).toEqual({ kind: 'successes', codes: [], label: null, mixed: false });
+    expect(mainOutcomeFor([campaign('a', [WILL_PAY]), campaign('b', [promised])], NONE).label).toBeNull();
+    expect(mainOutcomeFor([], NONE).label).toBeNull();
+    expect(mainOutcomeFor([], NONE)).toEqual({ kind: 'successes', codes: [], label: null, mixed: false });
   });
 });
 
@@ -155,6 +156,41 @@ describe('what happened on the calls (TP13)', () => {
     ]);
     expect(bars).toEqual([{ code: 'paid', label: 'Paid in full', icon: 'rupee', conversations: 9 }]);
   });
+
+  it('bar_conversations counts a code only on the campaigns where it is the main outcome, before the bars merge them', () => {
+    // will_pay records a promise on a, and is a plain outcome on b: its one bar holds both.
+    const cs = [campaign('a', [WILL_PAY]), campaign('b', [{ code: 'will_pay', label: 'Will pay later' }, SALE])];
+    const rollupCodes = [
+      { campaign_id: 'a', disposition_code: 'will_pay', conversations: 5 },
+      { campaign_id: 'b', disposition_code: 'will_pay', conversations: 3 },
+      { campaign_id: 'b', disposition_code: 'sale', conversations: 4 },
+      { campaign_id: 'a', disposition_code: null, conversations: 2 },
+    ];
+    const main = mainOutcomeFor(cs, workedCampaigns(rollupCodes, []));
+    const a = assembleTeamPerformance(input({ campaignId: null, main, campaigns: cs, rollupCodes }));
+    expect(a.main_outcome).toEqual({ kind: 'promises', codes: ['will_pay'], label: 'Will pay', mixed: true, bar_conversations: 5 });
+    expect(a.outcomes.find((o) => o.code === 'will_pay')!.conversations).toBe(8);
+    // Successes, the same way: sale is a success on b only.
+    const s = [campaign('a', [{ code: 'sale', label: 'Sale (pending)' }]), campaign('b', [SALE])];
+    expect(assembleTeamPerformance(input({ campaignId: null, main: mainOutcomeFor(s, workedCampaigns(rollupCodes, [])), campaigns: s, rollupCodes: [
+      { campaign_id: 'a', disposition_code: 'sale', conversations: 6 },
+      { campaign_id: 'b', disposition_code: 'sale', conversations: 4 },
+    ] })).main_outcome).toMatchObject({ kind: 'successes', codes: ['sale'], bar_conversations: 4 });
+  });
+
+  it('bar_conversations is every main bar with one campaign, never no outcome chosen, and 0 with no conversations', () => {
+    const cs = [campaign('c1', [SALE, { code: 'won', label: 'Won', is_success: true }])];
+    const rollupCodes = [
+      { campaign_id: 'c1', disposition_code: 'sale', conversations: 5 },
+      { campaign_id: 'c1', disposition_code: 'won', conversations: 2 },
+      { campaign_id: 'c1', disposition_code: 'no_disposition', conversations: 3 },
+      { campaign_id: 'c1', disposition_code: 'other', conversations: 9 },
+    ];
+    const a = assembleTeamPerformance(input({ main: mainOutcomeFor(cs, workedCampaigns(rollupCodes, [])), campaigns: cs, rollupCodes }));
+    expect(a.main_outcome.bar_conversations).toBe(7);
+    expect(a.main_outcome.bar_conversations).toBe(a.outcomes.filter((o) => o.code !== null && a.main_outcome.codes.includes(o.code)).reduce((n, o) => n + o.conversations, 0));
+    expect(assembleTeamPerformance(input()).main_outcome.bar_conversations).toBe(0);
+  });
 });
 
 describe('the allowed time to choose an outcome', () => {
@@ -182,7 +218,7 @@ describe('rows and sums (Compare\'s figures, TP2)', () => {
 
   it('totals are sums over every row; other conversations only for promises; due excludes upcoming', () => {
     const a = assembleTeamPerformance(input({
-      main: mainOutcomeFor([campaign('c1', [WILL_PAY])]), campaigns: [campaign('c1', [WILL_PAY])],
+      main: mainOutcomeFor([campaign('c1', [WILL_PAY])], NONE), campaigns: [campaign('c1', [WILL_PAY])],
       agents: [agent('a', { promises: 30, other: 20 }), agent('b', { connected: 10, promises: 2, other: 1 })],
     }));
     expect(a.totals).toMatchObject({ agents: 2, calls_handled: 110, other_conversations: 21, avg_call_seconds: 60, choose_seconds: 20 });

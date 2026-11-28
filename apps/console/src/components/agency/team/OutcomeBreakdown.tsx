@@ -4,7 +4,7 @@ import { TileIcon } from '@magick-agency/web-ui/components/TileIcon';
 import type { AgencyTeamPerformance } from '@magick-agency/contracts/api/agency/team-performance';
 import { formatCount } from '../../../utils/format/number';
 import { ONE_COLOUR_NOTE, outcomesFootnote, outcomesTitle, rollupLine } from '../../../utils/agency/team/teamCopy';
-import { mainOutcomeBarCount, outcomeBars } from '../../../utils/agency/team/teamCharts';
+import { outcomeBars } from '../../../utils/agency/team/teamCharts';
 import type { TeamWindowPreset } from '../../../utils/agency/team/teamUrl';
 import styles from './Team.module.css';
 
@@ -13,14 +13,17 @@ import styles from './Team.module.css';
  * outcome chosen, from the Insights rollup, most first, the eighth and on folded into "Other
  * outcomes". A list a screen reader reads as words and numbers; the bars beside them are drawn
  * for the eye only, all in one colour. The footnote that the main outcome's bar and its tile
- * count differently is shown only when they do.
+ * count differently is shown only when they do; what the bars hold of the main outcome is the
+ * server's `main_outcome.bar_conversations`, counted per campaign before the bars merge campaigns
+ * by code, never a sum of the merged bars (a code can be the main outcome in one campaign and not
+ * in another).
  */
 export function OutcomeBreakdown({ data, label, preset }: { data: AgencyTeamPerformance; label: string; preset: TeamWindowPreset }) {
   const titleId = useId();
   const bars = outcomeBars(data.outcomes);
   const total = data.outcomes.reduce((sum, o) => sum + o.conversations, 0);
   const footnote = bars.length > 0
-    ? outcomesFootnote(label, mainOutcomeBarCount(data.outcomes, data.main_outcome.codes), data.totals.main.numerator, {
+    ? outcomesFootnote(label, data.main_outcome.bar_conversations, data.totals.main.numerator, {
         kind: data.main_outcome.kind,
         otherCalls: data.totals.other_conversations,
       })
