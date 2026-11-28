@@ -46,7 +46,6 @@ import {
   dayLabel,
   inlineScale,
   inlineShare,
-  mainOutcomeBarCount,
   outcomeBars,
   trendAxis,
   trendColumnsGeometry,
@@ -248,7 +247,7 @@ describe('the words (teamCopy)', () => {
     expect(outcomesFootnote('Interested', 40, 41, { kind: 'successes', otherCalls: 0 })).toBe('The bars are a few minutes behind the tile (41 vs 40 here).');
   });
 
-  it('words Worth a look as TP15: Stands out, Low {label} rate, Slow to choose outcome', () => {
+  it('words Worth a look as TP15: Stands out, Low will-pay rate, Slow to choose outcome', () => {
     const badges = TEAM_ONE_CAMPAIGN.findings.map((f) => findingBadge(f, 'Will pay')?.label);
     expect(badges.sort()).toEqual(['Low will-pay rate', 'Slow to choose outcome', 'Stands out']);
     expect(findingBadge({ code: 'too_few_calls', metric: 'promises_rate' }, 'Will pay')).toBeNull();
@@ -375,8 +374,6 @@ describe('the chart geometry (teamCharts)', () => {
       'Wrong number',
       'Don’t call again',
     ]);
-    expect(mainOutcomeBarCount(TEAM_ONE_CAMPAIGN.outcomes, TEAM_ONE_CAMPAIGN.main_outcome.codes)).toBe(96);
-    expect(mainOutcomeBarCount(TEAM_ALL_CAMPAIGNS.outcomes, TEAM_ALL_CAMPAIGNS.main_outcome.codes)).toBe(74 + 22);
   });
 
   it('scales the inline bars so every bar and the median tick fit', () => {

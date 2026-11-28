@@ -167,11 +167,6 @@ export function outcomeBars(outcomes: readonly AgencyTeamOutcomeBar[], max: numb
   return rows.map((r) => ({ ...r, share: longest > 0 ? round((r.conversations / longest) * 100) : 0 }));
 }
 
-/** The conversations on the main outcome's codes, the bar the footnote compares with the tile (TP13). */
-export function mainOutcomeBarCount(outcomes: readonly AgencyTeamOutcomeBar[], codes: readonly string[]): number {
-  return outcomes.reduce((sum, o) => (o.code !== null && codes.includes(o.code) ? sum + o.conversations : sum), 0);
-}
-
 // ─── The table's inline bars ────────────────────────────────────────────────
 
 /** A value as a share (0–100) of the column's scale; null for a value that is not drawn. */
