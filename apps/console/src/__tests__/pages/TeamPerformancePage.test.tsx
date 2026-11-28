@@ -336,16 +336,24 @@ describe('the agents', () => {
       renderView(`?campaign=${CAMPAIGN}`);
       const region = within(await screen.findByTestId('team-agents')).getByRole('region', { name: 'Agents table' });
       expect(region.hasAttribute('tabindex')).toBe(false);
+      const resize = () =>
+        act(() => {
+          window.dispatchEvent(new Event('resize'));
+        });
+      // A wide screen: the box scrolls, and the table is wider than it.
+      region.style.overflowX = 'auto';
       size.scrollWidth = 1100;
       size.clientWidth = 900;
-      act(() => {
-        window.dispatchEvent(new Event('resize'));
-      });
+      resize();
       expect(region.getAttribute('tabindex')).toBe('0');
       size.scrollWidth = 900;
-      act(() => {
-        window.dispatchEvent(new Event('resize'));
-      });
+      resize();
+      expect(region.hasAttribute('tabindex')).toBe(false);
+      // A phone: the cards' box does not scroll, even where a picked card's bleed reaches past it.
+      region.style.overflowX = 'visible';
+      size.scrollWidth = 336;
+      size.clientWidth = 320;
+      resize();
       expect(region.hasAttribute('tabindex')).toBe(false);
     } finally {
       names.forEach((name, i) => {

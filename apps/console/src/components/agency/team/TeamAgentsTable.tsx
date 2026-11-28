@@ -244,9 +244,10 @@ export function TeamAgentsTable(props: TeamAgentsTableProps) {
 }
 
 /**
- * Whether the node is wider inside than it shows (`scrollWidth > clientWidth`), measured when it
- * mounts, when it or its content changes size (`ResizeObserver`, where there is one) and when the
- * window is resized.
+ * Whether the node scrolls sideways: it scrolls (`overflow-x` neither `visible` nor `clip`) and is
+ * wider inside than it shows (`scrollWidth > clientWidth`). Measured when it mounts, when it or its
+ * content changes size (`ResizeObserver`, where there is one) and when the window is resized (which
+ * is also when the phone layout comes or goes).
  */
 function useOverflowsSideways(): [(node: HTMLDivElement | null) => void, boolean] {
   const [node, setNode] = useState<HTMLDivElement | null>(null);
@@ -254,7 +255,12 @@ function useOverflowsSideways(): [(node: HTMLDivElement | null) => void, boolean
   const ref = useCallback((el: HTMLDivElement | null) => setNode(el), []);
   useEffect(() => {
     if (!node) return undefined;
-    const check = () => setOverflows(node.scrollWidth > node.clientWidth + 1);
+    // A box that does not scroll (a phone's cards: `overflow-x: visible`) is never a stop, even
+    // where a picked card's bleed reaches past it.
+    const check = () => {
+      const scrolls = !['visible', 'clip'].includes(getComputedStyle(node).overflowX);
+      setOverflows(scrolls && node.scrollWidth > node.clientWidth + 1);
+    };
     check();
     window.addEventListener('resize', check);
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(check);
