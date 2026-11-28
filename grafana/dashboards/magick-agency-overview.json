@@ -2149,6 +2149,137 @@
         "x": 0,
         "y": 124
       },
+      "id": 162,
+      "title": "Team performance",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Seconds one Team performance read took against the database (Reports' Team performance tab, docs/team-performance.md §4), p95 by result (ok, timed_out, aborted: the client went away, failed). Cached and joined answers are not timed. A read has an 8 s budget over the whole cohort: Postgres's statement_timeout ends a slow one just before it (`503 team_timed_out`). An ok p95 near 8 s means supervisors read long windows across every campaign: the case for the daily pre-processing follow-up (team-performance.md §7). No rule: a slow read is one supervisor's wait. Empty while `agency_team_performance_enabled` is off everywhere.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 125
+      },
+      "id": 163,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Team Performance — Read Duration (p95) by Result",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, result) (rate(agency_team_performance_read_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Team performance reads refused by their guards, per minute, by reason (`agency_team_performance_reads_refused_total`): busy (`429 team_busy`: the tenant already runs 2 reads, or the process Compare's share of its pool for team reads) or timed_out (`503 team_timed_out`: the read passed its 8 s budget). A steady timed_out means supervisors ask for windows too heavy for the live read (All campaigns over a month on a busy tenant): the evidence to bring the daily pre-processing forward (team-performance.md §7); busy, more team reads at once than the limits allow. No rule: neither is a service fault. Empty while `agency_team_performance_enabled` is off everywhere.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 125
+      },
+      "id": 164,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Team Performance — Reads Refused by Reason (per min)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(agency_team_performance_reads_refused_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])) * 60",
+          "interval": "1m",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 133
+      },
       "id": 129,
       "title": "Inbound calls",
       "type": "row",
@@ -2185,7 +2316,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 125
+        "y": 134
       },
       "id": 130,
       "options": {
@@ -2261,7 +2392,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 125
+        "y": 134
       },
       "id": 131,
       "options": {
@@ -2326,7 +2457,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 133
+        "y": 142
       },
       "id": 132,
       "options": {
@@ -2391,7 +2522,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 133
+        "y": 142
       },
       "id": 133,
       "options": {
@@ -2456,7 +2587,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 141
+        "y": 150
       },
       "id": 134,
       "options": {
@@ -2515,7 +2646,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 141
+        "y": 150
       },
       "id": 135,
       "options": {
@@ -2555,7 +2686,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 149
+        "y": 158
       },
       "id": 136,
       "title": "Mode B: ringing away phones",
@@ -2593,7 +2724,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 150
+        "y": 159
       },
       "id": 137,
       "options": {
@@ -2652,7 +2783,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 150
+        "y": 159
       },
       "id": 138,
       "options": {
@@ -2717,7 +2848,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 158
+        "y": 167
       },
       "id": 139,
       "options": {
@@ -2776,7 +2907,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 158
+        "y": 167
       },
       "id": 140,
       "options": {
@@ -2835,7 +2966,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 166
+        "y": 175
       },
       "id": 141,
       "options": {
@@ -2900,7 +3031,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 166
+        "y": 175
       },
       "id": 142,
       "options": {
@@ -2934,7 +3065,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 174
+        "y": 183
       },
       "id": 146,
       "title": "Live call listening",
@@ -2972,7 +3103,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 175
+        "y": 184
       },
       "id": 147,
       "options": {
@@ -3037,7 +3168,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 175
+        "y": 184
       },
       "id": 148,
       "options": {
@@ -3096,7 +3227,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 183
+        "y": 192
       },
       "id": 149,
       "options": {
@@ -3161,7 +3292,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 183
+        "y": 192
       },
       "id": 150,
       "options": {
@@ -3226,7 +3357,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 191
+        "y": 200
       },
       "id": 151,
       "options": {
@@ -3291,7 +3422,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 191
+        "y": 200
       },
       "id": 152,
       "options": {
@@ -3325,7 +3456,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 199
+        "y": 208
       },
       "id": 2,
       "title": "Voice, capacity and storage",
@@ -3362,7 +3493,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 200
+        "y": 209
       },
       "id": 10,
       "options": {
@@ -3451,7 +3582,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 200
+        "y": 209
       },
       "id": 73,
       "options": {
@@ -3540,7 +3671,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 200
+        "y": 209
       },
       "id": 67,
       "options": {
@@ -3605,7 +3736,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 208
+        "y": 217
       },
       "id": 102,
       "options": {
@@ -3693,7 +3824,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 208
+        "y": 217
       },
       "id": 76,
       "options": {
@@ -3790,7 +3921,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 216
+        "y": 225
       },
       "id": 122,
       "options": {
@@ -3877,7 +4008,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 216
+        "y": 225
       },
       "id": 123,
       "options": {
@@ -3911,7 +4042,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 224
+        "y": 233
       },
       "id": 143,
       "title": "Recordings",
@@ -3980,7 +4111,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 225
+        "y": 234
       },
       "id": 144,
       "options": {
@@ -4055,7 +4186,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 225
+        "y": 234
       },
       "id": 145,
       "options": {
@@ -4089,7 +4220,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 233
+        "y": 242
       },
       "id": 3,
       "title": "Identity and mail",
@@ -4126,7 +4257,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 234
+        "y": 243
       },
       "id": 103,
       "options": {
@@ -4184,7 +4315,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 234
+        "y": 243
       },
       "id": 104,
       "options": {
@@ -4224,7 +4355,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 242
+        "y": 251
       },
       "id": 4,
       "title": "Analysis",
@@ -4292,7 +4423,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 243
+        "y": 252
       },
       "id": 68,
       "options": {
@@ -4356,7 +4487,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 243
+        "y": 252
       },
       "id": 69,
       "options": {
@@ -4432,7 +4563,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 251
+        "y": 260
       },
       "options": {
         "legend": {
@@ -4514,7 +4645,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 251
+        "y": 260
       },
       "options": {
         "legend": {
@@ -4602,7 +4733,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 259
+        "y": 268
       },
       "options": {
         "legend": {
@@ -4637,7 +4768,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 267
+        "y": 276
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -4674,7 +4805,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 268
+        "y": 277
       },
       "id": 106,
       "options": {
@@ -4738,7 +4869,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 268
+        "y": 277
       },
       "id": 107,
       "options": {
@@ -4796,7 +4927,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 268
+        "y": 277
       },
       "id": 108,
       "options": {
@@ -4856,7 +4987,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 276
+        "y": 285
       },
       "id": 87,
       "options": {
@@ -4913,7 +5044,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 276
+        "y": 285
       },
       "id": 74,
       "options": {
@@ -4971,7 +5102,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 284
+        "y": 293
       },
       "id": 50,
       "options": {
@@ -5009,7 +5140,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 292
+        "y": 301
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -5046,7 +5177,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 293
+        "y": 302
       },
       "id": 112,
       "options": {
@@ -5104,7 +5235,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 293
+        "y": 302
       },
       "id": 113,
       "options": {
@@ -5162,7 +5293,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 301
+        "y": 310
       },
       "id": 114,
       "options": {
@@ -5220,7 +5351,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 301
+        "y": 310
       },
       "id": 115,
       "options": {

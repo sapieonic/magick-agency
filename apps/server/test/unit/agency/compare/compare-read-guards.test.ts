@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgencyCompareMetricInfo, CompareBuiltinMetricKey } from '@magick-agency/contracts/api/agency/compare';
-import { compareSnapshotKey, TenantReadLimiter, type CompareQueryRead } from '../../../../src/agency/compare/read.js';
+import { TenantReadLimiter } from '../../../../src/agency/budgeted-read.js';
+import { compareSnapshotKey, type CompareQueryRead } from '../../../../src/agency/compare/read.js';
 
 /**
  * Compare agents' guards that need no database (docs/compare-agents.md §7): the per-tenant limit and

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -78,10 +78,14 @@ function OpenExportFieldsDialog({
   const groups = useMemo(() => (response ? callExportGroups(response) : null), [response]);
 
   // The remembered fields this view offers are ticked; the rest are kept for a later view that
-  // offers them (CL50, `rememberedFieldsToStore`).
-  useEffect(() => {
-    if (groups) setChosen(rememberedStillOffered(readRememberedFields(storageKey), groups));
-  }, [groups, storageKey]);
+  // offers them (CL50, `rememberedFieldsToStore`). They are ticked while rendering the list, not
+  // in an effect: an effect ran after the list was first on screen, so for a moment the boxes
+  // stood unticked and Download disabled, and a tick made in that moment was overwritten.
+  const [seededFrom, setSeededFrom] = useState<{ groups: CallExportGroup[]; storageKey: string | null } | null>(null);
+  if (groups && (seededFrom?.groups !== groups || seededFrom.storageKey !== storageKey)) {
+    setSeededFrom({ groups, storageKey });
+    setChosen(rememberedStillOffered(readRememberedFields(storageKey), groups));
+  }
 
   const ordered = useMemo(() => (groups ? orderedChosenFields(groups, chosen) : []), [groups, chosen]);
   const ceiling = response ? callExportCeilingNote(ordered, response) : null;

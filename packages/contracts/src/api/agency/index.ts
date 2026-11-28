@@ -29,6 +29,7 @@ export * from './insights';
 export * from './customer-history';
 export * from './reports';
 export * from './compare';
+export * from './team-performance';
 export * from './inbound';
 export * from './live-calls';
 export * from './listen-history';

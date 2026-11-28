@@ -484,6 +484,19 @@ The server's side, beside the contract above. Module detail and tests: [`modules
   and one already marked is never emailed twice. A render cut off stays `rendering` for the
   tick's reconcile.
 
+## Opened from Team performance
+
+Team performance's **Download Excel** (`team-performance.md`, TP19) is this export, not a report
+kind of its own: with one campaign it opens the campaign report's dialog, with All campaigns the
+account report's, through `ExportReportButton` with a `label` ("Download Excel") and an `initial`
+(`ExportReportInitial`: only the workbook chosen, always; the page's dates as a custom window when
+the page has a valid one, else the dialog's default preset, its dates being optional). The dialog's
+own rules still apply (the window rule, the campaign report in the campaign's zone, an archived
+campaign's included, RP3); the page cuts its days in the browser's zone, so `initialDatesFor` brings
+both dates back to the dialog's today at the latest, never past the date fields' `max`. It is hidden
+when `agency_reports_enabled` is off, and its exports are tracked with the entry `team_performance`.
+A team-performance report kind is a later phase.
+
 ## Where things are
 
 | Area | Files |

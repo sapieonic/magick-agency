@@ -834,6 +834,36 @@ staging). Turn it on in Super-admin console → the tenant → Feature flags →
 To turn it off: Off for the tenant or account. Saved views stay in `agency_compare_views` and come
 back when it is turned on again.
 
+## Team performance
+
+`agency_team_performance_enabled` (off by default; global, tenant, account; client-exposed; TP6)
+gates Reports' Team performance tab and its route (`GET /proxy/agency/team-performance`,
+[`team-performance.md`](team-performance.md) §4): while it is off the route answers `403
+feature_disabled` and the console hides the tab (a supervisor then lands on Analytics). It reads
+the live database from the primary over the whole cohort (TP20), so each read is bounded: an 8 s
+budget (past it `503 team_timed_out`, "Too much to read at once. Try a shorter period."), two reads
+at a time per tenant and Compare's share of the pool in the process (past either `429 team_busy`
+with `Retry-After`), a 30 s cache. An ordinary flag: no handling policy. `FF_AGENCY_TEAM_PERFORMANCE=true`
+turns it on for every tenant (dev and staging). Turn it on in Super-admin console → the tenant →
+Feature flags → `agency_team_performance_enabled` → On, at tenant scope or for one account. Before
+turning it on for a busy tenant, read the measured cost (`team-performance.md` §4): All campaigns
+over a whole month sits at the budget there and answers `503 team_timed_out` about as often as
+not. Manas kept the live read for now (2026-11-27); the follow-up is a daily job that pre-processes
+the figures, with the live read only on a forced refresh (`team-performance.md` §7). The page reads
+a window again on its own only when it holds today and spans at most 7 days, so Last 30 days is
+read once per question.
+
+**What to watch** (the *Team performance* panels of the overview dashboard):
+
+- `agency_team_performance_read_seconds{result}`: reads that ran against the database (`ok`,
+  `timed_out`, `aborted`, `failed`); cached and joined answers are not timed. A p95 near 8 s means
+  supervisors are reading long windows across every campaign.
+- `agency_team_performance_reads_refused_total{reason}`: `timed_out` is a window too heavy for the
+  budget; `busy` is more team reads at once than the limits allow. Neither pages anyone; a steady
+  `timed_out` is the case for bringing the daily pre-processing forward.
+
+To turn it off: Off for the tenant or account. Nothing is stored; the tab and its route go.
+
 ## Enabling campaign templates for a tenant
 
 `agency_campaign_templates_enabled` (off by default; global, tenant; client-exposed; CT17) gates

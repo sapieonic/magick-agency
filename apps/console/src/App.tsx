@@ -105,6 +105,7 @@ const AgentCustomerHistoryPage = lazy(() =>
 );
 const ReportsPage = lazy(() => import('./pages/agency/ReportsPage'));
 const CompareAgentsPage = lazy(() => import('./pages/agency/CompareAgentsPage'));
+const TeamPerformancePage = lazy(() => import('./pages/agency/TeamPerformancePage'));
 const ReportRunPage = lazy(() => import('./pages/agency/ReportRunPage'));
 const AgentReportsPage = lazy(() =>
   import('./pages/agency/ReportsPage').then((m) => ({ default: m.AgentReportsPage })),
@@ -716,6 +717,16 @@ export default function App() {
                   <Route
                     path="compare"
                     element={<RequireFlag flag="agency_compare_enabled"><CompareAgentsPage /></RequireFlag>}
+                  />
+                  {/*
+                    Team performance (`docs/team-performance.md`): Reports' first tab for
+                    supervisors, behind `agency_team_performance_enabled` on top of the subtree's
+                    gates. Not under `reports/`: `reports/:runId` owns that space (TP1). The page
+                    checks `agency.supervise` (TP3).
+                  */}
+                  <Route
+                    path="team-performance"
+                    element={<RequireFlag flag="agency_team_performance_enabled"><TeamPerformancePage /></RequireFlag>}
                   />
                   {/*
                     All calls (`docs/call-log.md` P5, CL34): every call of the account in one

@@ -9,9 +9,9 @@ import {
   CompareReads,
   CompareRefusal,
   compareGlobalReadLimit,
-  TenantReadLimiter,
   type CompareWindowScope,
 } from '../../../../src/agency/compare/read.js';
+import { TenantReadLimiter } from '../../../../src/agency/budgeted-read.js';
 import { clientGoneSignal } from '../../../../src/api/routes/proxy-agency-compare/shared.js';
 
 /**

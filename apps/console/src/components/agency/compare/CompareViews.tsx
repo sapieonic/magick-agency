@@ -9,7 +9,7 @@ import {
   type AgencyCompareView,
   type CompareLens,
 } from '@magick-agency/contracts/api/agency/compare';
-import { compareErrorMessage, createCompareView, deleteCompareView, updateCompareView } from '../../../api/compare';
+import { compareErrors, createCompareView, deleteCompareView, updateCompareView } from '../../../api/compare';
 import { LENS_LABELS } from '../../../utils/agency/compare/compareMetrics';
 import { metricParam } from '../../../utils/agency/compare/compareUrl';
 import styles from './Compare.module.css';
@@ -88,7 +88,7 @@ export function CompareViews(props: CompareViewsProps) {
       else onChanged(view);
       showToast(done, 'success');
     } catch (err) {
-      showToast(compareErrorMessage(err, 'The view couldn’t be saved. Try again.'), 'error');
+      showToast(compareErrors.message(err, 'The view couldn’t be saved. Try again.'), 'error');
     } finally {
       setSaving(false);
     }
@@ -103,7 +103,7 @@ export function CompareViews(props: CompareViewsProps) {
       onDeleted(applied.id);
       showToast(`“${applied.name}” was deleted.`, 'success');
     } catch (err) {
-      showToast(compareErrorMessage(err, 'The view couldn’t be deleted. Try again.'), 'error');
+      showToast(compareErrors.message(err, 'The view couldn’t be deleted. Try again.'), 'error');
     } finally {
       setSaving(false);
     }
@@ -299,7 +299,7 @@ function SaveViewDialog({ tenantId, accountId, campaignId, campaignName, current
       );
       onSaved(view);
     } catch (err) {
-      setError(compareErrorMessage(err, 'The view couldn’t be saved. Try again.'));
+      setError(compareErrors.message(err, 'The view couldn’t be saved. Try again.'));
     } finally {
       setBusy(false);
     }

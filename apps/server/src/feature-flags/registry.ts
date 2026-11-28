@@ -127,5 +127,7 @@ export const FLAGS = {
 
   agency_compare_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_compare_enabled),
 
+  agency_team_performance_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_team_performance_enabled),
+
   agency_campaign_templates_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_campaign_templates_enabled),
 } as const;

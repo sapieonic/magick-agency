@@ -23,6 +23,8 @@ const EXPECTED = {
   agency_floor_assist_enabled: { default: false, envVar: 'FF_AGENCY_FLOOR_ASSIST', clientExposed: true },
   // Compare agents: off until a super admin turns it on; the console shows the tab from it.
   agency_compare_enabled: { default: false, envVar: 'FF_AGENCY_COMPARE', clientExposed: true },
+  // Team performance (TP6): off until a super admin turns it on; the console shows the tab from it.
+  agency_team_performance_enabled: { default: false, envVar: 'FF_AGENCY_TEAM_PERFORMANCE', clientExposed: true },
   // Campaign templates (CT17): off until a super admin turns it on for a tenant; global and tenant
   // only, because organisation templates are shared by every account of the tenant.
   agency_campaign_templates_enabled: {
@@ -33,9 +35,9 @@ const EXPECTED = {
 const TRI_SCOPED = ['global', 'tenant', 'account'] as const;
 
 describe('agency flags', () => {
-  it('are exactly the fourteen keys', () => {
+  it('are exactly the fifteen keys', () => {
     expect(Object.keys(AGENCY_FLAGS).sort()).toEqual([...AGENCY_FLAG_KEYS].sort());
-    expect(AGENCY_FLAG_KEYS).toHaveLength(14);
+    expect(AGENCY_FLAG_KEYS).toHaveLength(15);
   });
 
   it.each(AGENCY_FLAG_KEYS)('%s keeps its key, type, default, scopes, envVar and exposure', (key) => {
@@ -63,6 +65,7 @@ describe('agency flags', () => {
       agency_live_listen_unrecorded: true,
       agency_floor_assist_enabled: false,
       agency_compare_enabled: false,
+      agency_team_performance_enabled: false,
       agency_campaign_templates_enabled: false,
     };
     expect(Object.keys(map)).not.toContain('agency_late_binding');

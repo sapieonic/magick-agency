@@ -24,18 +24,16 @@ vi.mock('../../api/client', async () => {
 
 import {
   COMPARE_ERROR_MESSAGES,
-  COMPARE_NETWORK_MESSAGE,
-  compareErrorCode,
-  compareErrorMessage,
+  compareErrors,
   createCompareView,
   deleteCompareView,
   getCompareOptions,
-  isRetryableCompareError,
   listCompareViews,
   queryCompare,
   updateCompareView,
 } from '../../api/compare';
 import { ApiError } from '../../api/client';
+import { NETWORK_ERROR_MESSAGE } from '../../api/errorFamily';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -123,8 +121,8 @@ describe('refusals', () => {
     for (const code of [...AGENCY_COMPARE_ERROR_CODES, 'feature_disabled'] as const) {
       const words = COMPARE_ERROR_MESSAGES[code];
       expect(words, code).toMatch(/\S/);
-      expect(compareErrorCode(refusal(400, code)), code).toBe(code);
-      expect(compareErrorMessage(refusal(400, code), 'fallback'), code).toBe(words);
+      expect(compareErrors.code(refusal(400, code)), code).toBe(code);
+      expect(compareErrors.message(refusal(400, code), 'fallback'), code).toBe(words);
       expect(words).not.toContain('server fallback text');
     }
     expect(Object.keys(COMPARE_ERROR_MESSAGES).sort()).toEqual([...AGENCY_COMPARE_ERROR_CODES, 'feature_disabled'].sort());
@@ -144,31 +142,31 @@ describe('refusals', () => {
 
   it('offers Try again only for what can clear by itself: busy, timed out, 429, 5xx, the network', () => {
     for (const code of AGENCY_COMPARE_ERROR_CODES) {
-      expect(isRetryableCompareError(refusal(400, code)), code).toBe(code === 'compare_busy' || code === 'compare_timed_out');
+      expect(compareErrors.isRetryable(refusal(400, code)), code).toBe(code === 'compare_busy' || code === 'compare_timed_out');
     }
-    expect(isRetryableCompareError(new TypeError('Failed to fetch'))).toBe(true);
-    expect(isRetryableCompareError(new ApiError(500, { error: 'Internal Server Error' }))).toBe(true);
-    expect(isRetryableCompareError(new ApiError(503, { error: 'Service Unavailable' }))).toBe(true);
-    expect(isRetryableCompareError(new ApiError(429, { error: 'Too Many Requests' }))).toBe(true);
+    expect(compareErrors.isRetryable(new TypeError('Failed to fetch'))).toBe(true);
+    expect(compareErrors.isRetryable(new ApiError(500, { error: 'Internal Server Error' }))).toBe(true);
+    expect(compareErrors.isRetryable(new ApiError(503, { error: 'Service Unavailable' }))).toBe(true);
+    expect(compareErrors.isRetryable(new ApiError(429, { error: 'Too Many Requests' }))).toBe(true);
     // A refusal that stays until the reader changes something: no Try again.
-    expect(isRetryableCompareError(new ApiError(403, { error: 'Forbidden' }))).toBe(false);
-    expect(isRetryableCompareError(new ApiError(400, { error: 'Bad Request', message: 'body/agent_ids must NOT have more than 3 items' }))).toBe(false);
-    expect(isRetryableCompareError(new ApiError(404, { error: 'Not Found' }))).toBe(false);
-    expect(isRetryableCompareError(refusal(403, 'feature_disabled'))).toBe(false);
-    expect(isRetryableCompareError(new DOMException('aborted', 'AbortError'))).toBe(false);
+    expect(compareErrors.isRetryable(new ApiError(403, { error: 'Forbidden' }))).toBe(false);
+    expect(compareErrors.isRetryable(new ApiError(400, { error: 'Bad Request', message: 'body/agent_ids must NOT have more than 3 items' }))).toBe(false);
+    expect(compareErrors.isRetryable(new ApiError(404, { error: 'Not Found' }))).toBe(false);
+    expect(compareErrors.isRetryable(refusal(403, 'feature_disabled'))).toBe(false);
+    expect(compareErrors.isRetryable(new DOMException('aborted', 'AbortError'))).toBe(false);
   });
 
   it('ignores a code from another family, and says a plain 403 is about permission', () => {
-    expect(compareErrorCode(refusal(400, 'report_window_invalid'))).toBeNull();
-    expect(compareErrorMessage(new ApiError(403, { error: 'Forbidden' }), 'fallback')).toBe('You don’t have permission to compare agents.');
-    expect(compareErrorMessage(new ApiError(500, { error: 'Internal Server Error' }), 'fallback')).toMatch(/Internal Server Error|fallback/);
+    expect(compareErrors.code(refusal(400, 'report_window_invalid'))).toBeNull();
+    expect(compareErrors.message(new ApiError(403, { error: 'Forbidden' }), 'fallback')).toBe('You don’t have permission to compare agents.');
+    expect(compareErrors.message(new ApiError(500, { error: 'Internal Server Error' }), 'fallback')).toMatch(/Internal Server Error|fallback/);
   });
 
   it('words a failure with no answer (the network) in the console’s words, never the browser’s', () => {
     for (const err of [new TypeError('Failed to fetch'), new TypeError('NetworkError when attempting to fetch resource.'), new Error('boom')]) {
-      expect(compareErrorMessage(err, 'fallback')).toBe('Couldn’t reach the server. Check your connection and try again.');
+      expect(compareErrors.message(err, 'fallback')).toBe('Couldn’t reach the server. Check your connection and try again.');
     }
-    expect(COMPARE_NETWORK_MESSAGE).toBe('Couldn’t reach the server. Check your connection and try again.');
+    expect(NETWORK_ERROR_MESSAGE).toBe('Couldn’t reach the server. Check your connection and try again.');
   });
 
   it('words compare_busy for either limit: it names neither the organisation nor a count', () => {

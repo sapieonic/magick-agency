@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 /**
  * Who is offered reports (`docs/reports.md` "Who may run what", RP5), at every place
- * the console offers them: the four export entry points, the agency sidebar and the
+ * the console offers them: the five export entry points, the agency sidebar and the
  * agent nav. The flag `agency_reports_enabled` off hides all of it; with it on, a
  * supervisor may export any subject, and anyone else only their own review.
  */
@@ -163,7 +163,7 @@ describe('navigation', () => {
   });
 });
 
-describe('the four entry points mount the gated button with their subject', () => {
+describe('the five entry points mount the gated button with their subject', () => {
   const src = (path: string) => readFileSync(resolve(process.cwd(), 'src', path), 'utf8');
 
   it.each([
@@ -171,6 +171,8 @@ describe('the four entry points mount the gated button with their subject', () =
     ['pages/agency/AgentPerformancePage.tsx', 'my_performance', 'target={{ self: true }}'],
     ['pages/agency/campaign-detail/insights/InsightsPanel.tsx', 'campaign_insights', "kind: 'campaign'"],
     ['pages/agency/AgencyAnalyticsPage.tsx', 'account_analytics', "kind: 'account'"],
+    // Team performance's Download Excel: the campaign report with one campaign, else the account's (TP19).
+    ['pages/agency/TeamPerformancePage.tsx', 'team_performance', 'target={exportTarget}'],
   ])('%s', (path, entryName, subject) => {
     const text = src(path);
     const at = text.indexOf(`entry="${entryName}"`);

@@ -5,6 +5,7 @@ import { REPORTS_FLAG } from './reports/reportsFlag';
 import { SOFTPHONE_FLAG } from './softphone/softphoneFlag';
 import { LIVE_LISTEN_FLAG } from './listen/liveListenFlag';
 import { COMPARE_FLAG, COMPARE_PATH } from './agency/compare/compareFlag';
+import { TEAM_PERFORMANCE_FLAG, TEAM_PERFORMANCE_PATH } from './agency/team/teamPerformanceFlag';
 import { CAMPAIGNS_LANDING_PATH, agencyPersona, isDedicatedAgent } from './agencyPersona';
 import { campaignLandingPath } from './agencyCampaignTabs';
 import type { Role } from '../types/auth';
@@ -299,8 +300,18 @@ export const CONSOLE_SECTIONS: readonly ConsoleSection[] = [
   {
     id: 'reports',
     label: 'Reports',
-    paths: ['/agency/analytics', COMPARE_PATH, '/agency/reports'],
+    paths: [TEAM_PERFORMANCE_PATH, '/agency/analytics', COMPARE_PATH, '/agency/reports'],
     tabs: [
+      /* `docs/team-performance.md` TP1: the first tab, so a supervisor lands on it; a viewer or
+         operator, refused by its gate, still lands on Analytics. Supervisors only (TP3, the
+         route's floor), behind its flag (TP6). Analytics stays ahead of Compare agents, so a
+         supervisor with Team performance off still lands on Analytics, as before. */
+      {
+        id: 'team',
+        label: 'Team performance',
+        to: TEAM_PERFORMANCE_PATH,
+        gate: agencyGate({ permission: 'agency.supervise', flags: [TEAM_PERFORMANCE_FLAG] }),
+      },
       /* Reads the campaign list plus one `/stats` each, both `agency.campaigns.read`. */
       { id: 'analytics', label: 'Analytics', to: '/agency/analytics', gate: agencyGate({ permission: 'agency.campaigns.read' }) },
       /* `docs/compare-agents.md`: supervisors only (CP3, every compare route floors at
@@ -468,7 +479,7 @@ export function landingPathFor(to: string, role: Role | undefined): string {
 
 /**
  * The rule every crumb link follows: a crumb that would land on the page the reader is on is not
- * a link. "Reports" on Analytics (the section's first tab) and a campaign's name on the tab that
+ * a link. "Reports" on the section's first page and a campaign's name on the tab that
  * campaign opens on would otherwise be links that go nowhere, and the phone's back arrow would
  * point at the page it is shown on.
  */
@@ -482,7 +493,8 @@ function withoutLinksHere(crumbs: readonly Crumb[], path: string, role: Role | u
  * The top bar's breadcrumb: the section, then the page when it says something the section does
  * not. On a phone only the last crumb shows, with a back arrow up the trail (`backCrumb`).
  * No crumb links to the page the reader is on, after redirects (`withoutLinksHere`); `role`
- * decides where a campaign's link lands.
+ * decides where a campaign's link lands. With the reader's gates (`input`, as the top bar passes
+ * them) the section's crumb opens the first tab they may open; without, the section's first tab.
  *
  * `pageCrumbs` are what a page supplied through `usePageCrumbs` (`components/layout/PageCrumbs`)
  * for what the URL cannot say, such as a campaign's name; they follow the section (and the tab,
@@ -494,12 +506,12 @@ function withoutLinksHere(crumbs: readonly Crumb[], path: string, role: Role | u
  * visited, which is the page the reader is on. A page below an entry (one inbound route) links
  * back to the entry.
  */
-export function breadcrumbFor(pathname: string, pageCrumbs?: readonly Crumb[] | null, role?: Role): Crumb[] {
+export function breadcrumbFor(pathname: string, pageCrumbs?: readonly Crumb[] | null, role?: Role, input?: GateInput): Crumb[] {
   const path = trimTrailingSlash(pathname);
-  return withoutLinksHere(crumbTrail(path, pageCrumbs), path, role);
+  return withoutLinksHere(crumbTrail(path, pageCrumbs, input), path, role);
 }
 
-function crumbTrail(path: string, pageCrumbs?: readonly Crumb[] | null): Crumb[] {
+function crumbTrail(path: string, pageCrumbs?: readonly Crumb[] | null, input?: GateInput): Crumb[] {
   const supplied = pageCrumbs && pageCrumbs.length > 0 ? pageCrumbs : null;
   if (pathWithin(path, '/settings')) {
     const entry = settingsEntryForPath(path);
@@ -513,7 +525,9 @@ function crumbTrail(path: string, pageCrumbs?: readonly Crumb[] | null): Crumb[]
   const section = CONSOLE_SECTIONS.find((s) => sectionHolds(s, path));
   /* Outside every section (a page not found, say) only what the page names itself. */
   if (!section) return [...(supplied ?? [])];
-  const home: Crumb = { label: section.label, to: section.tabs[0]!.to };
+  /* The section's crumb opens the first tab the reader may open, as the sidebar's entry does: Reports'
+     first tab (Team performance) is for supervisors only, so a viewer's Reports opens Analytics. */
+  const home: Crumb = { label: section.label, to: input ? sectionLandingPath(section, input) : section.tabs[0]!.to };
 
   const tab = section.tabs.find((t) => t.to === path);
   if (tab) return tab.label === section.label ? [{ label: section.label }] : [home, { label: tab.label }];
@@ -544,9 +558,9 @@ function subPageLabel(path: string, parent: string, subPage: SubPage = { label: 
  * link. Crumbs from `breadcrumbFor` never link to the page they are shown on, so the arrow never
  * points at it: on a campaign's Overview it skips the campaign's name (which opens Overview) for
  * the Campaigns list, and from another campaign tab it goes to the campaign, which opens on
- * Overview. Null on a section's first page (Analytics under Reports included), in a Settings
- * entry (the hub's own control moves between entries) and anywhere else with nothing above it
- * to go back to.
+ * Overview. Null on the first page of a section the reader may open (Team performance, or
+ * Analytics for a reader Team performance refuses), in a Settings entry (the hub's own control
+ * moves between entries) and anywhere else with nothing above it to go back to.
  */
 export function backCrumb(crumbs: readonly Crumb[]): (Crumb & { to: string }) | null {
   for (let i = crumbs.length - 2; i >= 0; i -= 1) {

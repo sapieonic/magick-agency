@@ -1,11 +1,9 @@
 import { API_BASE } from '../config';
-import { apiFetch, ApiError } from './client';
+import { apiFetch } from './client';
 import { toQuery } from './agencySpine';
-import { errorCode } from '../utils/agencyErrors';
+import { errorFamily } from './errorFamily';
 import { COMPARE_WINDOW_RULE } from '../utils/agency/compare/compareUrl';
-import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
-  AGENCY_COMPARE_ERROR_CODES,
   COMPARE_MAX_METRICS,
   COMPARE_PAGE_MAX_AGENTS,
   COMPARE_VIEWS_PER_USER_MAX,
@@ -33,7 +31,7 @@ import {
  *
  * Every route is account-scoped (the account header), floored at `agency.supervise` (CP3) and
  * behind `agency_compare_enabled`: off, each answers the dialer gate's `403 feature_disabled`.
- * Refusals are `ApiError`s whose body is `{ error, code, message }`; {@link compareErrorMessage}
+ * Refusals are `ApiError`s whose body is `{ error, code, message }`; `compareErrors.message`
  * turns one into the console's words, keyed off `code` (the server's `message` is English
  * fallback copy and is never shown for a known code, AS15).
  */
@@ -141,44 +139,12 @@ export const COMPARE_ERROR_MESSAGES: Record<CompareRefusalCode, string> = {
   feature_disabled: 'Compare agents isn’t turned on for this account.',
 };
 
-const COMPARE_CODES: ReadonlySet<string> = new Set<string>([...AGENCY_COMPARE_ERROR_CODES, 'feature_disabled']);
-
-/** The refusal code of an error from this client, when it is one of the family's (or the flag gate's). */
-export function compareErrorCode(err: unknown): CompareRefusalCode | null {
-  const code = errorCode(err);
-  return code !== null && COMPARE_CODES.has(code) ? (code as CompareRefusalCode) : null;
-}
-
 /**
- * A failure that can clear by itself, so the page offers Try again (§7): `compare_busy` and
- * `compare_timed_out`, any other 429 or 5xx, and a failure with no answer at all (the network).
- * Every other refusal, a 403 or a 400 with or without a code, stays until the reader changes
- * something, so asking again would only fail again.
+ * The family's helpers ({@link errorFamily}): Try again only for `compare_busy` and
+ * `compare_timed_out` among the codes (§7), and a plain permission line for a 403 without one.
  */
-export function isRetryableCompareError(err: unknown): boolean {
-  const code = compareErrorCode(err);
-  if (code === 'compare_busy' || code === 'compare_timed_out') return true;
-  if (code !== null) return false;
-  if (err instanceof ApiError) return err.statusCode === 429 || err.statusCode >= 500;
-  return !(err instanceof DOMException && err.name === 'AbortError');
-}
-
-/** The words for a failure with no answer from the server at all (the network, never the browser's own). */
-export const COMPARE_NETWORK_MESSAGE = 'Couldn’t reach the server. Check your connection and try again.';
-
-/**
- * Any error from this client, as the words to show: the family's copy for a known code, a plain
- * permission line for a 403 without one, the client's message (or `fallback`) for any other
- * answer, and {@link COMPARE_NETWORK_MESSAGE} when there was no answer: a `fetch` that fails says
- * "Failed to fetch" or "NetworkError when attempting to fetch resource.", which is the browser's
- * English, not the console's (AS15).
- */
-export function compareErrorMessage(err: unknown, fallback: string): string {
-  const code = compareErrorCode(err);
-  if (code !== null) return COMPARE_ERROR_MESSAGES[code];
-  if (err instanceof ApiError) {
-    if (err.statusCode === 403) return 'You don’t have permission to compare agents.';
-    return getErrorMessage(err, fallback);
-  }
-  return COMPARE_NETWORK_MESSAGE;
-}
+export const compareErrors = errorFamily<CompareRefusalCode>({
+  messages: COMPARE_ERROR_MESSAGES,
+  retryable: ['compare_busy', 'compare_timed_out'],
+  forbidden: 'You don’t have permission to compare agents.',
+});

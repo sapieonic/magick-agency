@@ -1,6 +1,6 @@
 import { API_BASE } from '../config';
 import { apiFetch, ApiError } from './client';
-import { errorCode } from '../utils/agencyErrors';
+import { familyCode } from './errorFamily';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   AGENCY_REPORT_ERROR_CODES,
@@ -203,13 +203,8 @@ export const REPORT_ERROR_MESSAGES: Record<ReportRefusalCode, string> = {
   feature_disabled: 'Reports aren’t turned on for this account.',
 };
 
-const REPORT_CODES: ReadonlySet<string> = new Set<string>([...AGENCY_REPORT_ERROR_CODES, 'feature_disabled']);
-
 /** The refusal code of an error from this client, when it is one of the family's (or the flag gate's). */
-export function reportErrorCode(err: unknown): ReportRefusalCode | null {
-  const code = errorCode(err);
-  return code !== null && REPORT_CODES.has(code) ? (code as ReportRefusalCode) : null;
-}
+export const reportErrorCode = familyCode<ReportRefusalCode>([...AGENCY_REPORT_ERROR_CODES, 'feature_disabled']);
 
 /**
  * Any error from this client, as the words to show: the family's copy for a known

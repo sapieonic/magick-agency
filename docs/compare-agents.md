@@ -41,7 +41,16 @@ recommended (the convention of `agent-station.md` §1).
 
 ## 2. The screen
 
-Reports gains a tab, **Compare agents**, beside the existing ones. Top to bottom:
+Reports gains a tab, **Compare agents**, beside the existing ones.
+
+It is also opened from **Team performance** (`team-performance.md`, TP18): with one campaign, a
+supervisor picks up to three rows there and **Compare picked** opens this tab with the campaign,
+the window and the picks in the URL (`compareStateToParams`). That page uses this tab's
+definitions number for number (TP2: the same roster statements, promise columns, rollup codes,
+call-back classes, `compareValue` and `compareFindings`, the last over the whole cohort with no cap
+in all), so an agent's figure there is the figure here for the same campaign and window.
+
+Top to bottom:
 
 1. **Filters in one row:** Lens, Campaign (one), When (a window of local dates, at most 30 days or
    exactly one calendar month, the reports rule `reportWindowProblem`), and **Metrics · N**, which opens the picker (at most 6,
@@ -167,7 +176,9 @@ read's figures for every cohort agent on each metric on screen. It names an agen
 
 Guards: neutral metrics and neutral outcome sets are never named; a metric whose rated cohort (agents
 over its floor, picked ones included) is under 6 yields nothing at all, `too_few_calls` and
-`not_clear` included; at most 3 findings per agent and 5 in all, taken as clear rate gaps, then
+`not_clear` included; at most 3 findings per agent and 5 in all (`COMPARE_FINDINGS_MAX`, sized for
+three picks; `compareFindings`' `max` lifts it, and Team performance passes no cap for its whole
+cohort, TP15), taken as clear rate gaps, then
 times, then breaks, then `stands_out`, then `too_few_calls`, the larger gap first within each; what
 does not fit is dropped, never moved to `not_clear`. A gap of at least the smallest gap on the worse
 side that fails the interval (or a time from 1.25 to 1.5 times the median) goes to `not_clear`, which

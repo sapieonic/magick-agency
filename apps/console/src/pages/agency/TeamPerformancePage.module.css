@@ -1,0 +1,31 @@
+/* Team performance (docs/team-performance.md §2). The parts' styles are in
+   components/agency/team/Team.module.css; this holds only the page's columns. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1280px;
+  min-width: 0;
+}
+
+.answer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* The two charts side by side, stacked below about 900px (§2 "On a phone"). */
+.charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+@media (max-width: 900px) {
+  .charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

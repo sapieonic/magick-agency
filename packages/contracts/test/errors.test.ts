@@ -14,6 +14,8 @@ import {
   AGENCY_REPORT_ERROR_CODES,
   AGENCY_ROSTER_REFUSAL_CODES,
   AGENCY_SOFTPHONE_ERROR_CODES,
+  AGENCY_TEAM_PERFORMANCE_ERROR_CODES,
+  AGENCY_TEAM_PERFORMANCE_ERROR_STATUS,
   type AgencyActionErrorCode,
   type AgencyCampaignArchiveErrorCode,
   type AgencyCampaignLifecycleErrorCode,
@@ -27,6 +29,7 @@ import {
   type AgencyRosterRefusalCode,
   type AgencySoftphoneErrorCode,
   type AgencyStationErrorCode,
+  type AgencyTeamPerformanceErrorCode,
 } from '../src/errors';
 import type * as Core from '../src/agency';
 import { AGENCY_AWAY_RING_REFUSAL_CODES, type AgencyAwayRingRefusalCode } from '../src/agency';
@@ -599,5 +602,50 @@ describe('campaign template codes', () => {
       ...AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES, ...AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
     ]);
     for (const code of AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES) expect(others.has(code), code).toBe(false);
+  });
+});
+
+// ── Team performance (src/errors.ts §11, re-exported by src/api/agency/team-performance.ts;
+// docs/team-performance.md).
+const _teamExact: Equals<(typeof AGENCY_TEAM_PERFORMANCE_ERROR_CODES)[number], AgencyTeamPerformanceErrorCode> = true;
+const _consoleTeamAgrees: Equals<AgencyApi.AgencyTeamPerformanceErrorCode, AgencyTeamPerformanceErrorCode> = true;
+const _teamStatusKeys: Equals<keyof typeof AGENCY_TEAM_PERFORMANCE_ERROR_STATUS, AgencyTeamPerformanceErrorCode> = true;
+void [_teamExact, _consoleTeamAgrees, _teamStatusKeys];
+
+describe('team performance codes', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_TEAM_PERFORMANCE_ERROR_CODES]).toEqual([
+      'team_campaign_not_found',
+      'team_timezone_invalid',
+      'team_window_invalid',
+      'team_busy',
+      'team_timed_out',
+    ]);
+    expectUnique(AGENCY_TEAM_PERFORMANCE_ERROR_CODES);
+  });
+
+  it('answer these statuses (SNAPSHOT, written out by hand)', () => {
+    expect(AGENCY_TEAM_PERFORMANCE_ERROR_STATUS).toEqual({
+      team_campaign_not_found: 404,
+      team_timezone_invalid: 400,
+      team_window_invalid: 400,
+      team_busy: 429,
+      team_timed_out: 503,
+    });
+  });
+
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_TEAM_PERFORMANCE_ERROR_CODES).toBe(AGENCY_TEAM_PERFORMANCE_ERROR_CODES);
+    expect(AgencyApi.AGENCY_TEAM_PERFORMANCE_ERROR_STATUS).toBe(AGENCY_TEAM_PERFORMANCE_ERROR_STATUS);
+  });
+
+  it('do not overlap any other agency error union (the page is a Reports tab beside Compare agents and the exports)', () => {
+    const others = new Set<string>([
+      ...AGENCY_ACTION_ERROR_CODES, ...AGENCY_SOFTPHONE_ERROR_CODES, ...AGENCY_REPORT_ERROR_CODES, ...AGENCY_INBOUND_ERROR_CODES,
+      ...AGENCY_LISTEN_ERROR_CODES, ...AGENCY_FLOOR_ASSIST_ERROR_CODES, ...AGENCY_COMPARE_ERROR_CODES,
+      ...AGENCY_CAMPAIGN_ARCHIVE_ERROR_CODES, ...AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES, ...AGENCY_CAMPAIGN_TEMPLATE_ERROR_CODES,
+      ...AGENCY_ROSTER_REFUSAL_CODES, ...AGENCY_LIVE_CALL_NUMBER_ERROR_CODES,
+    ]);
+    for (const code of AGENCY_TEAM_PERFORMANCE_ERROR_CODES) expect(others.has(code), code).toBe(false);
   });
 });

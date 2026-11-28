@@ -44,6 +44,8 @@ const FLAGS = [
   'agency_compare_enabled',
   'agency_campaign_templates_enabled',
 ] as const;
+/** Swept apart from {@link FLAGS}, both ways only where it can change an offer (`teamFlagFor`). */
+const TEAM_FLAG = 'agency_team_performance_enabled';
 const CAPABILITIES = ['agency', 'agency.analytics'] as const;
 const ROLES: (Role | undefined)[] = ['tenant_owner', 'tenant_admin', 'account_admin', 'operator', 'viewer', 'agent', undefined];
 
@@ -76,17 +78,32 @@ function organisationSeatsFor(role: Role | undefined, flags: readonly string[]):
   return tenantRole && flags.includes('agency_campaign_templates_enabled') ? [true, false] : [false];
 }
 
+/**
+ * The Team performance flag's values a reader is swept with: both only where its one gate, the
+ * Reports tab's (a supervisor's, under the dialler), can pass; elsewhere it is held on, so a reader
+ * with every flag still has it.
+ */
+function teamFlagFor(role: Role | undefined, flags: readonly string[], caps: readonly string[]): boolean[] {
+  const reachable = hasPermission(role, 'agency.supervise') && caps.includes('agency') && flags.includes('agency_dialer_enabled');
+  return reachable ? [true, false] : [true];
+}
+
 const READERS: Reader[] = ROLES.flatMap((role) =>
-  subsets(FLAGS).flatMap((flags) =>
+  subsets(FLAGS).flatMap((swept) =>
     subsets(CAPABILITIES).flatMap((caps) =>
-      [true, false].flatMap((missed) =>
-        // Whether the seat is organisation-wide matters only from tenant admin up, and only to the
-        // organisation's campaign templates (CT3), the one gate that reads it: varied only there,
-        // so the sweep does not do every other tenant reader's work twice.
-        organisationSeatsFor(role, flags).map((organisationWide) => ({
-          role, flags: new Set(flags), caps: new Set(caps), missed, organisationWide,
-        })),
-      ),
+      // The Team performance flag is read by one gate only: varied only where it can pass, so the
+      // sweep does not do every other reader's work twice.
+      teamFlagFor(role, swept, caps).flatMap((team) => {
+        const flags = team ? [...swept, TEAM_FLAG] : swept;
+        return [true, false].flatMap((missed) =>
+          // Whether the seat is organisation-wide matters only from tenant admin up, and only to the
+          // organisation's campaign templates (CT3), the one gate that reads it: varied only there,
+          // so the sweep does not do every other tenant reader's work twice.
+          organisationSeatsFor(role, flags).map((organisationWide) => ({
+            role, flags: new Set(flags), caps: new Set(caps), missed, organisationWide,
+          })),
+        );
+      }),
     ),
   ),
 );
@@ -126,6 +143,8 @@ const ROUTES: RouteRule[] = [
   [/^\/agency\/analytics$/, (r) => dialer(r) && can(r, 'agency.campaigns.read')],
   // `CompareAgentsPage` checks `agency.supervise` (CP3) under `RequireFlag agency_compare_enabled`.
   [/^\/agency\/compare$/, (r) => dialer(r) && r.flags.has('agency_compare_enabled') && can(r, 'agency.supervise')],
+  // `TeamPerformancePage` checks `agency.supervise` (TP3) under `RequireFlag agency_team_performance_enabled`.
+  [/^\/agency\/team-performance$/, (r) => dialer(r) && r.flags.has('agency_team_performance_enabled') && can(r, 'agency.supervise')],
   // `ReportsPage` sends a dedicated agent to `/dialer/reports`.
   [/^\/agency\/reports$/, (r) => dialer(r) && r.flags.has('agency_reports_enabled') && can(r, 'agency.campaigns.read') && !isDedicatedAgent(r.role)],
   [/^\/agency\/dnc$/, (r) => dialer(r) && can(r, 'agency.dnc.read')],
@@ -251,8 +270,30 @@ describe('every offer passes the gate of the route it opens', () => {
     for (const gate of seated) expect(gate.flags ?? []).toContain('agency_campaign_templates_enabled');
   });
 
+  it('varies the Team performance flag everywhere a gate reading it can pass', () => {
+    // The sweep varies the flag only for a supervisor under the dialler (teamFlagFor). A gate that
+    // reads it for anyone else would be checked with the flag on only: say so here.
+    const gates: Array<{ permission?: Permission; flags?: readonly string[]; capabilities?: readonly string[] }> = [];
+    const walk = (value: unknown) => {
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (value !== null && typeof value === 'object') {
+        const flags = (value as { flags?: unknown }).flags;
+        if (Array.isArray(flags) && flags.includes(TEAM_FLAG)) gates.push(value as (typeof gates)[number]);
+        Object.values(value).forEach(walk);
+      }
+    };
+    walk([SETTINGS_ENTRIES, CONSOLE_SECTIONS]);
+    expect(gates.length).toBeGreaterThan(0);
+    for (const gate of gates) {
+      expect(gate.flags).toContain('agency_dialer_enabled');
+      expect(gate.capabilities ?? []).toContain('agency');
+      const supervises = ROLES.every((role) => !gate.permission || !hasPermission(role, gate.permission) || hasPermission(role, 'agency.supervise'));
+      expect(gate.permission !== undefined && supervises, `${gate.permission ?? 'no permission'} implies agency.supervise`).toBe(true);
+    }
+  });
+
   it('offers the dialler to whoever takes calls but does not supervise', () => {
-    const everything = (role: Role) => READERS.find((r) => r.role === role && r.missed && r.flags.size === FLAGS.length && r.caps.size === CAPABILITIES.length)!;
+    const everything = (role: Role) => READERS.find((r) => r.role === role && r.missed && r.flags.size === FLAGS.length + 1 && r.caps.size === CAPABILITIES.length)!;
     for (const role of ['viewer', 'operator', 'agent'] as const) {
       expect(offers(everything(role)).map((o) => o.to), role).toContain('/dialer');
     }
@@ -262,11 +303,11 @@ describe('every offer passes the gate of the route it opens', () => {
   });
 
   it('covers every route search and the sidebar can offer', () => {
-    const all = READERS.filter((r) => r.role === 'tenant_owner' && r.missed && r.organisationWide && r.flags.size === FLAGS.length && r.caps.size === CAPABILITIES.length);
+    const all = READERS.filter((r) => r.role === 'tenant_owner' && r.missed && r.organisationWide && r.flags.size === FLAGS.length + 1 && r.caps.size === CAPABILITIES.length);
     const targets = new Set(all.flatMap((r) => offers(r).map((o) => o.to.split('#')[0])));
     for (const path of [
       '/agency/home', '/agency/callbacks', '/agency/campaigns', '/agency/campaigns/new', '/agency/campaigns/archived', '/agency/calls', '/agency/inbound/missed',
-      '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
+      '/agency/inbound/summary', '/agency/team-performance', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
       '/agency/campaigns/c-1/attempts', '/agency/campaigns/c-1/activity', '/agency/campaigns/c-1/attempts?type=soft_phone',
       '/agency/campaigns/c-1/settings', '/agency/live', '/agency/listening-history', '/agency/campaigns/c-1/calls/live', '/settings', '/settings/profile', '/settings/softphone', '/settings/inbound',
       '/settings/call-summaries', '/settings/listening', '/settings/team', '/settings/accounts',
@@ -297,7 +338,7 @@ describe('every offer passes the gate of the route it opens', () => {
     const declared = declaredPaths();
     for (const path of [
       '/agency/home', '/agency/callbacks', '/agency/calls', '/agency/listening-history', '/agency/live', '/agency/inbound/missed',
-      '/agency/inbound/summary', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
+      '/agency/inbound/summary', '/agency/team-performance', '/agency/analytics', '/agency/compare', '/agency/reports', '/agency/dnc', '/agency/customers',
       '/agency/campaigns/c-1/manual-calls', '/agency/softphone', '/dialer', '/settings/calls', '/settings/listening',
     ]) {
       expect(isDeclared(path, declared), path).toBe(true);

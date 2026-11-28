@@ -10,9 +10,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * on the render that first asks it, before the read has started).
  *
  * A null key reads nothing and clears the answer (nothing to compare yet). `retry` repeats the
- * read of the current key: the page offers it on a failure that can clear by itself. Nothing
- * polls: a comparison is a moment's figures (the server caches them for 30 s), read again only
- * when the reader asks.
+ * read of the current key: Compare agents offers it on a failure that can clear by itself, and
+ * Team performance also calls it to refresh (`useTeamPerformance`). While the same key is read
+ * again its last `error` is kept, as its `data` is, so a caller can hold a failure's words up
+ * until the next read answers; a new key starts with none.
  *
  * `paused`: no read runs. A read in flight is cancelled (its answer is never shown), the last
  * answer stays on screen, and the read of the key starts again once unpaused, unless that key was
@@ -21,7 +22,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  */
 export type CompareReadState<T> =
   | { status: 'idle'; data: null; dataKey: null; doneKey: null; error: null }
-  | { status: 'loading'; data: T | null; dataKey: string | null; doneKey: string | null; error: null }
+  | { status: 'loading'; data: T | null; dataKey: string | null; doneKey: string | null; error: unknown }
   | { status: 'ready'; data: T; dataKey: string; doneKey: string; error: null }
   | { status: 'error'; data: T | null; dataKey: string | null; doneKey: string; error: unknown };
 
@@ -48,7 +49,13 @@ export function useCompareRead<T>(
     const settled = settledRef.current;
     if (settled !== null && settled.key === key && settled.attempt === attempt) return;
     const controller = new AbortController();
-    setState((prev) => ({ status: 'loading', data: prev.data, dataKey: prev.dataKey, doneKey: prev.doneKey, error: null }));
+    setState((prev) => ({
+      status: 'loading',
+      data: prev.data,
+      dataKey: prev.dataKey,
+      doneKey: prev.doneKey,
+      error: prev.doneKey === key ? prev.error : null,
+    }));
     readRef
       .current(controller.signal)
       .then((data) => {

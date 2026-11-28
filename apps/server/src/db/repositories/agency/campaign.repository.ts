@@ -144,6 +144,18 @@ export class AgencyCampaignRepository {
     return new Map(rows.map((r) => [r.id, r.phone_display]));
   }
 
+  /**
+   * Whether campaign `id` is the tenant's AND the account's, whatever its status (archived
+   * included): one probe on the primary key, no row read. `id` is a UUID (validated at the edge).
+   */
+  async existsInAccount(tenantId: string, accountId: string, id: string): Promise<boolean> {
+    const { rowCount } = await getPool().query(
+      'SELECT 1 FROM agency_campaigns WHERE id = $1::uuid AND tenant_id = $2::uuid AND account_id = $3::uuid',
+      [id, tenantId, accountId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
   async findById(id: string): Promise<AgencyCampaignRecord | null> {
     const { rows } = await getPool().query<AgencyCampaignRecord>(
       'SELECT * FROM agency_campaigns WHERE id = $1',

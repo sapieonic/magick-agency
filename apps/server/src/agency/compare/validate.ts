@@ -17,14 +17,13 @@ import {
   COMPARE_VIEW_NAME_MAX,
   compareMetricId,
   compareMetricRefProblem,
-  compareWindowProblem,
   type AgencyCompareErrorCode,
   type AgencyCompareMetricInfo,
   type AgencyCompareMetricRef,
   type AgencyCompareOutcomeCode,
   type CompareLens,
 } from '@magick-agency/contracts/api/agency/compare';
-import { REPORT_MAX_WINDOW_DAYS } from '@magick-agency/contracts/api/agency/reports';
+import { REPORT_MAX_WINDOW_DAYS, reportWindowProblem } from '@magick-agency/contracts/api/agency/reports';
 import { isCountableRef, resolveCompareMetrics } from '@magick-agency/domain/agent-compare';
 import { UUID_RE } from '../../utils/uuid.js';
 import type { CompareViewContent } from '../../db/repositories/agency.repository.js';
@@ -143,22 +142,34 @@ export function checkCompareMetrics(
 }
 
 /**
- * The zone and the window, in that order (`compare_timezone_invalid`, `compare_window_invalid`).
- * The zone must pass `isRequestZone` (the reports' rule: `Intl`, trimmed, at most 64 characters) AND
- * be one Postgres can cut days in: `databaseZone` is the name `postgresZoneName` found for it (its
- * own, or a legacy name's current one), null when it found none. The route asks Postgres only for
- * a zone that passes `isRequestZone`, and passes null for any other. `today` is the local date of
- * now in that zone.
+ * The zone and the window, in that order, answered with the caller's codes (`codes.zone`,
+ * `codes.window`): every Reports tab's one window rule (Compare agents' and Team performance's,
+ * TP11). The zone must pass `isRequestZone` (the reports' rule: `Intl`, trimmed, at most 64
+ * characters) AND be one Postgres can cut days in: `databaseZone` is the name `postgresZoneName`
+ * found for it (its own, or a legacy name's current one), null when it found none. The route asks
+ * Postgres only for a zone that passes `isRequestZone`, and passes null for any other. The window is
+ * `reportWindowProblem` (which `compareWindowProblem` and `teamWindowProblem` answer with their
+ * codes); `todayIn` is the local date of now in a zone.
  */
+export function checkReportWindow<C extends string>(
+  q: { from: string; to: string; timezone: string | undefined },
+  databaseZone: string | null,
+  todayIn: (zone: string) => string,
+  codes: { zone: C; window: C },
+): { ok: true; timezone: string; databaseTimezone: string } | { ok: false; code: C } {
+  const tz = q.timezone;
+  if (!isRequestZone(tz) || databaseZone === null) return { ok: false, code: codes.zone };
+  if (reportWindowProblem(q.from, q.to, todayIn(tz)) !== null) return { ok: false, code: codes.window };
+  return { ok: true, timezone: tz, databaseTimezone: databaseZone };
+}
+
+/** {@link checkReportWindow} with Compare's codes (`compare_timezone_invalid`, `compare_window_invalid`). */
 export function checkCompareWindow(
   q: { from: string; to: string; timezone: string | undefined },
   databaseZone: string | null,
   todayIn: (zone: string) => string,
 ): { ok: true; timezone: string; databaseTimezone: string } | { ok: false; code: AgencyCompareErrorCode } {
-  const tz = q.timezone;
-  if (!isRequestZone(tz) || databaseZone === null) return { ok: false, code: 'compare_timezone_invalid' };
-  if (compareWindowProblem(q.from, q.to, todayIn(tz)) !== null) return { ok: false, code: 'compare_window_invalid' };
-  return { ok: true, timezone: tz, databaseTimezone: databaseZone };
+  return checkReportWindow(q, databaseZone, todayIn, { zone: 'compare_timezone_invalid', window: 'compare_window_invalid' });
 }
 
 /** A view's content before its campaign is looked up: every field resolved to its stored value. */

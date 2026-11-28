@@ -342,6 +342,31 @@ describe('the caps: 3 per agent, 5 in all, in the order of §6; overflow goes no
   });
 });
 
+describe('max: the cap in all is the input\'s when given (Team performance passes Infinity, TP15)', () => {
+  // Eight agents clearly worse on the rate than a 23% rest, each a clear gap of its own.
+  const weak = Array.from({ length: 8 }, (_, i) => fig(`w${i}`, 40 + i, 400));
+  const metrics = [on(SUCCESS, [...weak, ...rest(REST_AT_23)])];
+  const picked = weak.map((f) => f.agent_user_id);
+
+  it('default: five in all, as Compare has always capped them', () => {
+    expect(compareFindings({ picked, metrics }).findings).toHaveLength(5);
+    expect(compareFindings({ picked, metrics, max: undefined }).findings).toHaveLength(5);
+  });
+
+  it('Infinity: every clear gap, largest first; the per-agent cap still holds', () => {
+    const r = compareFindings({ picked, metrics, max: Infinity });
+    expect(r.findings.map((f) => f.agent_user_id)).toEqual(picked);
+    expect(r.findings.every((f) => f.code === 'clear_gap')).toBe(true);
+    const one = compareFindings({ picked: ['a'], metrics: [
+      on(SUCCESS, [fig('a', 40, 400), ...rest(REST_AT_23)]),
+      on(WILL_PAY, [fig('a', 50, 400), ...rest(REST_AT_23)]),
+      on(NO_OUTCOME, [fig('a', 150, 400), ...rest(REST_AT_23)]),
+      on(CHOOSE, [fig('a', 120 * 40, 40), ...REST_TIMES]),
+    ], max: Infinity });
+    expect(one.findings).toHaveLength(3);
+  });
+});
+
 describe('inputs the read should never send', () => {
   it('a picked agent missing from the cohort is skipped, not invented', () => {
     expect(compareFindings({ picked: ['ghost'], metrics: [on(SUCCESS, rest(REST_AT_23.concat([[230, 1000]])))] }))

@@ -38,7 +38,7 @@ export function ConsoleTopBar({ onMenuClick, menuExpanded, menuControls, onSearc
   const { pathname } = useLocation();
   const { accountId } = useTenant();
   const gate = useNavGate();
-  const crumbs = breadcrumbFor(pathname, useSuppliedCrumbs(pathname), gate.role);
+  const crumbs = breadcrumbFor(pathname, useSuppliedCrumbs(pathname), gate.role, gate);
   const back = phone ? backCrumb(crumbs) : null;
   const label = searchPlaceholder(canSearchNumbers(gate, accountId ?? null), canSearchCampaigns(gate, accountId ?? null));
   const shortcut = searchShortcutLabel(typeof navigator === 'undefined' ? '' : navigator.platform ?? '');
