@@ -754,6 +754,18 @@ describe('reading again on its own (§2 States)', () => {
     expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(2);
   });
 
+  it('offers Try again when the read after a window’s last day fails, as nothing else will read it', async () => {
+    const view = renderView('?when=custom&from=2026-11-15&to=2026-11-17');
+    await screen.findByTestId('team-tiles');
+    mocks.getTeamPerformance.mockRejectedValueOnce(refusal(429, 'team_busy'));
+    view.at(NEXT_DAY);
+    const line = await screen.findByTestId('team-refresh-failed');
+    expect(line.textContent).toContain('Couldn’t refresh. Showing figures up to 8:45 AM.');
+    fireEvent.click(within(line).getByTestId('team-retry'));
+    await waitFor(() => expect(screen.queryByTestId('team-refresh-failed')).toBeNull());
+    expect(mocks.getTeamPerformance).toHaveBeenCalledTimes(3);
+  });
+
   it('reads a custom window once more however the page learns the day has turned, and only once', async () => {
     let answer: (a: AgencyTeamPerformance) => void = () => {};
     const view = renderView('?when=custom&from=2026-11-15&to=2026-11-17');
