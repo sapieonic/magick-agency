@@ -96,7 +96,8 @@ included; the sort is not part of the question.
 
 Reading again on its own: only a window that holds today **and** spans at most 7 local days
 (`windowAutoRefreshes`: Today, This week, Last 7 days, or a custom window that short ending today)
-is read again every 60 s while the page is visible and on return to the page. Once the page's today
+is read again every 60 s while the page is visible and on return to the page (a return reads again
+only once the answer is older than the server's 30 s cache). Once the page's today
 passes the end of a window of at most 7 days whose answer still runs to now
 (`answerAwaitsFinalRead`), that question is read once more, so its last day is shown whole: once per
 question while the page is open, however the page learns that the day has turned. A preset never
