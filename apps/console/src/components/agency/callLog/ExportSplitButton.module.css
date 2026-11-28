@@ -1,0 +1,72 @@
+/* Export CSV and its arrow, joined: one control with two parts. */
+.split {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.main {
+  white-space: nowrap;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.arrow {
+  padding-left: 8px;
+  padding-right: 8px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  /* The two parts share one border, not two side by side. */
+  margin-left: -1px;
+}
+
+.main:focus-visible,
+.arrow:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* At phone width the page's actions stretch to share the row: the split keeps its two parts. */
+@media (max-width: 640px) {
+  .split {
+    flex: 1 1 auto;
+  }
+
+  .main {
+    flex: 1 1 auto;
+  }
+}

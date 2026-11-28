@@ -13,6 +13,7 @@ export * from './agency-campaign';
 export * from './campaign-templates';
 export * from './agency-spine';
 export * from './call-log';
+export * from './call-export-fields';
 export * from './call-settings';
 export * from './agency-stats';
 export * from './agency-activity';

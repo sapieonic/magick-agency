@@ -10,6 +10,8 @@
     "lint": "pnpm -r --workspace-concurrency=4 run lint",
     "test": "pnpm -r --workspace-concurrency=4 run test",
     "test:integration": "pnpm -r --workspace-concurrency=1 run test:integration",
+    "e2e": "pnpm --filter @magick-agency/e2e run e2e",
+    "e2e:stack": "pnpm --filter @magick-agency/e2e run stack",
     "test:grafana": "node --test grafana/scripts/validate-alerts.test.mjs grafana/scripts/validate-dashboard.test.mjs",
     "test:release": "node --test tooling/release-please.test.mjs",
     "test:tooling": "node --test tooling/ci-scope.test.mjs",

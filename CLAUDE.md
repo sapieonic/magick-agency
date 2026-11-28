@@ -21,7 +21,7 @@ only; never cite another system, repo or external design doc.
 | `docs/team-performance.md` | you work on the Team performance tab of Reports (the team's tiles, the per-day chart, the outcome bars, one row per agent; rulings TP1–TP20, its read and its measured cost) |
 | `docs/campaign-templates.md` | you work on campaign templates (organisation and account templates, New campaign's fill-in, the soft phone's outcomes when it follows a template); rulings CT1–CT23 |
 | `docs/customer-history.md` | you work on the customer-history search (one number across campaigns), the inbound calls in it included |
-| `docs/call-log.md` | you work on a list of calls (the campaign Call log, My calls, All calls), a call's type or campaign, a campaign's figures by call type (Calls by type, the inbound figures, "Outbound connect rate") or the "Every call must belong to a campaign" setting: the model, phases P1–P6 and their status (all built; §9 says what waits for Manas), rulings CL1–CL42 |
+| `docs/call-log.md` | you work on a list of calls (the campaign Call log, My calls, All calls), a call's type or campaign, a campaign's figures by call type (Calls by type, the inbound figures, "Outbound connect rate") or the "Every call must belong to a campaign" setting, or Export with fields (the call analysis and call details added to the campaign call export, §10): the model, phases P1–P6 and their status (all built; §9 says what waits for Manas), rulings CL1–CL52 |
 | `docs/carriers.md` | you add or change a carrier, or touch which carrier account a campaign, number or call is on (service account vs a tenant's own; rulings CR1–CR15) |
 | `docs/inbound.md` | you work on inbound calls (Plivo callbacks to agency numbers, sticky agent, queue, follow-ups); §12 is the build plan and status |
 | `docs/listening.md` | you work on live call listening (the live calls list, the listener tap and socket, listen sessions) |
@@ -30,6 +30,7 @@ only; never cite another system, repo or external design doc.
 | `docs/reports.md` | you work on report exports (agent, campaign, account PDFs and workbooks, subscriptions, the renderer) |
 | `REPORTS_SETUP.md` | you set reports up for the first time, on a dev machine or in a deployment (the renderer, the Lambda, the flag) |
 | `db-hygiene.md` | you touch the pg pool's session settings, write a migration on a large table, or run database maintenance (backups, statistics, timeouts) |
+| `docs/e2e.md` | you run or add to the golden end-to-end suite (`apps/e2e`: Playwright, simulated carrier and vendors, on demand only), or a change alters a flow its specs drive |
 | `docs/operations.md`, `DEPLOYMENT.md` | you run, release or deploy it |
 
 ## Layout
@@ -40,6 +41,7 @@ apps/console/        Vite + React: agent station, soft phone, supervisor, team, 
 apps/super-admin/    Vite + React: tenants, users, numbers, limits, credentials, flags, usage
 apps/report-renderer/ report PDFs and workbooks from a dataset; runs as a Lambda or in the server (RP15)
 apps/mobile/         Flutter agent app (Android + iOS); not a pnpm package
+apps/e2e/            golden end-to-end suite: Playwright + a simulated carrier and vendors; on demand only
 packages/contracts/  wire contract shared by server, UIs and (through fixtures) the mobile app
 packages/domain/     pure dialer rules: leaf modules, no imports beyond contracts and other leaves
 packages/db/         pg pool, shared repositories and models, the migrations
@@ -58,8 +60,8 @@ tooling/             test-env resolver, release-please guard, contract-literal e
   is reported as its failures, not as a count. Counts go in the PR description, never in the docs:
   a shared log in `docs/status.md` that every PR appended to made every PR conflict.
 - **Real Postgres for repository and SQL tests.** A mocked pool hides SQL drift.
-- **Ports:** Postgres 5436, Redis 6383 (db 0 dev, dbs 1-4 test), server 3021, console 5175,
-  super-admin 5176. Never 5432/5433/5434/6379/6380/6381 (other local stacks use them).
+- **Ports:** Postgres 5436, Redis 6383 (db 0 dev, dbs 1-4 test, db 15 e2e), server 3021, console 5175,
+  super-admin 5176; the e2e stack 3031 / 5185 / 5186 and its simulator 3041. Never 5432/5433/5434/6379/6380/6381 (other local stacks use them).
 - **Never two integration runs on one database.** Integration global setup drops and re-migrates
   it; files run in parallel, worker N on Redis db `redisDb + N - 1` and on its own copy of the
   database (`<db>_w<N>`), made afresh from it before each file, so no file sees what another
@@ -119,6 +121,7 @@ pnpm build
 pnpm test:grafana        # alert rules + dashboard vs metric declarations
 pnpm test:release        # release-please config vs workspace packages, the mobile app and versions
 pnpm test:tooling        # CI scope rules vs what each package's suites read
+pnpm e2e                 # golden end-to-end suite, whole stack simulated (on demand; docs/e2e.md)
 
 docker build -f docker/Dockerfile -t magick-agency-server .     # production server image
 docker build -f docker/web.Dockerfile -t magick-agency-web .     # nginx + both web UIs

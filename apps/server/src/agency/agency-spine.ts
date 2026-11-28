@@ -95,6 +95,13 @@ export type SpineCallSource = 'dialler' | 'soft_phone' | 'inbound';
 export const CALL_LOG_QUERY_PARAMS = ['type', 'include_counts', 'status'] as const;
 
 /**
+ * `?fields=` on the campaign call export (CL52): read by the route itself (the columns to add)
+ * and never forwarded, so it is route-consumed, like `preamble`. The page reads get `include`
+ * instead, set by the route from the fields chosen.
+ */
+export const CALL_EXPORT_FIELDS_QUERY_PARAMS = ['fields'] as const;
+
+/**
  * The outcome of narrowing a query down to the params a route forwards.
  *
  * A result type rather than a bare record, because an unrecognised param is now
@@ -508,7 +515,16 @@ export function attemptCsvHeader(): string {
 }
 
 export function attemptCsvRow(row: SpineAttemptRow): string {
-  return toCsvLine([
+  return toCsvLine(attemptCsvCells(row));
+}
+
+/**
+ * One attempt row's cells, in {@link ATTEMPT_CSV_COLUMNS} order, before CSV escaping: what
+ * {@link attemptCsvRow} writes, and what an export with fields (`call-export-fields.ts`)
+ * writes its chosen columns after.
+ */
+export function attemptCsvCells(row: SpineAttemptRow): string[] {
+  return [
     cell(row.id), cell(row.contact_id), cell(row.attempt_number), cell(row.phone_e164),
     cell(row.caller_id), cell(row.agent_user_id), cell(row.agent_name), cell(row.state),
     cell(row.outcome),
@@ -522,7 +538,7 @@ export function attemptCsvRow(row: SpineAttemptRow): string {
     cell(row.promise_date), cell(row.promise_amount),
     cell(row.inbound?.wait_seconds), cell(row.inbound?.follow_up?.reason),
     cell(row.callback_of?.inbound_call_id),
-  ]);
+  ];
 }
 
 export function contactCsvHeader(): string {
@@ -551,7 +567,18 @@ export interface SpineCsvPreambleInput {
   filters: Record<string, string>;
   rowCount: number;
   truncated: SpineExportTruncation | null;
+  /** The ceiling that applied to this file: the Truncated line names it. */
   rowLimit: number;
+  /** The call export's chosen fields; absent when none was chosen: the preamble is then exactly as it always was. */
+  exportFields?: SpineCsvExportFields;
+}
+
+/** What the preamble says about the call export's chosen fields (`docs/call-log.md` §10, CL51). */
+export interface SpineCsvExportFields {
+  /** The lines that describe them (`callExportPreambleLines`, already written as preamble lines). */
+  lines: string[];
+  /** A soft-phone call detail (`field_<key>`) is among them: the soft-phone note then says less is left out. */
+  callFields: boolean;
 }
 
 /**
@@ -633,10 +660,15 @@ export function buildSpineCsvPreamble(input: SpineCsvPreambleInput): string[] {
           + 'one we turned away, and one filed under no campaign are not in this file.',
         ),
         preambleLine(
-          'Not included for a soft_phone row: the call details the agent entered and the reasons '
-          + 'given for dialling through a Do Not Call entry or outside calling hours. Each is on '
-          + 'the call\'s own page in the console (Call log, Soft-phone calls).',
+          input.exportFields?.callFields
+            ? 'Not included for a soft_phone row: the reasons given for dialling through a Do Not '
+              + 'Call entry or outside calling hours, and any call detail not chosen as a field_ '
+              + 'column below. Each is on the call\'s own page in the console (Call log, Soft-phone calls).'
+            : 'Not included for a soft_phone row: the call details the agent entered and the reasons '
+              + 'given for dialling through a Do Not Call entry or outside calling hours. Each is on '
+              + 'the call\'s own page in the console (Call log, Soft-phone calls).',
         ),
+        ...(input.exportFields?.lines ?? []),
       ]
       : [preambleLine(
         'Suppressed contacts appear here with the reason they were suppressed, including ones '

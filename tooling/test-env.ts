@@ -45,8 +45,11 @@ const local = readLocal();
 export const DEFAULT_TEST_DB_URL = `postgresql://magick_agency:magick_agency_password@localhost:5436/${local.dbName ?? 'magick_agency_test'}`;
 export const DEFAULT_TEST_REDIS_URL = `redis://localhost:6383/${local.redisDb ?? 1}`;
 
-/** The highest Redis db index a test may use (Redis has 0-15; 0 is dev). */
-export const MAX_TEST_REDIS_DB = 15;
+/**
+ * The highest Redis db index a test may use. Redis has 0-15: 0 is dev and 15 is the golden e2e
+ * run's (`apps/e2e`, which flushes it), so integration ranges stay within 1-14.
+ */
+export const MAX_TEST_REDIS_DB = 14;
 
 /** Workers when neither TEST_WORKERS nor the local file names a count. */
 const DEFAULT_MAX_WORKERS = 4;

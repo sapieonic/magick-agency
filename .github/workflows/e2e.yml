@@ -1,0 +1,87 @@
+name: E2E (golden)
+
+# The golden end-to-end suite (apps/e2e, docs/e2e.md): Playwright over the whole stack, with the
+# carrier, sign-in, mail, storage and AI simulated. On demand only: it never runs on a pull
+# request, a push or a schedule. Start it from the Actions tab (Run workflow, pick the branch),
+# or with `gh workflow run e2e.yml --ref <branch> [-f grep=...]`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      grep:
+        description: 'Only the specs whose title matches this (Playwright --grep); empty runs them all'
+        required: false
+        default: ''
+      repeat_each:
+        description: 'Run each spec this many times (to chase a flaky one)'
+        required: false
+        default: '1'
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: E2E (golden)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    services:
+      # The project's own ports (root CLAUDE.md); the run makes and drops its own database
+      # (magick_agency_e2e) and uses Redis db 15.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: magick_agency
+          POSTGRES_USER: magick_agency
+          POSTGRES_PASSWORD: magick_agency_password
+        ports: ['5436:5432']
+        options: >-
+          --health-cmd "pg_isready -U magick_agency -d magick_agency"
+          --health-interval 2s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6383:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Chromium for Playwright
+        run: pnpm --filter @magick-agency/e2e exec playwright install --with-deps chromium
+      - name: Run the golden suite
+        env:
+          GREP: ${{ inputs.grep }}
+          REPEAT_EACH: ${{ inputs.repeat_each }}
+        run: |
+          set -- --repeat-each="${REPEAT_EACH:-1}"
+          if [ -n "$GREP" ]; then set -- "$@" --grep "$GREP"; fi
+          pnpm e2e "$@"
+      - name: Summary
+        if: always()
+        run: |
+          f=apps/e2e/test-results/results.json
+          [ -f "$f" ] || { echo "No results: the stack did not come up (see the server log artifact)." >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          node -e '
+            const r = require(process.argv[1]).stats;
+            const line = `Golden e2e: ${r.expected} passed, ${r.unexpected} failed, ${r.flaky} flaky, ${r.skipped} skipped in ${Math.round(r.duration / 1000)} s`;
+            console.log(line);
+            require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, line + "\n");
+          ' "$PWD/$f"
+      - name: Upload the report, traces and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-report-${{ github.run_id }}
+          path: |
+            apps/e2e/playwright-report/
+            apps/e2e/test-results/
+            apps/e2e/.run/server.log
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore

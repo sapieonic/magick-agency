@@ -71,8 +71,44 @@ export function escapeCsvValue(value: string): string {
   return guarded;
 }
 
-export function toCsvLine(values: string[]): string {
-  return `${values.map(escapeCsvValue).join(',')}\n`;
+/**
+ * A number the writer may put in a cell as written, with no formula guard: what
+ * {@link csvNumberCell} returns. A plain string cell is always guarded, so a value
+ * reaches a file unguarded only by being built as one of these, from a `number`.
+ */
+export interface CsvNumberCell {
+  readonly kind: 'number';
+  readonly value: number;
+}
+
+/** One cell for {@link toCsvLine}: text (quoted and guarded) or a {@link CsvNumberCell}. */
+export type CsvCell = string | CsvNumberCell;
+
+/**
+ * A number as a cell, written as `String(value)` and NOT through the formula guard, so a
+ * negative number stays a number in a spreadsheet (`-0.4`, not `'-0.4`).
+ *
+ * Why it is safe to skip the guard here, and only here: a finite JavaScript number prints as
+ * digits, at most one leading `-`, a `.` and an exponent (`1e+21`, `-5e-7`), and a cell that is
+ * only that is a number to a spreadsheet, never a formula. The guard exists for text, and
+ * text never gets here: the caller must hold a `number` (a JSON number from a stored result),
+ * not a string that looks like one (`"-1+2"`, `"=1"`), which stays a guarded string cell.
+ *
+ * `NaN` and `±Infinity` (which JSON cannot carry, so a stored result never holds them) are
+ * written as an empty cell, as "nothing" is: `NaN` in a file would read as text that is no value.
+ */
+export function csvNumberCell(value: number): CsvNumberCell {
+  return { kind: 'number', value };
+}
+
+/** One cell as the file holds it: {@link escapeCsvValue} for text, a number as written. */
+export function escapeCsvCell(cell: CsvCell): string {
+  if (typeof cell === 'string') return escapeCsvValue(cell);
+  return Number.isFinite(cell.value) ? String(cell.value) : '';
+}
+
+export function toCsvLine(values: readonly CsvCell[]): string {
+  return `${values.map(escapeCsvCell).join(',')}\n`;
 }
 
 /**

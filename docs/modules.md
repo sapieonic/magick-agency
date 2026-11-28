@@ -356,6 +356,8 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/wrapup-redial-rules.test.ts` | 13 |
 | `apps/server/test/integration/agency/away-ring-state.test.ts` (Mode B on real Postgres and Redis: the Lua scripts, `ring` cleared by every other write, the mirror and `away_ring_since`, the take-over, the close decision and its race with a ring, the release applying a queued `away_ring` (from `offline` and over no key too), the renew that never touches `away_ring`, an end the reconcile half-saw, the reconcile; the one ring rule read alike by the entry, the search and the ring, the refusal and the reconcile's end at the maximum misses; the break's `reason` in Redis and the switch refused from any other break; the return whose end does not happen; a service-held push not recorded on the device; a reason-less `offline` keeping the absence and the slot reap leaving it alone; the search's per-account shortcut and its rebuild) | 58 |
 
+Export with fields (docs/call-log.md §10, CL43–CL52): `call-export-fields.ts` (a leaf: `fields` parsed and checked against the contract's names, prefixes and key pattern, 400 `export_fields_invalid`; which items need the analytics grant, the analysis lookup or the call-details lookup, and which lower the ceiling to 20,000; the added header cells; a row's added cells from its `export_extras`, CL49), the repository's `callExportFieldsForCampaign` (the field list over the call log's own WHERE builders: the calls, the analysed count, each analysis field's coverage, the dimensions from the jobs' `profile_snapshot` and the stored results, CL45, and the soft-phone call details with the soft phone's current labels), `callExportDimensionDescriptions` (the preamble's descriptions, from the same CTEs), `callExportLegAnalyses` and `callExportCallFields` (one lookup per page, scoped to the tenant and the campaign's account; the leg's result projected by the field list's own SQL, `common.*` / `custom.*` first and the legacy flat shape after), the internal `GET /agency-campaigns/:id/call-log?include=`, `/call-log/export-fields` and `/call-log/export-fields/descriptions`, and the public `GET /proxy/agency/campaigns/:id/call-log/export-fields` and `attempts.csv?fields=` (`proxy-agency-campaigns/spine.ts`; the grant from `api/routes/helpers/account-media-grants.ts` over `resolveBehavioralSettings`, which the soft phone's `accountMediaGrants` now uses too). A JSON number in an added cell is written unguarded through `agency-csv.ts`'s `csvNumberCell`. Tests: `test/unit/agency/call-export-fields.test.ts`, `test/unit/agency/agency-csv.test.ts`, `test/unit/agency/proxy-agency-call-export-fields.routes.test.ts`, `test/unit/agency/spine-read-routes.test.ts`, `test/integration/api/agency-call-export-fields.test.ts`.
+
 ### `apps/server/src/agency/agent-record/`
 
 The three agent-record reads, re-exported from `agency/agent-record.ts` (import from that path): `stats.ts` (the agent's own record: bucket vocabulary, query parsing, bucket SQL, occupancy fold), `roster.ts` (the supervisor's roster: vocabulary, parsing, percentiles, sort), `grouped.ts` (the grouped read: dimensions, zone rule, parsing). Tested through `agent-record.test.ts` and the agent-record route and repository suites above.
@@ -2199,6 +2201,8 @@ Campaign setup's presentation pieces (CS, `docs/campaign-setup.md` §2), with no
 | `apps/console/src/__tests__/routing/appRouteTable.test.ts` (the route table read from `App.tsx` with `routing/appRoutes.ts`, which `utils/navRouteGates.test.ts` also reads) | 14 |
 | `apps/console/src/__tests__/routing/scopedRouting.test.tsx` | 37 |
 
+Export with fields on the campaign Call log (docs/call-log.md §10, CL43–CL52): `agency/callLog/ExportSplitButton.tsx` (Export CSV with the arrow's menu, "More export options"), `agency/callLog/ExportFieldsDialog.tsx` (the field list for the list's own query, the groups with Select all, the column preview, the ceiling note, Remember), each with its `.module.css`; the pure rules in `utils/agency/callExportFields.ts` (the one query builder the field list and the download share, a name from a key, a type in words, the display order the file follows, the remembered fields offered and what a Download stores, the unoffered ones kept, the ceiling note) and the remembered choice in `utils/agency/callExportFieldsStore.ts` (browser storage under user, tenant, account and campaign, every access guarded); the client `getCallExportFields` in `api/agencySpine.ts`. Tests: `__tests__/utils/callExportFields.test.ts`, `__tests__/components/ExportFieldsDialog.test.tsx` (fixture `__tests__/helpers/callExportFields.ts`), `__tests__/components/ExportSplitButton.test.tsx`, and cases in `__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` and `AllCallsPage.test.tsx`.
+
 ### `apps/console/src/components/softphone/`
 
 The soft phone's screen (docs/softphone.md §7), in the station's look (AS1, AS3). `SoftphoneScreen` (`StationSoftphone.tsx`) is the one screen both hosts mount on the same `useSoftphone` state and keys (`useSoftphoneShortcuts`), inside the station's frame and band; the host gives the top bar, the banners, the note on where customers who call us go, and its way out (bottom right while nothing is dialled, its reason bottom left while a call holds it). `StationSoftphone` is the campaign station's host (`break/soft_phone`, Back to my calls); `/dialer/phone` (`SoftphonePage`) is the other (the agent nav and Close soft phone). Dial a number is the number box, a big keypad and Call (faded with the reason, in the station's words, until it can dial), Save this call to and Call from (with `callFromHint`, DN4), the call details and My recent calls (each back into the box), with how the last call ended in a banner; Calling is the outbound customer card (the number dialled, and the roster contact's name and facts when it is on the work's list), the SP3 warning while ringing, Mute ring and End call held; On call adds Last calls, the note and the call details; What happened? is the station's `WhatHappened` tiles and follow-ups with Save bottom right and Don't call again asked first (`StopCallingDialog`). `OverrideDialog` is "Call anyway" for a number not to be called (SP1) or a closed calling window (SP2): what matched, and a 10–500 character note. `SoftphoneHeader.tsx` holds what the hosts say about leaving the soft phone and whether a call is recorded (`recordingDisclosed`). `CallFieldsForm` renders the account's call fields by declared type, required markers tied to the input. `useSoftphoneShortcuts` is the window keyboard: in Ready digits type and Enter calls; on a call `1`–`9` pick an outcome, `M`, `N`, `C`, `D` (Don't call again's question), `Ctrl`/`⌘`+`Enter`, and `E` twice to end the call; keys in a field or a focused `<select>` are ignored. The soft-phone calls lists that lived here (`SoftphoneCallsList`) are gone: the account's is All calls and the agent's is My calls (docs/call-log.md §7).
@@ -2956,6 +2960,49 @@ Files: `lambda.ts`, `lambda/callback.ts`, `lambda/chromium.ts`, `lambda/s3-io.ts
 | `apps/report-renderer/test/lambda.test.ts` | 13 |
 | `apps/report-renderer/test/build-lambda.test.ts` | 2 |
 | `apps/report-renderer/test/chromium-layer.test.ts` | 1 |
+
+## `apps/e2e`
+
+The golden end-to-end suite ([`e2e.md`](e2e.md)): Playwright over the real server and the built
+UIs, with every vendor simulated. On demand only (`pnpm e2e`, the manual `e2e.yml` workflow).
+Rules and gotchas: `apps/e2e/CLAUDE.md`.
+
+### `apps/e2e/src/`
+
+`run.ts` (the one command: infra, a fresh database, the UI builds, the first super-admin, the
+simulator, the server and the edge, then Playwright, then teardown; `--stack` keeps it up),
+`env.ts` (ports, the target guards, the server's whole environment, the UI build settings),
+`infra.ts` (Postgres and Redis: already up, docker compose or local binaries; the run's lock on its
+database; recreate and migrate the database), `edge.ts` (static `dist/` and the API prefixes, nginx's routing),
+`server-preload.mjs` (the server process's `fetch`: fixed vendor hosts to the simulator; any other
+outside host refused on `fetch` and on `node:http`/`https`).
+
+Files: `edge.ts`, `env.ts`, `infra.ts`, `run.ts`, `server-preload.mjs`
+
+### `apps/e2e/src/sim/`
+
+The simulator: `index.ts` (one HTTP server for every vendor and the `/_sim/*` control API),
+`voicelink.ts` (the server's VoiceLink mock driven by personas picked by the number's last two
+digits), `firebase-auth.ts` (identitytoolkit and securetoken for the browser SDK and
+firebase-admin's emulator-mode lookups), `s3.ts`, `vendors.ts` (the Mailjet mailbox, recordings,
+the OpenAI-compatible and Gemini endpoints), `audio.ts` (whether an A-law frame carries sound,
+for the carrier side and the station page alike).
+
+Files: `audio.ts`, `firebase-auth.ts`, `index.ts`, `s3.ts`, `vendors.ts`, `voicelink.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/e2e/test/firebase-auth.test.ts` | 2 |
+| `apps/e2e/test/s3.test.ts` | 1 |
+| `apps/e2e/test/personas-and-guards.test.ts` | 10 |
+
+### `apps/e2e/src/fixtures/`, `src/pages/`, `specs/`
+
+`fixtures/test.ts` (the suite's `test`: identity routing, `world`, `supervisorApi`,
+`newUserPage`, `signIn`, `scoped`, and every live call hung up after each test), `fixtures/world.ts` (a tenant per test over the super-admin
+API), `fixtures/console-api.ts` (the console API as a seeded user: a running campaign in seconds,
+`phoneWithPersona`), `fixtures/sim-client.ts` (the control API). Page helpers: `pages/station.ts`,
+`pages/campaign.ts`, `pages/super-admin.ts`. The specs and what each checks: [`e2e.md`](e2e.md) §4.
 
 ## `apps/mobile`
 

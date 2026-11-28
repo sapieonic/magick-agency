@@ -54,15 +54,6 @@ export const EMPTY_PROFILE_FORM: AnalysisProfileFormData = {
   is_default: false,
 };
 
-/** Plain-language answer types. The raw `string|boolean|number|enum` tokens are
- *  never shown — "Text / Yes-No / Number / Choices" is what a user understands. */
-export const DIMENSION_TYPE_LABELS: Record<DimensionRow['type'], string> = {
-  string: 'Text',
-  boolean: 'Yes / No',
-  number: 'Number',
-  enum: 'Choices',
-};
-
 /** Load an existing profile into the form.
  *
  *  Every field lands in a controlled input and is `.trim()`ed on the very next

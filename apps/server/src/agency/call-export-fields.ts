@@ -1,0 +1,469 @@
+/**
+ * Export with fields (`docs/call-log.md` §10, rulings CL43–CL52): the extra columns a supervisor
+ * adds to the campaign call export (`GET /proxy/agency/campaigns/:id/attempts.csv?fields=`).
+ *
+ *  - {@link parseCallExportFields}: `fields` read and checked (CL52), before anything is read.
+ *  - {@link planCallExportFields}: what the chosen fields need (the analytics grant, the call log
+ *    read's `include`) and the file's row ceiling (CL48).
+ *  - {@link callExportCsvHeader} / {@link callExportCsvRow}: the file's columns, today's then the
+ *    chosen ones in the order asked (CL43), each value written by {@link callExportCell} (CL49).
+ *  - {@link callExportPreambleLines}: what the preamble says about them (CL51).
+ *  - {@link attachCallExportExtras}: the internal call log read's `export_extras` on each row.
+ *
+ * Every text cell still goes through `toCsvLine` and its formula guard: an AI summary is model
+ * output and is treated as untrusted text. Only an added cell whose value is a JSON number is
+ * written as it is (`csvNumberCell`), so a negative score stays a number. Nothing here escapes a
+ * cell itself (a second escape would double the apostrophe).
+ *
+ * A LEAF module: types, constants and pure functions. No fastify, no db.
+ */
+import {
+  AGENCY_CALL_EXPORT_AI_ROW_LIMIT,
+  AGENCY_CALL_EXPORT_CALL_FIELD_PREFIX,
+  AGENCY_CALL_EXPORT_DIMENSION_PREFIX,
+  AGENCY_CALL_EXPORT_KEY_PATTERN,
+  AGENCY_CALL_EXPORT_MAX_FIELDS,
+  isCallExportAnalysisField,
+  lowersCallExportRowLimit,
+  type AgencyCallExportAnalysisField,
+  type AgencyCallExportAnalysisFieldInfo,
+  type AgencyCallExportCallFieldInfo,
+  type AgencyCallExportDimensionInfo,
+  type AgencyCallExportFieldsResponse,
+} from '@magick-agency/contracts/api/agency/call-export-fields';
+import { ANALYTICS_DIMENSION_TYPES, type AnalyticsDimensionType } from '@magick-agency/contracts/api/agency/shared';
+import { AGENCY_CALL_LOG_TYPES } from '@magick-agency/contracts/api/agency/call-log';
+import { AGENCY_CALL_FIELD_TYPES, type AgencyCallFieldType } from '@magick-agency/contracts/agency';
+import { csvNumberCell, preambleLine, sanitizePreambleValue, toCsvLine, type CsvCell } from './agency-csv.js';
+import { ATTEMPT_CSV_COLUMNS, SPINE_EXPORT_MAX_ROWS, attemptCsvCells, type SpineAttemptRow } from './agency-spine.js';
+import { multiParam, validateEnum, type FilterIssue } from './spine-filters.js';
+
+// ─── Asking for fields (CL52) ──────────────────────────────────────────────
+
+/** One chosen field: an analysis field, a dimension (`dim_<key>`) or a call detail (`field_<key>`). */
+export type CallExportField =
+  | { kind: 'analysis'; name: AgencyCallExportAnalysisField }
+  | { kind: 'dimension'; name: string; key: string }
+  | { kind: 'call_field'; name: string; key: string };
+
+/** How much of a refused item the 400 echoes back: an item is a name, never this long. */
+const ECHOED_ITEM_MAX_CHARS = 64;
+/** How many refused items the 400 echoes back; `invalid_count` says how many there were. */
+const ECHOED_INVALID_MAX_ITEMS = 10;
+
+export type CallExportFieldsParse =
+  | { ok: true; fields: CallExportField[] }
+  | {
+    ok: false;
+    /** The first {@link ECHOED_INVALID_MAX_ITEMS} refused items, each cut to a name's length. */
+    invalid: string[];
+    /** How many items were refused, all of them. */
+    invalidCount: number;
+    /** How many distinct items were asked for. */
+    count: number;
+  };
+
+/** One `fields` item, or null when it is of no recognised shape. */
+function readField(item: string): CallExportField | null {
+  if (isCallExportAnalysisField(item)) return { kind: 'analysis', name: item };
+  for (const [prefix, kind] of [
+    [AGENCY_CALL_EXPORT_DIMENSION_PREFIX, 'dimension'],
+    [AGENCY_CALL_EXPORT_CALL_FIELD_PREFIX, 'call_field'],
+  ] as const) {
+    if (item.startsWith(prefix)) {
+      const key = item.slice(prefix.length);
+      return AGENCY_CALL_EXPORT_KEY_PATTERN.test(key) ? { kind, name: item, key } : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * `?fields=` as the export reads it (CL52): comma-separated or repeated (either form, as every
+ * multi-value param), each item trimmed, blanks dropped, a repeat keeping its first place. Each
+ * item is an analysis field, or `dim_` / `field_` and a key matching
+ * `AGENCY_CALL_EXPORT_KEY_PATTERN`. More than `AGENCY_CALL_EXPORT_MAX_FIELDS`, or an item of any
+ * other shape, is refused with the items named (the first ten, each cut to a name's length, and
+ * how many there were in all). Absent or blank:
+ * no fields, and the file is exactly the plain one.
+ */
+export function parseCallExportFields(raw: unknown): CallExportFieldsParse {
+  const items = [...new Set(multiParam(raw) ?? [])];
+  const fields: CallExportField[] = [];
+  const invalid: string[] = [];
+  let invalidCount = 0;
+  for (const item of items) {
+    const field = readField(item);
+    if (field) fields.push(field);
+    else if (++invalidCount <= ECHOED_INVALID_MAX_ITEMS) {
+      invalid.push(item.length > ECHOED_ITEM_MAX_CHARS ? `${item.slice(0, ECHOED_ITEM_MAX_CHARS)}…` : item);
+    }
+  }
+  if (invalidCount > 0 || items.length > AGENCY_CALL_EXPORT_MAX_FIELDS) {
+    return { ok: false, invalid, invalidCount, count: items.length };
+  }
+  return { ok: true, fields };
+}
+
+/** The 400 for a refused `fields` (`export_fields_invalid`), in plain words. */
+export function callExportFieldsInvalidBody(refused: { invalid: string[]; invalidCount: number; count: number }): {
+  error: string; code: 'export_fields_invalid'; message: string;
+  details: { invalid: string[]; invalid_count: number; count: number; max: number };
+} {
+  const parts: string[] = [];
+  if (refused.invalid.length > 0) {
+    const more = refused.invalidCount - refused.invalid.length;
+    parts.push(`These fields cannot be added to the export: ${refused.invalid.join(', ')}${more > 0 ? ` and ${more} more` : ''}.`);
+  }
+  if (refused.count > AGENCY_CALL_EXPORT_MAX_FIELDS) {
+    parts.push(`At most ${AGENCY_CALL_EXPORT_MAX_FIELDS} fields can be added to one export; ${refused.count} were asked for.`);
+  }
+  return {
+    error: 'Validation failed',
+    code: 'export_fields_invalid',
+    message: parts.join(' '),
+    details: { invalid: refused.invalid, invalid_count: refused.invalidCount, count: refused.count, max: AGENCY_CALL_EXPORT_MAX_FIELDS },
+  };
+}
+
+/** The 403 for analysis or dimension fields asked without the analytics setting (CL47). */
+export function callExportFieldsNotPermittedBody(names: readonly string[]): {
+  error: string; code: 'export_fields_not_permitted'; message: string; details: { fields: string[] };
+} {
+  return {
+    error: 'Forbidden',
+    code: 'export_fields_not_permitted',
+    message: `Call analysis is turned off for this campaign's account, so these fields cannot be added to the export: ${names.join(', ')}.`,
+    details: { fields: [...names] },
+  };
+}
+
+// ─── What the fields need (CL47, CL48) ─────────────────────────────────────
+
+/** What a set of chosen fields asks of the export. */
+export interface CallExportFieldPlan {
+  fields: readonly CallExportField[];
+  /** The analysis and dimension fields: behind the campaign's account's analytics setting (CL47). */
+  needsAnalysisGrant: string[];
+  /**
+   * What the call log read attaches to each row (`include`), empty when nothing:
+   *  - `analysis`: the media leg's analysis status AND its stored result, when an analysis field
+   *    other than `analysis_status`, or a dimension, is chosen;
+   *  - `analysis_status`: the status alone, when `analysis_status` is chosen and nothing that
+   *    needs the result, so no result is read (still behind the grant);
+   *  - `call_fields`: the soft-phone call's details, when a call detail is chosen.
+   */
+  include: CallLogInclude[];
+  /** The file's row ceiling: 20,000 with an AI field (CL48), else the export's own 50,000. */
+  rowLimit: number;
+}
+
+export function planCallExportFields(fields: readonly CallExportField[]): CallExportFieldPlan {
+  const needsAnalysisGrant = fields.filter((f) => f.kind !== 'call_field').map((f) => f.name);
+  // The fields read from the stored result are exactly those that lower the ceiling (CL48).
+  const needsResult = fields.some((f) => lowersCallExportRowLimit(f.name));
+  const include: CallLogInclude[] = [];
+  if (needsResult) include.push(CALL_LOG_INCLUDE_ANALYSIS);
+  else if (needsAnalysisGrant.length > 0) include.push(CALL_LOG_INCLUDE_ANALYSIS_STATUS);
+  if (fields.some((f) => f.kind === 'call_field')) include.push(CALL_LOG_INCLUDE_CALL_FIELDS);
+  return {
+    fields,
+    needsAnalysisGrant,
+    include,
+    rowLimit: needsResult ? AGENCY_CALL_EXPORT_AI_ROW_LIMIT : SPINE_EXPORT_MAX_ROWS,
+  };
+}
+
+// ─── The internal read's extras ────────────────────────────────────────────
+
+/** The media leg's analysis status and stored result. */
+export const CALL_LOG_INCLUDE_ANALYSIS = 'analysis';
+/** The media leg's analysis status alone: `call_analysis` is not read. `analysis` covers it. */
+export const CALL_LOG_INCLUDE_ANALYSIS_STATUS = 'analysis_status';
+export const CALL_LOG_INCLUDE_CALL_FIELDS = 'call_fields';
+/** `?include=` on the internal call log read: what it attaches to each row as `export_extras`. */
+export const CALL_LOG_INCLUDES = [CALL_LOG_INCLUDE_ANALYSIS, CALL_LOG_INCLUDE_ANALYSIS_STATUS, CALL_LOG_INCLUDE_CALL_FIELDS] as const;
+export type CallLogInclude = (typeof CALL_LOG_INCLUDES)[number];
+
+/**
+ * `?include=` read (either form, blanks dropped), an unknown value refused in the surface's own
+ * words (`validateEnum`): the set asked for, or null once `issues` holds the refusal. Absent: the
+ * empty set, and the read answers exactly as it always has.
+ */
+export function parseCallLogInclude(raw: unknown, issues: FilterIssue[]): Set<CallLogInclude> | null {
+  const items = validateEnum('include', multiParam(raw) ?? [], CALL_LOG_INCLUDES, issues);
+  return items ? new Set(items) : null;
+}
+
+/**
+ * What the export reads of a media leg's stored result, as the extras lookup projects it in SQL
+ * (`attempt.repository.ts`, the same projection as the field list's): never the whole
+ * `call_analysis`. Each common field is taken from the current shape (`common.*`) first, else
+ * the legacy flat one; all of it is null when the leg's analysis was erased (`deleted`) or holds
+ * no result.
+ */
+export interface CallExportResult {
+  ai_summary: unknown;
+  ai_sentiment: unknown;
+  ai_sentiment_score: unknown;
+  ai_key_topics: unknown;
+  /** The current shape's dimensions (`custom`), when an object; read first. */
+  custom: Record<string, unknown> | null;
+  /** The legacy shape's dimensions (`custom_dimensions`), when an object; read when `custom` has no value. */
+  custom_dimensions: Record<string, unknown> | null;
+}
+
+/**
+ * What the internal read attaches to a row with `include`: its media leg's analysis status and
+ * stored result (null when not asked for, the row has no leg, or the leg is not this account's;
+ * with `include=analysis_status` alone the result is null as it was never read) and, on a
+ * soft-phone row, the call details the agent entered (null on any other row).
+ */
+export interface CallExportExtras {
+  analysis_status: string | null;
+  result: CallExportResult | null;
+  call_fields: Record<string, unknown> | null;
+}
+
+/** A media leg's analysis, as the extras lookup reads it. */
+export type CallExportLegAnalysis = Pick<CallExportExtras, 'analysis_status' | 'result'>;
+
+/**
+ * Put `export_extras` on each row from the page's two lookups: `legs` by the row's
+ * `webrtc_call_id`, `callFields` by a soft-phone row's id. A kind that was not asked for is
+ * passed as null and leaves its keys null.
+ */
+export function attachCallExportExtras<R extends { source: string; id: string; webrtc_call_id: string | null }>(
+  rows: readonly R[],
+  legs: ReadonlyMap<string, CallExportLegAnalysis> | null,
+  callFields: ReadonlyMap<string, Record<string, unknown>> | null,
+): Array<R & { export_extras: CallExportExtras }> {
+  return rows.map((row) => {
+    const leg = legs && row.webrtc_call_id ? legs.get(row.webrtc_call_id) : undefined;
+    const fields = callFields && row.source === 'soft_phone' ? callFields.get(row.id) : undefined;
+    return {
+      ...row,
+      export_extras: {
+        analysis_status: leg?.analysis_status ?? null,
+        result: leg?.result ?? null,
+        call_fields: fields ?? null,
+      },
+    };
+  });
+}
+
+// ─── The file (CL43, CL49) ─────────────────────────────────────────────────
+
+/** A row of the export as the drain reads it: the attempt row, with the extras when asked for. */
+export type CallExportRow = SpineAttemptRow & { export_extras?: Partial<CallExportExtras> | null };
+
+/** `obj[key]` only when it is the object's own: a key such as `constructor` must not read the prototype. */
+function own(obj: unknown, key: string): unknown {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return undefined;
+  return Object.hasOwn(obj, key) ? (obj as Record<string, unknown>)[key] : undefined;
+}
+
+/**
+ * One value as text (CL49): `true`/`false`, a number as written, text as it is (line breaks kept:
+ * `toCsvLine` quotes them), a list as its items joined with `; ` (an object or a list in it as
+ * JSON, an item with no value left out), any other object as JSON, nothing as an empty string.
+ */
+function callExportText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (item !== null && typeof item === 'object' ? JSON.stringify(item) : callExportText(item)))
+      .filter((text) => text !== '')
+      .join('; ');
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * One value as a cell (CL49), as {@link callExportText} writes it, except a JSON number, which is
+ * a {@link csvNumberCell}: written as it is, with no formula guard, so `-0.4` stays a number in a
+ * spreadsheet. Everything else is a string cell and goes through `toCsvLine`'s guard, a string
+ * that merely looks like a number (`"-1+2"`) included, and so does a list (`-1; 2` is text). A
+ * number that is not finite (JSON cannot carry one) is an empty cell.
+ */
+export function callExportCell(value: unknown): CsvCell {
+  if (typeof value === 'number') return Number.isFinite(value) ? csvNumberCell(value) : '';
+  return callExportText(value);
+}
+
+/**
+ * Whether a value is written as a non-empty cell: what the field list counts as "a call carries a
+ * value". `hasCellValueSql` in the attempt repository is the same rule in SQL, and an integration
+ * test holds the two together. Not null, not `""`, not a list none of whose items is one (`[]`,
+ * `[null]`, `["", null]`); `false`, `0`, `{}` and a list holding `[]` or `{}` (written as JSON)
+ * are values.
+ */
+export function callExportHasValue(value: unknown): boolean {
+  const cell = callExportCell(value);
+  return typeof cell === 'string' ? cell !== '' : true;
+}
+
+/**
+ * One chosen field's value on a row, before it is a cell. The result is already projected (the
+ * shapes and the erasure are the SQL's, {@link CallExportResult}); a dimension is the current
+ * shape's key, else the legacy one's.
+ */
+export function callExportValue(field: CallExportField, row: CallExportRow): unknown {
+  const extras = row.export_extras;
+  switch (field.kind) {
+    case 'call_field':
+      return row.source === 'soft_phone' ? own(extras?.call_fields, field.key) : undefined;
+    case 'dimension':
+      return own(extras?.result?.custom, field.key) ?? own(extras?.result?.custom_dimensions, field.key);
+    case 'analysis':
+      return field.name === 'analysis_status' ? extras?.analysis_status ?? 'none' : extras?.result?.[field.name];
+  }
+}
+
+/** The file's header: today's columns, then the chosen ones in the order asked (CL43). */
+export function callExportCsvHeader(fields: readonly CallExportField[]): string {
+  return toCsvLine([...ATTEMPT_CSV_COLUMNS, ...fields.map((f) => f.name)]);
+}
+
+/** One row: today's cells, then the chosen fields' (CL49), every cell through `toCsvLine`'s guard. */
+export function callExportCsvRow(row: CallExportRow, fields: readonly CallExportField[]): string {
+  const cells: CsvCell[] = attemptCsvCells(row);
+  for (const field of fields) cells.push(callExportCell(callExportValue(field, row)));
+  return toCsvLine(cells);
+}
+
+// ─── The preamble (CL51) ───────────────────────────────────────────────────
+
+/**
+ * What the preamble says about the chosen fields: which were added and where, each dimension's
+ * newest description (`descriptions`, by key; read with the file's own filters), the ceiling
+ * that applied, what an empty analysis cell means, and that the added columns are customer
+ * content. Every value goes through `sanitizePreambleValue`.
+ */
+export function callExportPreambleLines(input: {
+  fields: readonly CallExportField[];
+  descriptions: ReadonlyMap<string, string | null>;
+  rowLimit: number;
+}): string[] {
+  const names = input.fields.map((f) => sanitizePreambleValue(f.name));
+  const dimensions = input.fields.filter((f): f is Extract<CallExportField, { kind: 'dimension' }> => f.kind === 'dimension');
+  const analysed = input.fields.some((f) => f.kind !== 'call_field');
+  const lowered = input.rowLimit === AGENCY_CALL_EXPORT_AI_ROW_LIMIT;
+  return [
+    preambleLine(`Fields added after callback_of, in this order: ${names.join(', ')}`),
+    ...dimensions.map((d) => {
+      const description = input.descriptions.get(d.key);
+      return preambleLine(`${sanitizePreambleValue(d.name)}: ${description
+        ? sanitizePreambleValue(description)
+        : '(no description: the key is found only in stored results)'}`);
+    }),
+    preambleLine(lowered
+      ? `Row ceiling: ${AGENCY_CALL_EXPORT_AI_ROW_LIMIT.toLocaleString('en-US')} rows, because an AI field was chosen `
+        + `(an analysis field other than analysis_status, or a dimension); without one it is ${SPINE_EXPORT_MAX_ROWS.toLocaleString('en-US')}.`
+      : `Row ceiling: ${input.rowLimit.toLocaleString('en-US')} rows.`),
+    ...(analysed
+      ? [preambleLine(
+        'analysis_status says why an analysis cell is empty (none: the call had no recording analysed). '
+        + 'An empty dimension on a completed call means that call\'s profile did not have it.',
+      )]
+      : []),
+    preambleLine(
+      'The added columns are customer content: an AI summary, its topics, sentiment and dimensions are model '
+      + 'output from the customer\'s call, and a call detail is what the agent typed. Handle and retain them '
+      + 'as you would the call itself.',
+    ),
+  ];
+}
+
+// ─── The field list (`…/call-log/export-fields`, CL45) ─────────────────────
+
+/**
+ * The internal field-list read (`GET /agency-campaigns/:id/call-log/export-fields`): how many calls
+ * the filters match, the analysis groups when asked for (`include_analysis=1`; `null` when not,
+ * and then nothing of the analysis was read), and the call details found on the soft-phone rows.
+ */
+export interface CallExportFieldsRead {
+  calls: number;
+  analysis: {
+    analysed: number;
+    fields: AgencyCallExportAnalysisFieldInfo[];
+    dimensions: AgencyCallExportDimensionInfo[];
+  } | null;
+  call_fields: AgencyCallExportCallFieldInfo[];
+}
+
+/** A dimension key as the set-based read aggregates it, before it is normalised. */
+export interface RawCallExportDimension {
+  key: string;
+  types: unknown;
+  options: unknown;
+  description: string | null;
+  calls: number | string;
+  sources: unknown;
+}
+
+/** A call-field key as the read aggregates it: how many soft-phone calls carry it, and its current definition. */
+export interface RawCallExportCallField {
+  key: string;
+  calls: number | string;
+  label: string | null;
+  type: string | null;
+}
+
+/** Most calls first, then by key (codepoint order, so every runtime sorts alike). */
+function byCallsThenKey(a: { calls: number; key: string }, b: { calls: number; key: string }): number {
+  if (a.calls !== b.calls) return b.calls - a.calls;
+  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
+
+/** The read's dimension rows → the contract's entries: types and sources narrowed and ordered, sorted. */
+export function toCallExportDimensions(rows: readonly RawCallExportDimension[]): AgencyCallExportDimensionInfo[] {
+  return rows.map((row) => {
+    const sources = new Set(strings(row.sources));
+    return {
+      name: `${AGENCY_CALL_EXPORT_DIMENSION_PREFIX}${row.key}`,
+      key: row.key,
+      types: strings(row.types).filter((t): t is AnalyticsDimensionType => (ANALYTICS_DIMENSION_TYPES as readonly string[]).includes(t)),
+      options: strings(row.options),
+      description: typeof row.description === 'string' && row.description.trim().length > 0 ? row.description : null,
+      calls: Number(row.calls),
+      sources: AGENCY_CALL_LOG_TYPES.filter((type) => sources.has(type)),
+    };
+  }).sort(byCallsThenKey);
+}
+
+/** The read's call-field rows → the contract's entries, a label or type the settings no longer hold as null, sorted. */
+export function toCallExportCallFields(rows: readonly RawCallExportCallField[]): AgencyCallExportCallFieldInfo[] {
+  return rows.map((row) => ({
+    name: `${AGENCY_CALL_EXPORT_CALL_FIELD_PREFIX}${row.key}`,
+    key: row.key,
+    label: typeof row.label === 'string' && row.label.trim().length > 0 ? row.label : null,
+    type: row.type !== null && (AGENCY_CALL_FIELD_TYPES as readonly string[]).includes(row.type) ? row.type as AgencyCallFieldType : null,
+    calls: Number(row.calls),
+  })).sort(byCallsThenKey);
+}
+
+/**
+ * The public route's answer (`AgencyCallExportFieldsResponse`) from the internal read. Without the
+ * analytics setting the analysis groups are empty and `analysed` null, whatever the read held
+ * (the public route never asks for them then).
+ */
+export function toCallExportFieldsResponse(read: CallExportFieldsRead, analysisAvailable: boolean): AgencyCallExportFieldsResponse {
+  const analysis = analysisAvailable ? read.analysis : null;
+  return {
+    calls: read.calls,
+    analysis_available: analysisAvailable,
+    analysed: analysis ? analysis.analysed : null,
+    analysis: analysis ? analysis.fields : [],
+    dimensions: analysis ? analysis.dimensions : [],
+    call_fields: read.call_fields,
+    row_limit: SPINE_EXPORT_MAX_ROWS,
+    ai_row_limit: AGENCY_CALL_EXPORT_AI_ROW_LIMIT,
+  };
+}
