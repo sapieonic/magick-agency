@@ -1082,7 +1082,9 @@ measured) are in [`team-performance.md`](team-performance.md) §1. All are decid
 the design's recommendations ratified (TP2, TP3, TP5, TP12, TP14, TP15, TP17, TP18), TP14's
 wording (the tiles are the rows' sums; the per-day chart and the outcome bars the whole team's)
 included. TP1's tab order was amended at the build (Team performance, Analytics, Compare agents,
-Exports) and accepted. All campaigns over a whole month on a busy tenant reads at the 8 s budget
+Exports) and accepted. TP8 (the campaigns worked in the window decide the main outcome, `mixed`
+and its note) and TP15 (Worth a look with no cap in all) were amended in review on 2026-11-28,
+after their ratification: decided 2026-11-27, amended 2026-11-28, Manas to confirm. All campaigns over a whole month on a busy tenant reads at the 8 s budget
 (`team-performance.md` §4): Manas ruled to keep the live read for now, with daily pre-processing
 as the follow-up, the live read then running only on a forced refresh (§7).
 
