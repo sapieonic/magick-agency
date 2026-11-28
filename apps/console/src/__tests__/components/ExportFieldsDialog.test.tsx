@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Profiler } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { AgencyCallExportFieldsResponse } from '@magick-agency/contracts/api/agency/call-export-fields';
 
@@ -20,10 +21,16 @@ import { callExportFieldsKey } from '../../utils/agency/callExportFieldsStore';
 const KEY = callExportFieldsKey('u-1', 't-1', 'a-1', 'camp-1');
 const QUERY = { outcome: ['connected'], source: 'dialler' };
 
-function renderDialog(overrides: { onDownload?: (fields: string[]) => Promise<void>; onClose?: () => void; storageKey?: string | null } = {}) {
+function renderDialog(overrides: {
+  onDownload?: (fields: string[]) => Promise<void>;
+  onClose?: () => void;
+  storageKey?: string | null;
+  /** Called on every commit the dialog makes, with the DOM as that commit left it. */
+  onCommit?: () => void;
+} = {}) {
   const onDownload = vi.fn(overrides.onDownload ?? (async () => {}));
   const onClose = vi.fn(overrides.onClose ?? (() => {}));
-  render(
+  const dialog = (
     <ExportFieldsDialog
       open
       onClose={onClose}
@@ -35,8 +42,9 @@ function renderDialog(overrides: { onDownload?: (fields: string[]) => Promise<vo
       tenantId="t-1"
       accountId="a-1"
       onDownload={onDownload}
-    />,
+    />
   );
+  render(overrides.onCommit ? <Profiler id="export-fields" onRender={overrides.onCommit}>{dialog}</Profiler> : dialog);
   return { onDownload, onClose };
 }
 
@@ -227,6 +235,27 @@ describe('remembered fields (CL50)', () => {
     await waitFor(() => expect(onDownload).toHaveBeenCalledWith(['field_old_ref', 'ai_summary']));
     // The name this view did not offer is still remembered, after the choice made now.
     expect(JSON.parse(window.localStorage.getItem(KEY)!)).toEqual(['field_old_ref', 'ai_summary', 'dim_gone_since']);
+  });
+
+  it('the list is never on screen without the remembered ticks, so no tick made at once is lost', async () => {
+    // Each commit is seen before React runs any effect. Ticking the remembered fields in an
+    // effect drew the list once unticked, with Download disabled, and a click in that moment
+    // was overwritten when the effect landed (a slow CI runner caught it).
+    window.localStorage.setItem(KEY, JSON.stringify(['ai_summary']));
+    mocks.getCallExportFields.mockResolvedValue(exportFieldsFixture());
+    const seen: Array<{ ticked: boolean; downloadDisabled: boolean }> = [];
+    renderDialog({
+      onCommit: () => {
+        const input = box('ai_summary');
+        if (!input) return;
+        const download = screen.getByTestId('export-fields-download') as HTMLButtonElement;
+        seen.push({ ticked: input.checked, downloadDisabled: download.disabled });
+      },
+    });
+    await screen.findByText('Columns in the file');
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]).toEqual({ ticked: true, downloadDisabled: false });
+    expect(seen.every((commit) => commit.ticked)).toBe(true);
   });
 
   it('a later view that offers the kept field ticks it again', async () => {
