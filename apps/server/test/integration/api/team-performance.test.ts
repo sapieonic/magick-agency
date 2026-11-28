@@ -48,9 +48,10 @@ import {
   type Actor, type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
 import { bulkInsert } from '../agency/insights-rollup-world.js';
-import { agencyInsightsRollupRepository } from '../../../src/db/repositories/agency.repository.js';
+import { agencyInsightsRollupRepository, agencyTeamPerformanceReadRepository } from '../../../src/db/repositories/agency.repository.js';
 import { teamPromiseCampaignsSql, teamPromisesSql } from '../../../src/db/repositories/agency/team-performance-reads.js';
-import { localDateOf, localInstant } from '../../../src/agency/reports/schedule.js';
+import { localDateOf, localDayBounds, localInstant } from '../../../src/agency/reports/schedule.js';
+import { teamTrendRange } from '../../../src/agency/team-performance/assemble.js';
 
 let loaded: LoadApp;
 let floor: TenantFloor;
@@ -547,6 +548,29 @@ describe('All campaigns', () => {
     const one = await Promise.all([team({ campaign_id: c0 }), team({ campaign_id: c1 })]);
     const newest = one.map((x) => x.rollup_as_of!).sort().at(-1);
     expect(a.rollup_as_of).toBe(newest);
+  });
+
+  it('rollup_as_of reads only the buckets of the chart\'s range: a later change to an older bucket never dates the bars', async () => {
+    const range = teamTrendRange(FROM, TO);
+    const read = localDayBounds(range.from, range.to, ZONE);
+    const older = L(shiftDate(range.from, -7), '10:00');
+    const changed = new Date(Date.now() + 86_400_000);
+    const client = await getTestPool().connect();
+    try {
+      await client.query('BEGIN');
+      const asOf = async (from: Date) => Object.fromEntries((await agencyTeamPerformanceReadRepository.scopeCampaigns(client, {
+        tenantId: floor.tenant, accountId: floor.account, scope: { kind: 'account' }, range: { from, to: read.end },
+      })).map((c) => [c.id, c.rollup_as_of]));
+      const before = await asOf(read.start);
+      expect(before[c0]).not.toBeNull();
+      await client.query(`INSERT INTO agency_insights_rollup_buckets (campaign_id, bucket_start, source_updated_at) VALUES ($1, $2, $3)`, [c0, older, changed]);
+      expect(await asOf(read.start)).toEqual(before);
+      // The same bucket inside the range read is the campaign's newest change.
+      expect((await asOf(older))[c0]).toBe(changed.toISOString());
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
   it('each row is every campaign\'s work: the roster without a campaign, the promises over every conversation', async () => {

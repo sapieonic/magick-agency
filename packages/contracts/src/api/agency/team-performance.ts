@@ -362,9 +362,10 @@ export interface AgencyTeamPerformance {
   as_of: string;
   /**
    * How fresh the rollup behind `outcomes` and the successes trend is: the newest folded attempt
-   * change (ISO instant) of the scope's campaigns with dialler conversations in the window. A
-   * campaign idle in the window does not hold it back. Null when no campaign had conversations in
-   * the window (no bars to date).
+   * change (ISO instant) of the scope's campaigns with dialler conversations in the window, over
+   * the rollup's buckets the answer reads (the per-day chart's range, the window inside it). A
+   * campaign idle in the window does not hold it back, nor a change to a bucket before that range.
+   * Null when no campaign had conversations in the window (no bars to date).
    */
   rollup_as_of: string | null;
   main_outcome: AgencyTeamMainOutcome;

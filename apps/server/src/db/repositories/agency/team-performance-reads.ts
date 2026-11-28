@@ -18,7 +18,7 @@
  *  - **The scope's campaigns** ({@link teamScopeCampaignsSql}): the campaign itself, or the
  *    account's campaigns a report covers (`accountCoveredCampaignIds`' rule: live now, or a rollup
  *    bucket with dials in the range), with what the answer reads off them: the allowed wrap-up, the
- *    catalog, and the rollup's freshness.
+ *    catalog, and the rollup's freshness over the range.
  *  - **The rollup** ({@link TEAM_ROLLUP_CODES_SQL}, {@link TEAM_ROLLUP_DAYS_SQL}): the Insights
  *    rollup's conversations by code (`agency_insights_rollup_codes`), dialler only, the team's,
  *    through the campaign row matched on id, tenant AND account (the rollup carries none), on the
@@ -82,7 +82,7 @@ export interface TeamScopeCampaignRow {
   wrapup_seconds: number;
   /** As stored; `effectiveCatalog` turns an empty one into the default. */
   disposition_catalog: AgencyDisposition[] | null;
-  /** The campaign's newest folded attempt change in the rollup (ISO instant); null when the rollup holds none. */
+  /** The campaign's newest folded attempt change in the rollup's buckets in the range read (ISO instant); null when they hold none. */
   rollup_as_of: string | null;
 }
 
@@ -129,9 +129,11 @@ function withCampaign(values: unknown[], scope: TeamScope): unknown[] {
 
 /**
  * The scope's campaigns: `$1` tenant, `$2` account, then the campaign (`$3`), or the live statuses
- * (`$3`, `AGENCY_HOME_ACTIVE_STATUSES`) and the range (`$4`, `$5`) whose rollup dials bring a
- * campaign that is no longer live into the account's scope. Each campaign's rollup freshness is
- * Insights' `as_of` (the newest `source_updated_at` of its buckets).
+ * (`$3`, `AGENCY_HOME_ACTIVE_STATUSES`); `$4`, `$5` the range the answer reads the rollup over (the
+ * per-day chart's, the window inside it), whose rollup dials also bring a campaign that is no longer
+ * live into the account's scope. Each campaign's rollup freshness is Insights' `as_of` (the newest
+ * `source_updated_at`) over its buckets in that range only, on the buckets' primary key: never a
+ * scan of a campaign's whole history.
  */
 export function teamScopeCampaignsSql(scope: TeamScope): string {
   const which = scope.kind === 'campaign'
@@ -143,7 +145,9 @@ export function teamScopeCampaignsSql(scope: TeamScope): string {
                         AND b.dials > 0))`;
   return `
   SELECT c.id, c.wrapup_seconds, c.disposition_catalog,
-         to_char((SELECT MAX(r.source_updated_at) FROM agency_insights_rollup_buckets r WHERE r.campaign_id = c.id)
+         to_char((SELECT MAX(r.source_updated_at) FROM agency_insights_rollup_buckets r
+                   WHERE r.campaign_id = c.id
+                     AND r.bucket_start >= $4::timestamptz AND r.bucket_start < $5::timestamptz)
                  AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS rollup_as_of
     FROM agency_campaigns c
    WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid
@@ -322,11 +326,12 @@ const cohortValues = (q: TeamCohortScope): unknown[] => [q.tenantId, q.accountId
 const campaignsValues = (q: TeamCampaignsScope): unknown[] => [q.tenantId, q.accountId, [...q.campaignIds], q.from, q.to];
 
 export class AgencyTeamPerformanceReadRepository {
-  /** {@link teamScopeCampaignsSql}; `range` brings an account's campaign with rollup dials in it into scope. */
+  /**
+   * {@link teamScopeCampaignsSql}; `range` is the rollup's range: each campaign's freshness is read
+   * over it, and it brings an account's campaign with rollup dials in it into scope.
+   */
   async scopeCampaigns(db: RosterQueryable, q: TeamReadScope & { range: TeamInstantWindow }): Promise<TeamScopeCampaignRow[]> {
-    const values = q.scope.kind === 'campaign'
-      ? [q.tenantId, q.accountId, q.scope.campaignId]
-      : [q.tenantId, q.accountId, [...AGENCY_HOME_ACTIVE_STATUSES], q.range.from, q.range.to];
+    const values = [q.tenantId, q.accountId, q.scope.kind === 'campaign' ? q.scope.campaignId : [...AGENCY_HOME_ACTIVE_STATUSES], q.range.from, q.range.to];
     const { rows } = await db.query<{ id: string; wrapup_seconds: number; disposition_catalog: AgencyDisposition[] | null; rollup_as_of: string | null }>(
       teamScopeCampaignsSql(q.scope), values,
     );
